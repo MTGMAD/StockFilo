@@ -39,6 +39,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V4,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 5,
+                            description: "add_daily_change_pct_to_stocks",
+                            sql: db::migrations::MIGRATION_V5,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

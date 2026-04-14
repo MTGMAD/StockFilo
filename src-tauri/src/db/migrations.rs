@@ -38,3 +38,7 @@ CREATE TABLE IF NOT EXISTS favorites (
 pub const MIGRATION_V4: &str = r#"
 ALTER TABLE stocks ADD COLUMN quote_type TEXT;
 "#;
+
+pub const MIGRATION_V5: &str = r#"
+ALTER TABLE stocks ADD COLUMN daily_change_pct REAL;
+"#;

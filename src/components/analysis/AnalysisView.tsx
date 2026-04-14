@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import type { TickerSummary, Purchase } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
-import { ExternalLink, Star, ChevronUp, ChevronDown } from "lucide-react";
+import { ExternalLink, Star, ChevronUp, ChevronDown, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { MountainChart } from "./MountainChart";
 import { TickerNews } from "./TickerNews";
 import { useFavorites } from "../../hooks/useFavorites";
@@ -291,11 +291,34 @@ function TickerRow({
       {/* Ticker name — main click target */}
       <button
         onClick={() => onSelect(s.ticker)}
-        className="flex-1 text-left px-2 py-3 text-sm font-medium min-w-0"
+        className="flex-1 text-left px-2 py-2 text-sm font-medium min-w-0"
       >
         <div className="truncate">{s.ticker}</div>
         {s.name && <div className="text-xs opacity-70 truncate">{s.name}</div>}
       </button>
+
+      {/* Daily change indicator */}
+      {s.dailyChangePct != null && (
+        <div
+          className={cn(
+            "flex items-center gap-0.5 pr-1 shrink-0 text-xs font-medium",
+            s.dailyChangePct > 0
+              ? isSelected ? "text-green-200" : "text-green-500"
+              : s.dailyChangePct < 0
+                ? isSelected ? "text-red-300" : "text-red-500"
+                : isSelected ? "text-primary-foreground/60" : "text-muted-foreground"
+          )}
+        >
+          {s.dailyChangePct > 0 ? (
+            <TrendingUp className="w-3.5 h-3.5" />
+          ) : s.dailyChangePct < 0 ? (
+            <TrendingDown className="w-3.5 h-3.5" />
+          ) : (
+            <Minus className="w-3.5 h-3.5" />
+          )}
+          <span>{s.dailyChangePct >= 0 ? "+" : ""}{s.dailyChangePct.toFixed(2)}%</span>
+        </div>
+      )}
 
       {/* Move buttons for favorites */}
       {isFav && (

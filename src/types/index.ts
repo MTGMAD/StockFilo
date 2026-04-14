@@ -13,6 +13,7 @@ export interface Stock {
   last_price: number | null;
   last_fetched_at: number | null;
   quote_type: string | null;
+  daily_change_pct: number | null;
 }
 
 export interface QuoteResult {
@@ -20,6 +21,7 @@ export interface QuoteResult {
   price: number | null;
   name: string | null;
   quote_type: string | null;
+  daily_change_pct: number | null;
 }
 
 export interface TickerSummary {
@@ -35,6 +37,7 @@ export interface TickerSummary {
   isStale: boolean;
   lastFetchedAt: number | null;
   quoteType: string | null;
+  dailyChangePct: number | null;
 }
 
 export interface WatchlistItem {

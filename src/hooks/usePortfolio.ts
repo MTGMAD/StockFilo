@@ -140,6 +140,7 @@ export function usePortfolio() {
         isStale,
         lastFetchedAt,
         quoteType: stock?.quote_type ?? null,
+        dailyChangePct: stock?.daily_change_pct ?? null,
       };
     }
   );

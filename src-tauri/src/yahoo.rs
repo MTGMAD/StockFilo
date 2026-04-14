@@ -27,6 +27,8 @@ struct QuoteResult {
     short_name: Option<String>,
     #[serde(rename = "quoteType")]
     quote_type: Option<String>,
+    #[serde(rename = "regularMarketChangePercent")]
+    regular_market_change_percent: Option<f64>,
 }
 
 // ── Chart / historical data types ──────────────────────────────────────────
@@ -121,24 +123,30 @@ async fn get_authenticated_client() -> Result<(Client, String), String> {
     Ok((client, crumb))
 }
 
+pub struct QuoteData {
+    pub price: f64,
+    pub name: Option<String>,
+    pub quote_type: Option<String>,
+    pub daily_change_pct: Option<f64>,
+}
+
 /// Fetch current prices for a batch of tickers from Yahoo Finance.
-/// Returns a map of ticker -> (price, name).
 pub async fn fetch_quotes(
     tickers: &[String],
-) -> Result<HashMap<String, (f64, Option<String>, Option<String>)>, String> {
+) -> Result<HashMap<String, QuoteData>, String> {
     if tickers.is_empty() {
         return Ok(HashMap::new());
     }
 
     let (client, crumb) = get_authenticated_client().await?;
 
-    let mut results: HashMap<String, (f64, Option<String>, Option<String>)> = HashMap::new();
+    let mut results: HashMap<String, QuoteData> = HashMap::new();
 
     // Process in chunks of 10 to stay within Yahoo rate limits
     for chunk in tickers.chunks(10) {
         let symbols = chunk.join(",");
         let url = format!(
-            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType",
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent",
             symbols,
             urlencoding::encode(&crumb)
         );
@@ -166,7 +174,12 @@ pub async fn fetch_quotes(
             for q in quote_results {
                 if let Some(price) = q.regular_market_price {
                     let name = q.long_name.or(q.short_name);
-                    results.insert(q.symbol, (price, name, q.quote_type));
+                    results.insert(q.symbol, QuoteData {
+                        price,
+                        name,
+                        quote_type: q.quote_type,
+                        daily_change_pct: q.regular_market_change_percent,
+                    });
                 }
             }
         }
