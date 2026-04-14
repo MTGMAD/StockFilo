@@ -13,7 +13,7 @@ interface PurchaseDialogProps {
 export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialogProps) {
   const [ticker, setTicker] = useState("");
   const [shares, setShares] = useState("");
-  const [price, setPrice] = useState("");
+  const [totalPrice, setTotalPrice] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -22,7 +22,7 @@ export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialo
     if (open) {
       setTicker(initial?.ticker ?? "");
       setShares(initial ? String(initial.shares) : "");
-      setPrice(initial ? String(initial.price_per_share) : "");
+      setTotalPrice(initial ? String((initial.shares * initial.price_per_share).toFixed(2)) : "");
       setDate(initial?.purchased_at ?? new Date().toISOString().slice(0, 10));
       setErrors({});
     }
@@ -33,8 +33,8 @@ export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialo
     if (!ticker.trim()) e.ticker = "Ticker is required";
     const s = parseFloat(shares);
     if (isNaN(s) || s <= 0) e.shares = "Enter a positive number";
-    const p = parseFloat(price);
-    if (isNaN(p) || p <= 0) e.price = "Enter a positive price";
+    const p = parseFloat(totalPrice);
+    if (isNaN(p) || p <= 0) e.totalPrice = "Enter a positive amount";
     if (!date) e.date = "Date is required";
     return e;
   }
@@ -45,7 +45,9 @@ export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialo
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setSaving(true);
     try {
-      await onSave(ticker.trim().toUpperCase(), parseFloat(shares), parseFloat(price), date);
+      const sharesNum = parseFloat(shares);
+      const pricePerShare = parseFloat(totalPrice) / sharesNum;
+      await onSave(ticker.trim().toUpperCase(), sharesNum, pricePerShare, date);
       onClose();
     } catch (err) {
       setErrors({ form: String(err) });
@@ -88,16 +90,28 @@ export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialo
               placeholder="10"
             />
           </Field>
-          <Field label="Price Paid / Share ($)" error={errors.price}>
+          <Field label="Total Purchase Price ($)" error={errors.totalPrice}>
             <input
               type="number"
               min="0"
               step="any"
-              className={inputClass(!!errors.price)}
-              value={price}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="150.00"
+              className={inputClass(!!errors.totalPrice)}
+              value={totalPrice}
+              onChange={(e) => setTotalPrice(e.target.value)}
+              placeholder="1500.00"
             />
+            {(() => {
+              const s = parseFloat(shares);
+              const t = parseFloat(totalPrice);
+              if (s > 0 && t > 0) {
+                return (
+                  <p className="text-xs text-muted-foreground">
+                    Price per share: ${(t / s).toFixed(4)}
+                  </p>
+                );
+              }
+              return null;
+            })()}
           </Field>
           <Field label="Date" error={errors.date}>
             <input

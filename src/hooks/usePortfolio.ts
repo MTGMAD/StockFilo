@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Purchase, Stock, TickerSummary } from "../types";
 import {
   listPurchases,
@@ -9,17 +9,21 @@ import {
   fetchAndCachePrices,
 } from "../lib/db";
 
+const POLL_INTERVAL_MS = 30_000; // 30 seconds
+
 export function usePortfolio() {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const purchasesRef = useRef<Purchase[]>([]);
 
   const loadAll = useCallback(async () => {
     try {
       const [p, s] = await Promise.all([listPurchases(), getCachedStocks()]);
       setPurchases(p);
+      purchasesRef.current = p;
       setStocks(s);
     } catch (e) {
       setError(String(e));
@@ -31,11 +35,39 @@ export function usePortfolio() {
     loadAll().finally(() => setLoading(false));
   }, [loadAll]);
 
+  // Auto-refresh prices: fetch immediately when purchases change, then poll every 30s
+  useEffect(() => {
+    const tickers = [...new Set(purchases.map((p) => p.ticker))];
+    if (tickers.length === 0) return;
+
+    let cancelled = false;
+
+    const fetchPrices = async () => {
+      try {
+        await fetchAndCachePrices(tickers);
+        if (!cancelled) {
+          const s = await getCachedStocks();
+          if (!cancelled) setStocks(s);
+        }
+      } catch {
+        // silently continue — stale data stays visible
+      }
+    };
+
+    fetchPrices();
+    const id = setInterval(fetchPrices, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [purchases]);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     setError(null);
     try {
-      const tickers = [...new Set(purchases.map((p) => p.ticker))];
+      const tickers = [...new Set(purchasesRef.current.map((p) => p.ticker))];
       await fetchAndCachePrices(tickers);
       const s = await getCachedStocks();
       setStocks(s);
@@ -44,7 +76,7 @@ export function usePortfolio() {
     } finally {
       setRefreshing(false);
     }
-  }, [purchases]);
+  }, []);
 
   const add = useCallback(
     async (ticker: string, shares: number, price: number, date: string) => {
