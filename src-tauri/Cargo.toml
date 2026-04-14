@@ -18,6 +18,12 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(mobile)'] }
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
