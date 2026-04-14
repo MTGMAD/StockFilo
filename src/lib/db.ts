@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
-import type { Purchase, Stock, QuoteResult, WatchlistItem, TickerSearchResult, NewsArticle } from "../types";
+import type { Purchase, Stock, QuoteResult, WatchlistItem, TickerSearchResult, NewsArticle, Favorite } from "../types";
 
 const DB_URL = "sqlite:stockfilo.db";
 
@@ -116,6 +116,44 @@ export async function addToWatchlist(ticker: string): Promise<void> {
 export async function removeFromWatchlist(id: number): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM watchlist WHERE id = ?", [id]);
+}
+
+// ── Favorites ─────────────────────────────────────────────────────────────
+
+export async function listFavorites(): Promise<Favorite[]> {
+  const db = await getDb();
+  return db.select<Favorite[]>(
+    "SELECT id, ticker, sort_order FROM favorites ORDER BY sort_order ASC"
+  );
+}
+
+export async function addFavorite(ticker: string): Promise<void> {
+  const db = await getDb();
+  const t = ticker.toUpperCase();
+  // Put new favorite at the end (max sort_order + 1)
+  const rows = await db.select<{ max_order: number | null }[]>(
+    "SELECT MAX(sort_order) as max_order FROM favorites"
+  );
+  const nextOrder = (rows[0]?.max_order ?? -1) + 1;
+  await db.execute(
+    "INSERT OR IGNORE INTO favorites (ticker, sort_order) VALUES (?, ?)",
+    [t, nextOrder]
+  );
+}
+
+export async function removeFavorite(ticker: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM favorites WHERE ticker = ?", [ticker.toUpperCase()]);
+}
+
+export async function reorderFavorites(tickers: string[]): Promise<void> {
+  const db = await getDb();
+  for (let i = 0; i < tickers.length; i++) {
+    await db.execute(
+      "UPDATE favorites SET sort_order = ? WHERE ticker = ?",
+      [i, tickers[i].toUpperCase()]
+    );
+  }
 }
 
 // ── Ticker Search ─────────────────────────────────────────────────────────

@@ -47,6 +47,12 @@ export interface TickerSearchResult {
   type_disp: string | null;
 }
 
+export interface Favorite {
+  id: number;
+  ticker: string;
+  sort_order: number;
+}
+
 export type View = 'purchases' | 'analysis' | 'watchlist' | 'settings';
 export type Theme = 'system' | 'light' | 'dark';
 

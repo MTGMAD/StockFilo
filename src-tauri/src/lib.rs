@@ -27,6 +27,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V2,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 3,
+                            description: "create_favorites_table",
+                            sql: db::migrations::MIGRATION_V3,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

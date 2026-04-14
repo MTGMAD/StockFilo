@@ -26,3 +26,11 @@ CREATE TABLE IF NOT EXISTS watchlist (
     created_at INTEGER NOT NULL
 );
 "#;
+
+pub const MIGRATION_V3: &str = r#"
+CREATE TABLE IF NOT EXISTS favorites (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker     TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+"#;
