@@ -14,12 +14,23 @@ import {
 
 interface MountainChartProps {
   ticker: string;
+  quoteType?: string | null;
 }
 
 const RANGES: { label: string; value: ChartRange; interval: string }[] = [
   { label: "1D", value: "1d", interval: "5m" },
   { label: "5D", value: "5d", interval: "15m" },
   { label: "1M", value: "1mo", interval: "30m" },
+  { label: "6M", value: "6mo", interval: "1d" },
+  { label: "YTD", value: "ytd", interval: "1d" },
+  { label: "1Y", value: "1y", interval: "1d" },
+  { label: "5Y", value: "5y", interval: "1wk" },
+  { label: "All", value: "max", interval: "1mo" },
+];
+
+// Mutual funds / UITs only price daily — intraday intervals don't work
+const FUND_RANGES: { label: string; value: ChartRange; interval: string }[] = [
+  { label: "1M", value: "1mo", interval: "1d" },
   { label: "6M", value: "6mo", interval: "1d" },
   { label: "YTD", value: "ytd", interval: "1d" },
   { label: "1Y", value: "1y", interval: "1d" },
@@ -41,14 +52,23 @@ function formatTime(ts: number, range: ChartRange): string {
   return d.toLocaleDateString([], { month: "short", year: "2-digit" });
 }
 
-export function MountainChart({ ticker }: MountainChartProps) {
-  const [range, setRange] = useState<ChartRange>("1d");
+export function MountainChart({ ticker, quoteType }: MountainChartProps) {
+  const isFund = quoteType === "MUTUALFUND" || quoteType === "UIT";
+  const ranges = isFund ? FUND_RANGES : RANGES;
+  const defaultRange = isFund ? "1mo" : "1d";
+
+  const [range, setRange] = useState<ChartRange>(defaultRange);
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Reset range when switching between stock and fund tickers
+  useEffect(() => {
+    setRange(defaultRange);
+  }, [defaultRange]);
+
   const loadChart = useCallback(async () => {
-    const r = RANGES.find((r) => r.value === range)!;
+    const r = ranges.find((r) => r.value === range) ?? ranges[0];
     setLoading(true);
     setError(null);
     try {
@@ -64,16 +84,16 @@ export function MountainChart({ ticker }: MountainChartProps) {
     } finally {
       setLoading(false);
     }
-  }, [ticker, range]);
+  }, [ticker, range, ranges]);
 
   useEffect(() => {
     loadChart();
-    // Auto-refresh for intraday ranges
-    if (range === "1d" || range === "5d") {
+    // Auto-refresh for intraday ranges (stocks only, not funds)
+    if (!isFund && (range === "1d" || range === "5d")) {
       const id = setInterval(loadChart, 60_000);
       return () => clearInterval(id);
     }
-  }, [loadChart, range]);
+  }, [loadChart, range, isFund]);
 
   const points = chartData?.points ?? [];
   const previousClose = chartData?.previous_close ?? null;
@@ -103,7 +123,7 @@ export function MountainChart({ ticker }: MountainChartProps) {
           {ticker} Price Chart
         </h3>
         <div className="flex gap-1">
-          {RANGES.map((r) => (
+          {ranges.map((r) => (
             <button
               key={r.value}
               onClick={() => setRange(r.value)}

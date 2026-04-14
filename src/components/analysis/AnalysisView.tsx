@@ -186,7 +186,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
           </div>
 
           {/* Chart */}
-          <MountainChart ticker={summary.ticker} />
+          <MountainChart ticker={summary.ticker} quoteType={summary.quoteType} />
 
           {/* News */}
           <TickerNews ticker={summary.ticker} />
