@@ -1,8 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import type { TickerSummary, Purchase } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
-import { ExternalLink, Star, ChevronUp, ChevronDown, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { ExternalLink, Star, ChevronUp, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { MountainChart } from "./MountainChart";
 import { TickerNews } from "./TickerNews";
 import { useFavorites } from "../../hooks/useFavorites";
@@ -107,38 +107,36 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
             />
           );
         })}
-        {nonFavStocks.length > 0 && (
-          <SectionLabel label="Stocks" />
-        )}
-        {nonFavStocks.map((s) => (
-          <TickerRow
-            key={s.ticker}
-            s={s}
-            isSelected={selected === s.ticker}
-            isFav={false}
-            favIdx={-1}
-            favCount={0}
-            onSelect={setSelected}
-            onToggleFav={toggle}
-            onMoveFav={moveFavorite}
-          />
-        ))}
-        {nonFavFunds.length > 0 && (
-          <SectionLabel label="Mutual Funds & UITs" />
-        )}
-        {nonFavFunds.map((s) => (
-          <TickerRow
-            key={s.ticker}
-            s={s}
-            isSelected={selected === s.ticker}
-            isFav={false}
-            favIdx={-1}
-            favCount={0}
-            onSelect={setSelected}
-            onToggleFav={toggle}
-            onMoveFav={moveFavorite}
-          />
-        ))}
+        <CollapsibleSection label="Stocks" items={nonFavStocks}>
+          {nonFavStocks.map((s) => (
+            <TickerRow
+              key={s.ticker}
+              s={s}
+              isSelected={selected === s.ticker}
+              isFav={false}
+              favIdx={-1}
+              favCount={0}
+              onSelect={setSelected}
+              onToggleFav={toggle}
+              onMoveFav={moveFavorite}
+            />
+          ))}
+        </CollapsibleSection>
+        <CollapsibleSection label="Mutual Funds & UITs" items={nonFavFunds}>
+          {nonFavFunds.map((s) => (
+            <TickerRow
+              key={s.ticker}
+              s={s}
+              isSelected={selected === s.ticker}
+              isFav={false}
+              favIdx={-1}
+              favCount={0}
+              onSelect={setSelected}
+              onToggleFav={toggle}
+              onMoveFav={moveFavorite}
+            />
+          ))}
+        </CollapsibleSection>
       </div>
 
       {/* Detail panel */}
@@ -243,6 +241,44 @@ function SectionLabel({ label }: { label: string }) {
     <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/50 border-b border-border">
       {label}
     </div>
+  );
+}
+
+function CollapsibleSection({
+  label,
+  items,
+  children,
+}: {
+  label: string;
+  items: unknown[];
+  children: React.ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  if (items.length === 0) return null;
+
+  return (
+    <>
+      <div
+        onDoubleClick={() => setCollapsed((c) => !c)}
+        className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/50 border-b border-border flex items-center gap-1 cursor-pointer select-none hover:bg-muted/80 transition-colors"
+        title="Double-click to collapse/expand"
+      >
+        <ChevronRight
+          className={cn(
+            "w-3 h-3 transition-transform",
+            !collapsed && "rotate-90"
+          )}
+        />
+        {label}
+        {collapsed && (
+          <span className="ml-auto text-[10px] font-normal normal-case tracking-normal">
+            {items.length}
+          </span>
+        )}
+      </div>
+      {!collapsed && children}
+    </>
   );
 }
 
