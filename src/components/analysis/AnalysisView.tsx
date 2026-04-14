@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import type { TickerSummary, Purchase } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
@@ -10,10 +10,12 @@ import { useFavorites } from "../../hooks/useFavorites";
 interface AnalysisViewProps {
   summaries: TickerSummary[];
   purchases: Purchase[];
+  selectedTicker: string | null;
+  onSelectTicker: (ticker: string | null) => void;
 }
 
-export function AnalysisView({ summaries, purchases }: AnalysisViewProps) {
-  const { favoriteTickers, isFavorite, toggle, reorder } = useFavorites();
+export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTicker }: AnalysisViewProps) {
+  const { favoriteTickers, loaded: favoritesLoaded, isFavorite, toggle, reorder } = useFavorites();
 
   // Sort: favorites first (in their custom order), then the rest alphabetically
   const sorted = [...summaries].sort((a, b) => {
@@ -27,9 +29,21 @@ export function AnalysisView({ summaries, purchases }: AnalysisViewProps) {
     return a.ticker.localeCompare(b.ticker);
   });
 
-  const [selected, setSelected] = useState<string | null>(
-    sorted.length > 0 ? sorted[0].ticker : null
-  );
+  // On first app open (selectedTicker is null), pick the top favorite or first in list.
+  // Wait for favorites to load before committing a default so we don't pick alphabetical first.
+  // After that, the lifted state remembers the user's last selection across tab switches.
+  const selected = selectedTicker && sorted.some((s) => s.ticker === selectedTicker)
+    ? selectedTicker
+    : favoritesLoaded && sorted.length > 0 ? sorted[0].ticker : null;
+
+  // Sync back to parent if we had to resolve to a default
+  useEffect(() => {
+    if (selected !== null && selected !== selectedTicker) {
+      onSelectTicker(selected);
+    }
+  }, [selected, selectedTicker, onSelectTicker]);
+
+  const setSelected = onSelectTicker;
 
   const summary = sorted.find((s) => s.ticker === selected) ?? null;
   const tickerPurchases = purchases.filter((p) => p.ticker === selected);

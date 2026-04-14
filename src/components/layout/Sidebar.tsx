@@ -8,9 +8,9 @@ interface SidebarProps {
 }
 
 const navItems: { id: View; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: "purchases", label: "Purchases", Icon: List },
   { id: "analysis", label: "Analysis", Icon: BarChart2 },
   { id: "watchlist", label: "Watch List", Icon: Eye },
+  { id: "purchases", label: "Purchases", Icon: List },
   { id: "settings", label: "Settings", Icon: Settings },
 ];
 

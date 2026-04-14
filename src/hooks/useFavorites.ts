@@ -4,10 +4,12 @@ import { listFavorites, addFavorite, removeFavorite, reorderFavorites } from "..
 
 export function useFavorites() {
   const [favorites, setFavorites] = useState<Favorite[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     const f = await listFavorites();
     setFavorites(f);
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -42,5 +44,5 @@ export function useFavorites() {
 
   const favoriteTickers = favorites.map((f) => f.ticker);
 
-  return { favorites, favoriteTickers, isFavorite, toggle, reorder };
+  return { favorites, favoriteTickers, loaded, isFavorite, toggle, reorder };
 }

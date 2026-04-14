@@ -18,7 +18,8 @@ const VIEW_TITLES: Record<View, string> = {
 };
 
 export default function App() {
-  const [view, setView] = useState<View>("purchases");
+  const [view, setView] = useState<View>("analysis");
+  const [analysisTicker, setAnalysisTicker] = useState<string | null>(null);
   const { theme, setTheme } = useTheme();
   const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
     usePortfolio();
@@ -54,7 +55,12 @@ export default function App() {
               onDelete={remove}
             />
           ) : view === "analysis" ? (
-            <AnalysisView summaries={summaries} purchases={purchases} />
+            <AnalysisView
+              summaries={summaries}
+              purchases={purchases}
+              selectedTicker={analysisTicker}
+              onSelectTicker={setAnalysisTicker}
+            />
           ) : view === "watchlist" ? (
             <WatchList
               items={watchlist.items}
