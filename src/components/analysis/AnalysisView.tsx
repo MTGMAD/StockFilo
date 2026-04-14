@@ -4,6 +4,7 @@ import type { TickerSummary, Purchase } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
 import { ExternalLink } from "lucide-react";
 import { MountainChart } from "./MountainChart";
+import { TickerNews } from "./TickerNews";
 
 interface AnalysisViewProps {
   summaries: TickerSummary[];
@@ -97,6 +98,9 @@ export function AnalysisView({ summaries, purchases }: AnalysisViewProps) {
 
           {/* Chart */}
           <MountainChart ticker={summary.ticker} />
+
+          {/* News */}
+          <TickerNews ticker={summary.ticker} />
 
           {/* Transaction history */}
           <div>

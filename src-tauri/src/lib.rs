@@ -35,6 +35,7 @@ pub fn run() {
             commands::stocks::fetch_quotes_command,
             commands::stocks::fetch_chart_command,
             commands::stocks::search_tickers_command,
+            commands::stocks::fetch_news_command,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

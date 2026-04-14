@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
-import type { Purchase, Stock, QuoteResult, WatchlistItem, TickerSearchResult } from "../types";
+import type { Purchase, Stock, QuoteResult, WatchlistItem, TickerSearchResult, NewsArticle } from "../types";
 
 const DB_URL = "sqlite:stockfilo.db";
 
@@ -122,4 +122,10 @@ export async function removeFromWatchlist(id: number): Promise<void> {
 
 export async function searchTickers(query: string): Promise<TickerSearchResult[]> {
   return invoke<TickerSearchResult[]>("search_tickers_command", { query });
+}
+
+// ── News ──────────────────────────────────────────────────────────────────
+
+export async function fetchNews(ticker: string, count = 10): Promise<NewsArticle[]> {
+  return invoke<NewsArticle[]>("fetch_news_command", { ticker: ticker.toUpperCase(), count });
 }

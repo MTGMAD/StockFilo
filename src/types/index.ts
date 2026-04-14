@@ -62,3 +62,10 @@ export interface ChartData {
 }
 
 export type ChartRange = '1d' | '5d' | '1mo' | '6mo' | 'ytd' | '1y' | '5y' | 'max';
+
+export interface NewsArticle {
+  title: string;
+  url: string;
+  publisher: string | null;
+  image_url: string | null;
+}

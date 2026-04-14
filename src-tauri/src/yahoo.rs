@@ -317,3 +317,109 @@ pub async fn fetch_chart(
         current_price: result.meta.regular_market_price,
     })
 }
+
+// ── Ticker news ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct YahooNewsSearchResponse {
+    news: Option<Vec<YahooNewsArticle>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct YahooNewsArticle {
+    title: Option<String>,
+    link: Option<String>,
+    publisher: Option<String>,
+    thumbnail: Option<YahooNewsThumbnail>,
+    #[serde(rename = "relatedTickers", default)]
+    related_tickers: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct YahooNewsThumbnail {
+    resolutions: Option<Vec<YahooThumbnailRes>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct YahooThumbnailRes {
+    url: Option<String>,
+    tag: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct NewsArticle {
+    pub title: String,
+    pub url: String,
+    pub publisher: Option<String>,
+    pub image_url: Option<String>,
+}
+
+/// Fetch recent news articles strictly about a specific ticker using Yahoo Finance's search endpoint.
+/// Only returns articles where this ticker is the primary subject (first in relatedTickers).
+pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, String> {
+    let client = Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    // Request many more articles so we have enough after strict filtering
+    let fetch_count = count * 5;
+    let url = format!(
+        "https://query2.finance.yahoo.com/v1/finance/search?q={}&quotesCount=0&newsCount={}&listsCount=0",
+        urlencoding::encode(ticker),
+        fetch_count,
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("News request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Yahoo news API returned HTTP {status}: {body}"));
+    }
+
+    let data: YahooNewsSearchResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse news response: {e}"))?;
+
+    let upper_ticker = ticker.to_uppercase();
+    let articles = data
+        .news
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| {
+            // Only include articles where this ticker is the PRIMARY subject —
+            // i.e. it appears first in relatedTickers.
+            a.related_tickers
+                .first()
+                .map(|t| t.eq_ignore_ascii_case(&upper_ticker))
+                .unwrap_or(false)
+        })
+        .filter_map(|a| {
+            let image_url = a
+                .thumbnail
+                .and_then(|t| t.resolutions)
+                .and_then(|rr| {
+                    rr.into_iter()
+                        .find(|r| r.tag.as_deref() == Some("original"))
+                })
+                .and_then(|r| r.url);
+
+            Some(NewsArticle {
+                title: a.title?,
+                url: a.link?,
+                publisher: a.publisher,
+                image_url,
+            })
+        })
+        .take(count as usize)
+        .collect();
+
+    Ok(articles)
+}

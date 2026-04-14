@@ -52,6 +52,12 @@ pub async fn fetch_chart_command(
     yahoo::fetch_chart(&ticker.to_uppercase(), &range, &interval).await
 }
 
+/// Fetch recent news articles for a ticker.
+#[tauri::command]
+pub async fn fetch_news_command(ticker: String, count: Option<u32>) -> Result<Vec<yahoo::NewsArticle>, String> {
+    yahoo::fetch_news(&ticker.to_uppercase(), count.unwrap_or(10)).await
+}
+
 /// Search for tickers by name or symbol.
 #[tauri::command]
 pub async fn search_tickers_command(query: String) -> Result<Vec<SearchResult>, String> {
