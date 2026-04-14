@@ -139,6 +139,7 @@ export function usePortfolio() {
         pnlPercent,
         isStale,
         lastFetchedAt,
+        quoteType: stock?.quote_type ?? null,
       };
     }
   );

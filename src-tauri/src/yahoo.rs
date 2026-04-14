@@ -25,6 +25,8 @@ struct QuoteResult {
     long_name: Option<String>,
     #[serde(rename = "shortName")]
     short_name: Option<String>,
+    #[serde(rename = "quoteType")]
+    quote_type: Option<String>,
 }
 
 // ── Chart / historical data types ──────────────────────────────────────────
@@ -123,20 +125,20 @@ async fn get_authenticated_client() -> Result<(Client, String), String> {
 /// Returns a map of ticker -> (price, name).
 pub async fn fetch_quotes(
     tickers: &[String],
-) -> Result<HashMap<String, (f64, Option<String>)>, String> {
+) -> Result<HashMap<String, (f64, Option<String>, Option<String>)>, String> {
     if tickers.is_empty() {
         return Ok(HashMap::new());
     }
 
     let (client, crumb) = get_authenticated_client().await?;
 
-    let mut results: HashMap<String, (f64, Option<String>)> = HashMap::new();
+    let mut results: HashMap<String, (f64, Option<String>, Option<String>)> = HashMap::new();
 
     // Process in chunks of 10 to stay within Yahoo rate limits
     for chunk in tickers.chunks(10) {
         let symbols = chunk.join(",");
         let url = format!(
-            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName",
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType",
             symbols,
             urlencoding::encode(&crumb)
         );
@@ -164,7 +166,7 @@ pub async fn fetch_quotes(
             for q in quote_results {
                 if let Some(price) = q.regular_market_price {
                     let name = q.long_name.or(q.short_name);
-                    results.insert(q.symbol, (price, name));
+                    results.insert(q.symbol, (price, name, q.quote_type));
                 }
             }
         }

@@ -64,25 +64,27 @@ export async function deletePurchase(id: number): Promise<void> {
 export async function getCachedStocks(): Promise<Stock[]> {
   const db = await getDb();
   return db.select<Stock[]>(
-    "SELECT ticker, name, last_price, last_fetched_at FROM stocks ORDER BY ticker ASC"
+    "SELECT ticker, name, last_price, last_fetched_at, quote_type FROM stocks ORDER BY ticker ASC"
   );
 }
 
 export async function upsertStock(
   ticker: string,
   name: string | null,
-  price: number | null
+  price: number | null,
+  quoteType: string | null = null
 ): Promise<void> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   await db.execute(
-    `INSERT INTO stocks (ticker, name, last_price, last_fetched_at)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO stocks (ticker, name, last_price, last_fetched_at, quote_type)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(ticker) DO UPDATE SET
        name = excluded.name,
        last_price = excluded.last_price,
-       last_fetched_at = excluded.last_fetched_at`,
-    [ticker, name, price, now]
+       last_fetched_at = excluded.last_fetched_at,
+       quote_type = COALESCE(excluded.quote_type, stocks.quote_type)`,
+    [ticker, name, price, now, quoteType]
   );
 }
 
@@ -90,7 +92,7 @@ export async function fetchAndCachePrices(tickers: string[]): Promise<QuoteResul
   if (tickers.length === 0) return [];
   const results = await invoke<QuoteResult[]>("fetch_quotes_command", { tickers });
   for (const r of results) {
-    await upsertStock(r.ticker, r.name, r.price);
+    await upsertStock(r.ticker, r.name, r.price, r.quote_type);
   }
   return results;
 }

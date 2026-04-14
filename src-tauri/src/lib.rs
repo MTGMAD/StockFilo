@@ -33,6 +33,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V3,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 4,
+                            description: "add_quote_type_to_stocks",
+                            sql: db::migrations::MIGRATION_V4,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

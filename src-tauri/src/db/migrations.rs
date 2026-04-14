@@ -34,3 +34,7 @@ CREATE TABLE IF NOT EXISTS favorites (
     sort_order INTEGER NOT NULL DEFAULT 0
 );
 "#;
+
+pub const MIGRATION_V4: &str = r#"
+ALTER TABLE stocks ADD COLUMN quote_type TEXT;
+"#;

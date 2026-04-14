@@ -17,24 +17,30 @@ interface AnalysisViewProps {
 export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTicker }: AnalysisViewProps) {
   const { favoriteTickers, loaded: favoritesLoaded, isFavorite, toggle, reorder } = useFavorites();
 
-  // Sort: favorites first (in their custom order), then the rest alphabetically
-  const sorted = [...summaries].sort((a, b) => {
-    const aFav = isFavorite(a.ticker);
-    const bFav = isFavorite(b.ticker);
-    if (aFav && bFav) {
-      return favoriteTickers.indexOf(a.ticker) - favoriteTickers.indexOf(b.ticker);
-    }
-    if (aFav) return -1;
-    if (bFav) return 1;
-    return a.ticker.localeCompare(b.ticker);
-  });
+  // Categorize tickers
+  const favorites = summaries
+    .filter((s) => isFavorite(s.ticker))
+    .sort((a, b) => favoriteTickers.indexOf(a.ticker) - favoriteTickers.indexOf(b.ticker));
+
+  const isMutualFund = (qt: string | null) =>
+    qt === "MUTUALFUND" || qt === "UIT";
+
+  const nonFavStocks = summaries
+    .filter((s) => !isFavorite(s.ticker) && !isMutualFund(s.quoteType))
+    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+  const nonFavFunds = summaries
+    .filter((s) => !isFavorite(s.ticker) && isMutualFund(s.quoteType))
+    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+  // Flat ordered list for default selection logic
+  const ordered = [...favorites, ...nonFavStocks, ...nonFavFunds];
 
   // On first app open (selectedTicker is null), pick the top favorite or first in list.
   // Wait for favorites to load before committing a default so we don't pick alphabetical first.
-  // After that, the lifted state remembers the user's last selection across tab switches.
-  const selected = selectedTicker && sorted.some((s) => s.ticker === selectedTicker)
+  const selected = selectedTicker && ordered.some((s) => s.ticker === selectedTicker)
     ? selectedTicker
-    : favoritesLoaded && sorted.length > 0 ? sorted[0].ticker : null;
+    : favoritesLoaded && ordered.length > 0 ? ordered[0].ticker : null;
 
   // Sync back to parent if we had to resolve to a default
   useEffect(() => {
@@ -45,7 +51,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
 
   const setSelected = onSelectTicker;
 
-  const summary = sorted.find((s) => s.ticker === selected) ?? null;
+  const summary = ordered.find((s) => s.ticker === selected) ?? null;
   const tickerPurchases = purchases.filter((p) => p.ticker === selected);
 
   async function openGoogleFinance(ticker: string) {
@@ -82,74 +88,57 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
     <div className="flex h-full gap-0">
       {/* Ticker selector */}
       <div className="w-52 border-r border-border shrink-0 overflow-y-auto">
-        {sorted.map((s) => {
-          const fav = isFavorite(s.ticker);
+        {favorites.length > 0 && (
+          <SectionLabel label="Favorites" />
+        )}
+        {favorites.map((s) => {
           const favIdx = favoriteTickers.indexOf(s.ticker);
-          const isSelected = selected === s.ticker;
-
           return (
-            <div
+            <TickerRow
               key={s.ticker}
-              className={cn(
-                "flex items-center border-b border-border transition-colors group",
-                isSelected
-                  ? "bg-primary text-primary-foreground"
-                  : "text-foreground hover:bg-muted"
-              )}
-            >
-              {/* Star toggle */}
-              <button
-                onClick={(e) => { e.stopPropagation(); toggle(s.ticker); }}
-                className={cn(
-                  "pl-2 pr-0 py-3 shrink-0 transition-colors",
-                  fav
-                    ? isSelected ? "text-yellow-200" : "text-yellow-500"
-                    : isSelected ? "text-primary-foreground/40 hover:text-yellow-200" : "text-muted-foreground/40 hover:text-yellow-500"
-                )}
-                title={fav ? "Remove from favorites" : "Add to favorites"}
-              >
-                <Star className={cn("w-3.5 h-3.5", fav && "fill-current")} />
-              </button>
-
-              {/* Ticker name — main click target */}
-              <button
-                onClick={() => setSelected(s.ticker)}
-                className="flex-1 text-left px-2 py-3 text-sm font-medium min-w-0"
-              >
-                <div className="truncate">{s.ticker}</div>
-                {s.name && <div className="text-xs opacity-70 truncate">{s.name}</div>}
-              </button>
-
-              {/* Move buttons for favorites */}
-              {fav && (
-                <div className="flex flex-col pr-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); moveFavorite(s.ticker, "up"); }}
-                    disabled={favIdx === 0}
-                    className={cn(
-                      "p-0.5 rounded transition-colors",
-                      isSelected ? "hover:bg-primary-foreground/20 disabled:opacity-30" : "hover:bg-accent disabled:opacity-30"
-                    )}
-                    title="Move up"
-                  >
-                    <ChevronUp className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); moveFavorite(s.ticker, "down"); }}
-                    disabled={favIdx === favoriteTickers.length - 1}
-                    className={cn(
-                      "p-0.5 rounded transition-colors",
-                      isSelected ? "hover:bg-primary-foreground/20 disabled:opacity-30" : "hover:bg-accent disabled:opacity-30"
-                    )}
-                    title="Move down"
-                  >
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-            </div>
+              s={s}
+              isSelected={selected === s.ticker}
+              isFav
+              favIdx={favIdx}
+              favCount={favoriteTickers.length}
+              onSelect={setSelected}
+              onToggleFav={toggle}
+              onMoveFav={moveFavorite}
+            />
           );
         })}
+        {nonFavStocks.length > 0 && (
+          <SectionLabel label="Stocks" />
+        )}
+        {nonFavStocks.map((s) => (
+          <TickerRow
+            key={s.ticker}
+            s={s}
+            isSelected={selected === s.ticker}
+            isFav={false}
+            favIdx={-1}
+            favCount={0}
+            onSelect={setSelected}
+            onToggleFav={toggle}
+            onMoveFav={moveFavorite}
+          />
+        ))}
+        {nonFavFunds.length > 0 && (
+          <SectionLabel label="Mutual Funds & UITs" />
+        )}
+        {nonFavFunds.map((s) => (
+          <TickerRow
+            key={s.ticker}
+            s={s}
+            isSelected={selected === s.ticker}
+            isFav={false}
+            favIdx={-1}
+            favCount={0}
+            onSelect={setSelected}
+            onToggleFav={toggle}
+            onMoveFav={moveFavorite}
+          />
+        ))}
       </div>
 
       {/* Detail panel */}
@@ -245,6 +234,96 @@ function StatCard({
     <div className="bg-muted/30 border border-border rounded-lg px-4 py-3">
       <div className="text-xs text-muted-foreground mb-1">{label}</div>
       <div className={cn("text-base font-semibold text-foreground", valueClass)}>{value}</div>
+    </div>
+  );
+}
+
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/50 border-b border-border">
+      {label}
+    </div>
+  );
+}
+
+function TickerRow({
+  s,
+  isSelected,
+  isFav,
+  favIdx,
+  favCount,
+  onSelect,
+  onToggleFav,
+  onMoveFav,
+}: {
+  s: TickerSummary;
+  isSelected: boolean;
+  isFav: boolean;
+  favIdx: number;
+  favCount: number;
+  onSelect: (ticker: string) => void;
+  onToggleFav: (ticker: string) => void;
+  onMoveFav: (ticker: string, dir: "up" | "down") => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center border-b border-border transition-colors group",
+        isSelected
+          ? "bg-primary text-primary-foreground"
+          : "text-foreground hover:bg-muted"
+      )}
+    >
+      {/* Star toggle */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggleFav(s.ticker); }}
+        className={cn(
+          "pl-2 pr-0 py-3 shrink-0 transition-colors",
+          isFav
+            ? isSelected ? "text-yellow-200" : "text-yellow-500"
+            : isSelected ? "text-primary-foreground/40 hover:text-yellow-200" : "text-muted-foreground/40 hover:text-yellow-500"
+        )}
+        title={isFav ? "Remove from favorites" : "Add to favorites"}
+      >
+        <Star className={cn("w-3.5 h-3.5", isFav && "fill-current")} />
+      </button>
+
+      {/* Ticker name — main click target */}
+      <button
+        onClick={() => onSelect(s.ticker)}
+        className="flex-1 text-left px-2 py-3 text-sm font-medium min-w-0"
+      >
+        <div className="truncate">{s.ticker}</div>
+        {s.name && <div className="text-xs opacity-70 truncate">{s.name}</div>}
+      </button>
+
+      {/* Move buttons for favorites */}
+      {isFav && (
+        <div className="flex flex-col pr-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => { e.stopPropagation(); onMoveFav(s.ticker, "up"); }}
+            disabled={favIdx === 0}
+            className={cn(
+              "p-0.5 rounded transition-colors",
+              isSelected ? "hover:bg-primary-foreground/20 disabled:opacity-30" : "hover:bg-accent disabled:opacity-30"
+            )}
+            title="Move up"
+          >
+            <ChevronUp className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onMoveFav(s.ticker, "down"); }}
+            disabled={favIdx === favCount - 1}
+            className={cn(
+              "p-0.5 rounded transition-colors",
+              isSelected ? "hover:bg-primary-foreground/20 disabled:opacity-30" : "hover:bg-accent disabled:opacity-30"
+            )}
+            title="Move down"
+          >
+            <ChevronDown className="w-3 h-3" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

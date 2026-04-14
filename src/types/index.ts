@@ -12,12 +12,14 @@ export interface Stock {
   name: string | null;
   last_price: number | null;
   last_fetched_at: number | null;
+  quote_type: string | null;
 }
 
 export interface QuoteResult {
   ticker: string;
   price: number | null;
   name: string | null;
+  quote_type: string | null;
 }
 
 export interface TickerSummary {
@@ -32,6 +34,7 @@ export interface TickerSummary {
   pnlPercent: number | null;
   isStale: boolean;
   lastFetchedAt: number | null;
+  quoteType: string | null;
 }
 
 export interface WatchlistItem {

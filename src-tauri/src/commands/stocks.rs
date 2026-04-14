@@ -7,6 +7,7 @@ pub struct QuoteResult {
     pub ticker: String,
     pub price: Option<f64>,
     pub name: Option<String>,
+    pub quote_type: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,16 +27,16 @@ pub async fn fetch_quotes_command(tickers: Vec<String>) -> Result<Vec<QuoteResul
     }
 
     let upper: Vec<String> = tickers.iter().map(|t| t.to_uppercase()).collect();
-    let quotes: HashMap<String, (f64, Option<String>)> = yahoo::fetch_quotes(&upper).await?;
+    let quotes: HashMap<String, (f64, Option<String>, Option<String>)> = yahoo::fetch_quotes(&upper).await?;
 
     let results = upper
         .into_iter()
         .map(|ticker| {
-            let (price, name) = quotes
+            let (price, name, quote_type) = quotes
                 .get(&ticker)
-                .map(|(p, n)| (Some(*p), n.clone()))
-                .unwrap_or((None, None));
-            QuoteResult { ticker, price, name }
+                .map(|(p, n, qt)| (Some(*p), n.clone(), qt.clone()))
+                .unwrap_or((None, None, None));
+            QuoteResult { ticker, price, name, quote_type }
         })
         .collect();
 
