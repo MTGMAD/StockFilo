@@ -8,6 +8,8 @@ mod yahoo;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
@@ -23,6 +25,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             commands::stocks::fetch_quotes_command,
+            commands::stocks::fetch_chart_command,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

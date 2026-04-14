@@ -3,16 +3,7 @@ import { open } from "@tauri-apps/plugin-shell";
 import type { TickerSummary, Purchase } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
 import { ExternalLink } from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-} from "recharts";
+import { MountainChart } from "./MountainChart";
 
 interface AnalysisViewProps {
   summaries: TickerSummary[];
@@ -26,16 +17,6 @@ export function AnalysisView({ summaries, purchases }: AnalysisViewProps) {
 
   const summary = summaries.find((s) => s.ticker === selected) ?? null;
   const tickerPurchases = purchases.filter((p) => p.ticker === selected);
-
-  const chartData = summary
-    ? [
-        {
-          name: summary.ticker,
-          "Avg Cost Basis": parseFloat(summary.avgCostBasis.toFixed(2)),
-          "Current Price": summary.currentPrice != null ? parseFloat(summary.currentPrice.toFixed(2)) : 0,
-        },
-      ]
-    : [];
 
   async function openGoogleFinance(ticker: string) {
     await open(`https://www.google.com/finance/quote/${ticker}`);
@@ -115,32 +96,7 @@ export function AnalysisView({ summaries, purchases }: AnalysisViewProps) {
           </div>
 
           {/* Chart */}
-          <div className="bg-muted/30 border border-border rounded-lg p-4">
-            <h3 className="text-sm font-medium text-muted-foreground mb-4">
-              Cost Basis vs Current Price
-            </h3>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={chartData} barCategoryGap="40%">
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="name" tick={{ fill: "var(--muted-foreground)", fontSize: 12 }} />
-                <YAxis
-                  tickFormatter={(v) => `$${v}`}
-                  tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
-                />
-                <Tooltip
-                  formatter={(v) => formatCurrency(v as number)}
-                  contentStyle={{
-                    background: "var(--background)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                  }}
-                />
-                <Legend />
-                <Bar dataKey="Avg Cost Basis" fill="var(--muted-foreground)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="Current Price" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <MountainChart ticker={summary.ticker} />
 
           {/* Transaction history */}
           <div>

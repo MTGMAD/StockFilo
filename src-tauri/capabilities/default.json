@@ -7,6 +7,12 @@
     "shell:allow-open",
     "sql:allow-execute",
     "sql:allow-load",
-    "sql:allow-select"
+    "sql:allow-select",
+    "dialog:allow-save",
+    "fs:default",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "**" }]
+    }
   ]
 }

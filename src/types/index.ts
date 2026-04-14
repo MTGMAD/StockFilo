@@ -36,3 +36,16 @@ export interface TickerSummary {
 
 export type View = 'purchases' | 'analysis' | 'settings';
 export type Theme = 'system' | 'light' | 'dark';
+
+export interface ChartPoint {
+  timestamp: number;
+  close: number;
+}
+
+export interface ChartData {
+  points: ChartPoint[];
+  previous_close: number | null;
+  current_price: number | null;
+}
+
+export type ChartRange = '1d' | '5d' | '1mo' | '6mo' | 'ytd' | '1y' | '5y' | 'max';

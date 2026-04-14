@@ -33,3 +33,13 @@ pub async fn fetch_quotes_command(tickers: Vec<String>) -> Result<Vec<QuoteResul
 
     Ok(results)
 }
+
+/// Called from the frontend to fetch chart data for a ticker.
+#[tauri::command]
+pub async fn fetch_chart_command(
+    ticker: String,
+    range: String,
+    interval: String,
+) -> Result<yahoo::ChartData, String> {
+    yahoo::fetch_chart(&ticker.to_uppercase(), &range, &interval).await
+}

@@ -1,6 +1,6 @@
 use reqwest::cookie::Jar;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -25,6 +25,56 @@ struct QuoteResult {
     long_name: Option<String>,
     #[serde(rename = "shortName")]
     short_name: Option<String>,
+}
+
+// ── Chart / historical data types ──────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct YahooChartResponse {
+    chart: ChartOuter,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChartOuter {
+    result: Option<Vec<ChartResult>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChartResult {
+    timestamp: Option<Vec<i64>>,
+    indicators: Indicators,
+    meta: ChartMeta,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChartMeta {
+    #[serde(rename = "regularMarketPrice")]
+    regular_market_price: Option<f64>,
+    #[serde(rename = "chartPreviousClose")]
+    chart_previous_close: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Indicators {
+    quote: Vec<QuoteIndicator>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuoteIndicator {
+    close: Option<Vec<Option<f64>>>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ChartPoint {
+    pub timestamp: i64,
+    pub close: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ChartData {
+    pub points: Vec<ChartPoint>,
+    pub previous_close: Option<f64>,
+    pub current_price: Option<f64>,
 }
 
 /// Build a reqwest client with a cookie jar, obtain a Yahoo crumb token,
@@ -126,4 +176,67 @@ pub async fn fetch_quotes(
     }
 
     Ok(results)
+}
+
+/// Fetch historical chart data for a single ticker.
+/// `range` is one of: 1d, 5d, 1mo, 6mo, ytd, 1y, 5y, max
+/// `interval` is one of: 1m, 2m, 5m, 15m, 30m, 60m, 1d, 1wk, 1mo
+pub async fn fetch_chart(
+    ticker: &str,
+    range: &str,
+    interval: &str,
+) -> Result<ChartData, String> {
+    let (client, crumb) = get_authenticated_client().await?;
+
+    let url = format!(
+        "https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval={}&crumb={}",
+        urlencoding::encode(ticker),
+        urlencoding::encode(range),
+        urlencoding::encode(interval),
+        urlencoding::encode(&crumb),
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Chart request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Yahoo chart API returned HTTP {status}: {body}"));
+    }
+
+    let data: YahooChartResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse chart response: {e}"))?;
+
+    let result = data
+        .chart
+        .result
+        .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+        .ok_or_else(|| "No chart data returned from Yahoo".to_string())?;
+
+    let timestamps = result.timestamp.unwrap_or_default();
+    let closes = result
+        .indicators
+        .quote
+        .into_iter()
+        .next()
+        .and_then(|q| q.close)
+        .unwrap_or_default();
+
+    let points: Vec<ChartPoint> = timestamps
+        .into_iter()
+        .zip(closes)
+        .filter_map(|(ts, close)| close.map(|c| ChartPoint { timestamp: ts, close: c }))
+        .collect();
+
+    Ok(ChartData {
+        points,
+        previous_close: result.meta.chart_previous_close,
+        current_price: result.meta.regular_market_price,
+    })
 }
