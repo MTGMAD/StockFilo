@@ -1,5 +1,7 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
+import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import type { Purchase, Stock, QuoteResult, WatchlistItem, TickerSearchResult, NewsArticle, Favorite } from "../types";
 
 const DB_URL = "sqlite:stockfilo.db";
@@ -166,4 +168,100 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
 
 export async function fetchNews(ticker: string, count = 10): Promise<NewsArticle[]> {
   return invoke<NewsArticle[]>("fetch_news_command", { ticker: ticker.toUpperCase(), count });
+}
+
+// ── CSV Export / Import ───────────────────────────────────────────────────
+
+function escCsv(value: string): string {
+  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+export async function exportPurchasesCsv(): Promise<boolean> {
+  const purchases = await listPurchases();
+  const header = "ticker,shares,price_per_share,purchased_at";
+  const rows = purchases.map(
+    (p) => `${escCsv(p.ticker)},${p.shares},${p.price_per_share},${escCsv(p.purchased_at)}`
+  );
+  const csv = [header, ...rows].join("\n");
+
+  const path = await save({
+    title: "Export Purchases",
+    defaultPath: "stockfilo-purchases.csv",
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  if (!path) return false;
+
+  await writeTextFile(path, csv);
+  return true;
+}
+
+export async function importPurchasesCsv(): Promise<number> {
+  const path = await openDialog({
+    title: "Import Purchases",
+    multiple: false,
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  if (!path) return 0;
+
+  const csv = await readTextFile(path as string);
+  const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return 0;
+
+  // Detect and skip header row
+  const firstLine = lines[0].toLowerCase();
+  const startIdx = firstLine.includes("ticker") ? 1 : 0;
+
+  let imported = 0;
+  for (let i = startIdx; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+    if (cols.length < 4) continue;
+
+    const ticker = cols[0].trim().toUpperCase();
+    const shares = parseFloat(cols[1]);
+    const price = parseFloat(cols[2]);
+    const date = cols[3].trim();
+
+    if (!ticker || isNaN(shares) || isNaN(price) || !date) continue;
+    // Basic date format validation (YYYY-MM-DD)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+
+    await addPurchase(ticker, shares, price, date);
+    imported++;
+  }
+
+  return imported;
+}
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && i + 1 < line.length && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        result.push(current);
+        current = "";
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current);
+  return result;
 }

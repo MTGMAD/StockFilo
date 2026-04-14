@@ -1,10 +1,13 @@
+import { useState } from "react";
 import type { Theme } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon } from "lucide-react";
+import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle } from "lucide-react";
+import { exportPurchasesCsv, importPurchasesCsv } from "../../lib/db";
 
 interface SettingsPanelProps {
   theme: Theme;
   onThemeChange: (t: Theme) => void;
+  onDataChange: () => void;
 }
 
 const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
@@ -13,7 +16,44 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "dark", label: "Dark", Icon: Moon },
 ];
 
-export function SettingsPanel({ theme, onThemeChange }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange }: SettingsPanelProps) {
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  async function handleExport() {
+    setExporting(true);
+    setMessage(null);
+    try {
+      const saved = await exportPurchasesCsv();
+      if (saved) {
+        setMessage({ type: "success", text: "Purchases exported successfully." });
+      }
+    } catch (e) {
+      setMessage({ type: "error", text: `Export failed: ${e}` });
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleImport() {
+    setImporting(true);
+    setMessage(null);
+    try {
+      const count = await importPurchasesCsv();
+      if (count > 0) {
+        setMessage({ type: "success", text: `Imported ${count} purchase${count === 1 ? "" : "s"} successfully.` });
+        onDataChange();
+      } else if (count === 0) {
+        // User may have cancelled the dialog — don't show error
+      }
+    } catch (e) {
+      setMessage({ type: "error", text: `Import failed: ${e}` });
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <div className="p-6 max-w-md">
       <h2 className="text-base font-semibold text-foreground mb-1">Appearance</h2>
@@ -36,6 +76,62 @@ export function SettingsPanel({ theme, onThemeChange }: SettingsPanelProps) {
             {label}
           </button>
         ))}
+      </div>
+
+      <div className="mt-8 pt-8 border-t border-border">
+        <h2 className="text-base font-semibold text-foreground mb-1">Data</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Export your purchases to a CSV file or import from one. This makes it easy to move your data to a new machine.
+        </p>
+
+        <div className="flex gap-3">
+          <button
+            onClick={handleExport}
+            disabled={exporting || importing}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
+              "border-border text-foreground hover:border-primary/50 hover:text-primary",
+              (exporting || importing) && "opacity-50 cursor-not-allowed"
+            )}
+          >
+            <Download className="w-4 h-4" />
+            {exporting ? "Exporting…" : "Export CSV"}
+          </button>
+          <button
+            onClick={handleImport}
+            disabled={exporting || importing}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
+              "border-border text-foreground hover:border-primary/50 hover:text-primary",
+              (exporting || importing) && "opacity-50 cursor-not-allowed"
+            )}
+          >
+            <Upload className="w-4 h-4" />
+            {importing ? "Importing…" : "Import CSV"}
+          </button>
+        </div>
+
+        {message && (
+          <div
+            className={cn(
+              "flex items-center gap-2 mt-3 text-sm",
+              message.type === "success" ? "text-green-600" : "text-red-600"
+            )}
+          >
+            {message.type === "success" ? (
+              <CheckCircle className="w-4 h-4 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0" />
+            )}
+            {message.text}
+          </div>
+        )}
+
+        <p className="text-xs text-muted-foreground mt-3">
+          CSV format: <code className="text-xs bg-muted px-1 rounded">ticker,shares,price_per_share,purchased_at</code>
+          <br />
+          Date format: <code className="text-xs bg-muted px-1 rounded">YYYY-MM-DD</code>
+        </p>
       </div>
 
       <div className="mt-8 pt-8 border-t border-border">

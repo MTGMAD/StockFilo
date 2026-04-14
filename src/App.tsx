@@ -72,7 +72,7 @@ export default function App() {
               }}
             />
           ) : (
-            <SettingsPanel theme={theme} onThemeChange={setTheme} />
+            <SettingsPanel theme={theme} onThemeChange={setTheme} onDataChange={refresh} />
           )}
         </main>
       </div>
