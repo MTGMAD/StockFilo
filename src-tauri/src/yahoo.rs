@@ -178,6 +178,83 @@ pub async fn fetch_quotes(
     Ok(results)
 }
 
+// ── Ticker search / autocomplete ───────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct YahooSearchResponse {
+    quotes: Option<Vec<SearchQuote>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchQuote {
+    symbol: String,
+    #[serde(rename = "shortname")]
+    short_name: Option<String>,
+    #[serde(rename = "longname")]
+    long_name: Option<String>,
+    #[serde(rename = "exchDisp")]
+    exchange: Option<String>,
+    #[serde(rename = "typeDisp")]
+    type_disp: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct SearchResult {
+    pub symbol: String,
+    pub name: Option<String>,
+    pub exchange: Option<String>,
+    pub type_disp: Option<String>,
+}
+
+/// Search for tickers by name or symbol using Yahoo Finance's search endpoint.
+pub async fn search_tickers(query: &str) -> Result<Vec<SearchResult>, String> {
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let client = Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let url = format!(
+        "https://query2.finance.yahoo.com/v1/finance/search?q={}&quotesCount=8&newsCount=0&listsCount=0&enableFuzzyQuery=false&quotesQueryId=tss_match_phrase_query",
+        urlencoding::encode(query)
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Search request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Yahoo search API returned HTTP {status}: {body}"));
+    }
+
+    let data: YahooSearchResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse search response: {e}"))?;
+
+    let results = data
+        .quotes
+        .unwrap_or_default()
+        .into_iter()
+        .map(|q| SearchResult {
+            symbol: q.symbol,
+            name: q.long_name.or(q.short_name),
+            exchange: q.exchange,
+            type_disp: q.type_disp,
+        })
+        .collect();
+
+    Ok(results)
+}
+
 /// Fetch historical chart data for a single ticker.
 /// `range` is one of: 1d, 5d, 1mo, 6mo, ytd, 1y, 5y, max
 /// `interval` is one of: 1m, 2m, 5m, 15m, 30m, 60m, 1d, 1wk, 1mo

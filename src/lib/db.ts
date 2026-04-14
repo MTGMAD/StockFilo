@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
-import type { Purchase, Stock, QuoteResult } from "../types";
+import type { Purchase, Stock, QuoteResult, WatchlistItem, TickerSearchResult } from "../types";
 
 const DB_URL = "sqlite:stockfilo.db";
 
@@ -91,4 +91,35 @@ export async function fetchAndCachePrices(tickers: string[]): Promise<QuoteResul
     await upsertStock(r.ticker, r.name, r.price);
   }
   return results;
+}
+
+// ── Watchlist ──────────────────────────────────────────────────────────────
+
+export async function listWatchlist(): Promise<WatchlistItem[]> {
+  const db = await getDb();
+  return db.select<WatchlistItem[]>(
+    "SELECT id, ticker, created_at FROM watchlist ORDER BY created_at DESC"
+  );
+}
+
+export async function addToWatchlist(ticker: string): Promise<void> {
+  const db = await getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const t = ticker.toUpperCase();
+  await db.execute(
+    "INSERT OR IGNORE INTO watchlist (ticker, created_at) VALUES (?, ?)",
+    [t, now]
+  );
+  await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
+}
+
+export async function removeFromWatchlist(id: number): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM watchlist WHERE id = ?", [id]);
+}
+
+// ── Ticker Search ─────────────────────────────────────────────────────────
+
+export async function searchTickers(query: string): Promise<TickerSearchResult[]> {
+  return invoke<TickerSearchResult[]>("search_tickers_command", { query });
 }

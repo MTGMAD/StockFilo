@@ -34,7 +34,20 @@ export interface TickerSummary {
   lastFetchedAt: number | null;
 }
 
-export type View = 'purchases' | 'analysis' | 'settings';
+export interface WatchlistItem {
+  id: number;
+  ticker: string;
+  created_at: number;
+}
+
+export interface TickerSearchResult {
+  symbol: string;
+  name: string | null;
+  exchange: string | null;
+  type_disp: string | null;
+}
+
+export type View = 'purchases' | 'analysis' | 'watchlist' | 'settings';
 export type Theme = 'system' | 'light' | 'dark';
 
 export interface ChartPoint {

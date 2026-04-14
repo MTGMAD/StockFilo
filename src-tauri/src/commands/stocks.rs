@@ -9,6 +9,14 @@ pub struct QuoteResult {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SearchResult {
+    pub symbol: String,
+    pub name: Option<String>,
+    pub exchange: Option<String>,
+    pub type_disp: Option<String>,
+}
+
 /// Called from the frontend to fetch live prices for a list of tickers.
 /// Returns a list of QuoteResult — tickers missing from Yahoo will have price: null.
 #[tauri::command]
@@ -42,4 +50,19 @@ pub async fn fetch_chart_command(
     interval: String,
 ) -> Result<yahoo::ChartData, String> {
     yahoo::fetch_chart(&ticker.to_uppercase(), &range, &interval).await
+}
+
+/// Search for tickers by name or symbol.
+#[tauri::command]
+pub async fn search_tickers_command(query: String) -> Result<Vec<SearchResult>, String> {
+    let results = yahoo::search_tickers(&query).await?;
+    Ok(results
+        .into_iter()
+        .map(|r| SearchResult {
+            symbol: r.symbol,
+            name: r.name,
+            exchange: r.exchange,
+            type_disp: r.type_disp,
+        })
+        .collect())
 }

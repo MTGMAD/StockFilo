@@ -1,5 +1,5 @@
 import type { View } from "../../types";
-import { BarChart2, List, Settings } from "lucide-react";
+import { BarChart2, List, Settings, Eye } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 interface SidebarProps {
@@ -10,6 +10,7 @@ interface SidebarProps {
 const navItems: { id: View; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "purchases", label: "Purchases", Icon: List },
   { id: "analysis", label: "Analysis", Icon: BarChart2 },
+  { id: "watchlist", label: "Watch List", Icon: Eye },
   { id: "settings", label: "Settings", Icon: Settings },
 ];
 

@@ -14,18 +14,27 @@ pub fn run() {
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
                     "sqlite:stockfilo.db",
-                    vec![tauri_plugin_sql::Migration {
-                        version: 1,
-                        description: "create_initial_tables",
-                        sql: db::migrations::MIGRATION_V1,
-                        kind: tauri_plugin_sql::MigrationKind::Up,
-                    }],
+                    vec![
+                        tauri_plugin_sql::Migration {
+                            version: 1,
+                            description: "create_initial_tables",
+                            sql: db::migrations::MIGRATION_V1,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 2,
+                            description: "create_watchlist_table",
+                            sql: db::migrations::MIGRATION_V2,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                    ],
                 )
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
             commands::stocks::fetch_quotes_command,
             commands::stocks::fetch_chart_command,
+            commands::stocks::search_tickers_command,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

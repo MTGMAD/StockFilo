@@ -4,13 +4,16 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
 import { PurchasesTable } from "./components/portfolio/PurchasesTable";
 import { AnalysisView } from "./components/analysis/AnalysisView";
+import { WatchList } from "./components/watchlist/WatchList";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { usePortfolio } from "./hooks/usePortfolio";
+import { useWatchlist } from "./hooks/useWatchlist";
 import { useTheme } from "./hooks/useTheme";
 
 const VIEW_TITLES: Record<View, string> = {
   purchases: "Purchases",
   analysis: "Analysis",
+  watchlist: "Watch List",
   settings: "Settings",
 };
 
@@ -19,6 +22,7 @@ export default function App() {
   const { theme, setTheme } = useTheme();
   const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
     usePortfolio();
+  const watchlist = useWatchlist();
 
   const showRefresh = view === "purchases" || view === "analysis";
 
@@ -51,6 +55,16 @@ export default function App() {
             />
           ) : view === "analysis" ? (
             <AnalysisView summaries={summaries} purchases={purchases} />
+          ) : view === "watchlist" ? (
+            <WatchList
+              items={watchlist.items}
+              stocks={watchlist.stocks}
+              onAdd={watchlist.add}
+              onRemove={watchlist.remove}
+              onPurchase={async (ticker, shares, price, date) => {
+                await add(ticker, shares, price, date);
+              }}
+            />
           ) : (
             <SettingsPanel theme={theme} onThemeChange={setTheme} />
           )}

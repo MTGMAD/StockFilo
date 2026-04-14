@@ -8,9 +8,10 @@ interface PurchaseDialogProps {
   onClose: () => void;
   onSave: (ticker: string, shares: number, price: number, date: string) => Promise<void>;
   initial?: Purchase | null;
+  defaultTicker?: string;
 }
 
-export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialogProps) {
+export function PurchaseDialog({ open, onClose, onSave, initial, defaultTicker }: PurchaseDialogProps) {
   const [ticker, setTicker] = useState("");
   const [shares, setShares] = useState("");
   const [totalPrice, setTotalPrice] = useState("");
@@ -20,13 +21,13 @@ export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialo
 
   useEffect(() => {
     if (open) {
-      setTicker(initial?.ticker ?? "");
+      setTicker(initial?.ticker ?? defaultTicker ?? "");
       setShares(initial ? String(initial.shares) : "");
       setTotalPrice(initial ? String((initial.shares * initial.price_per_share).toFixed(2)) : "");
       setDate(initial?.purchased_at ?? new Date().toISOString().slice(0, 10));
       setErrors({});
     }
-  }, [open, initial]);
+  }, [open, initial, defaultTicker]);
 
   function validate() {
     const e: Record<string, string> = {};
@@ -76,7 +77,7 @@ export function PurchaseDialog({ open, onClose, onSave, initial }: PurchaseDialo
               value={ticker}
               onChange={(e) => setTicker(e.target.value.toUpperCase())}
               placeholder="AAPL"
-              disabled={!!initial}
+              disabled={!!initial || !!defaultTicker}
             />
           </Field>
           <Field label="Shares" error={errors.shares}>

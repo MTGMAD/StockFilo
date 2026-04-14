@@ -18,3 +18,11 @@ CREATE TABLE IF NOT EXISTS purchases (
 CREATE INDEX IF NOT EXISTS idx_purchases_ticker ON purchases(ticker);
 CREATE INDEX IF NOT EXISTS idx_purchases_purchased_at ON purchases(purchased_at);
 "#;
+
+pub const MIGRATION_V2: &str = r#"
+CREATE TABLE IF NOT EXISTS watchlist (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker     TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+);
+"#;
