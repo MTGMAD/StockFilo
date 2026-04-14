@@ -1,0 +1,61 @@
+import { useState } from "react";
+import type { View } from "./types";
+import { Sidebar } from "./components/layout/Sidebar";
+import { Header } from "./components/layout/Header";
+import { PurchasesTable } from "./components/portfolio/PurchasesTable";
+import { AnalysisView } from "./components/analysis/AnalysisView";
+import { SettingsPanel } from "./components/settings/SettingsPanel";
+import { usePortfolio } from "./hooks/usePortfolio";
+import { useTheme } from "./hooks/useTheme";
+
+const VIEW_TITLES: Record<View, string> = {
+  purchases: "Purchases",
+  analysis: "Analysis",
+  settings: "Settings",
+};
+
+export default function App() {
+  const [view, setView] = useState<View>("purchases");
+  const { theme, setTheme } = useTheme();
+  const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
+    usePortfolio();
+
+  const showRefresh = view === "purchases" || view === "analysis";
+
+  return (
+    <div className="flex h-screen w-screen overflow-hidden">
+      <Sidebar view={view} onNavigate={setView} />
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        <Header
+          title={VIEW_TITLES[view]}
+          onRefresh={showRefresh ? refresh : undefined}
+          refreshing={refreshing}
+        />
+        {error && (
+          <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-sm text-red-600">
+            {error}
+          </div>
+        )}
+        <main className="flex-1 overflow-hidden">
+          {loading ? (
+            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+              Loading…
+            </div>
+          ) : view === "purchases" ? (
+            <PurchasesTable
+              purchases={purchases}
+              stocks={stocks}
+              onAdd={add}
+              onUpdate={update}
+              onDelete={remove}
+            />
+          ) : view === "analysis" ? (
+            <AnalysisView summaries={summaries} purchases={purchases} />
+          ) : (
+            <SettingsPanel theme={theme} onThemeChange={setTheme} />
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
