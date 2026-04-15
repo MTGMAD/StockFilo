@@ -7,6 +7,41 @@ import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../..
 import { PurchaseDialog } from "./PurchaseDialog";
 import { Pencil, Trash2, Plus, ExternalLink, Download } from "lucide-react";
 
+// ── Ticker logo with letter-avatar fallback ──────────────────────────────────
+
+const LOGO_COLORS = [
+  "#6366f1", "#8b5cf6", "#ec4899", "#f97316",
+  "#14b8a6", "#06b6d4", "#84cc16", "#f59e0b",
+];
+
+function TickerLogo({ ticker }: { ticker: string }) {
+  const [failed, setFailed] = useState(false);
+  const color = LOGO_COLORS[ticker.charCodeAt(0) % LOGO_COLORS.length];
+  const initials = ticker.slice(0, 2).toUpperCase();
+
+  if (failed) {
+    return (
+      <div
+        className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0"
+        style={{ backgroundColor: color }}
+      >
+        {initials}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={`https://assets.parqet.com/logos/symbol/${ticker}?format=png`}
+      alt={ticker}
+      className="w-8 h-8 rounded-full object-contain shrink-0 bg-white border border-border"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+// ── Table types ───────────────────────────────────────────────────────────────
+
 interface PurchasesTableProps {
   purchases: Purchase[];
   stocks: Stock[];
@@ -130,13 +165,16 @@ export function PurchasesTable({
                   <tr key={p.id} className="border-b border-border hover:bg-muted/30 transition-colors">
                     <Td>{p.purchased_at}</Td>
                     <Td>
-                      <button
-                        onClick={() => openGoogleFinance(p.ticker)}
-                        className="flex items-center gap-1 font-semibold text-primary hover:underline"
-                      >
-                        {p.ticker}
-                        <ExternalLink className="w-3 h-3 opacity-60" />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <TickerLogo ticker={p.ticker} />
+                        <button
+                          onClick={() => openGoogleFinance(p.ticker)}
+                          className="flex items-center gap-1 font-semibold text-primary hover:underline"
+                        >
+                          {p.ticker}
+                          <ExternalLink className="w-3 h-3 opacity-60" />
+                        </button>
+                      </div>
                     </Td>
                     <Td align="right">{formatShares(p.shares)}</Td>
                     <Td align="right">{formatCurrency(p.price_per_share)}</Td>
