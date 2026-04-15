@@ -55,7 +55,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
   const tickerPurchases = purchases.filter((p) => p.ticker === selected);
 
   async function openGoogleFinance(ticker: string) {
-    await open(`https://www.google.com/finance/quote/${ticker}`);
+    await open(`https://finance.yahoo.com/quote/${ticker}`);
   }
 
   async function moveFavorite(ticker: string, direction: "up" | "down") {

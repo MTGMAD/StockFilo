@@ -31,7 +31,7 @@ export function PurchasesTable({
   const STALE_THRESHOLD = 3600;
 
   async function openGoogleFinance(ticker: string) {
-    await open(`https://www.google.com/finance/quote/${ticker}`);
+    await open(`https://finance.yahoo.com/quote/${ticker}`);
   }
 
   async function exportCsv() {

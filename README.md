@@ -40,7 +40,7 @@ Click any ticker for a full per-position breakdown:
 - **Live news feed** — latest articles pulled for each ticker
 - **Cost basis overlay** — visualize where your average entry price sits against the price curve
 - **Drag-to-reorder favorites** — pin your most important holdings to the top
-- **Google Finance integration** — one click opens the ticker in your browser
+- **Yahoo Finance integration** — one click opens the ticker in your browser
 
 ### 👀 Smart Watchlist
 Never miss a move on stocks you're tracking but haven't bought yet:

@@ -23,6 +23,7 @@ const VIEW_TITLES: Record<View, string> = {
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [analysisTicker, setAnalysisTicker] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { theme, setTheme } = useTheme();
   const { investorMode, setInvestorMode } = useInvestorMode();
   const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
@@ -33,7 +34,12 @@ export default function App() {
 
   return (
     <div className="flex h-dvh w-dvw overflow-hidden">
-      <Sidebar view={view} onNavigate={setView} />
+      <Sidebar
+        view={view}
+        onNavigate={setView}
+        collapsed={sidebarCollapsed}
+        onToggle={() => setSidebarCollapsed((c) => !c)}
+      />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header
           title={VIEW_TITLES[view]}

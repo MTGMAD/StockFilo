@@ -649,8 +649,8 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
 
   // ── Shared charts ───────────────────────────────────────────────────────────
   const chartsSection = (
-    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-      <div className="bg-background border border-border rounded-xl p-5">
+    <div className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-4">
+      <div className="bg-background border border-border rounded-xl p-4 xl:p-5">
         <h3 className="text-sm font-semibold text-foreground mb-0.5">
           Holdings Breakdown
           {summaries.length > TOP_N ? (
@@ -706,7 +706,7 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
         </ResponsiveContainer>
       </div>
 
-      <div className="bg-background border border-border rounded-xl p-5">
+      <div className="bg-background border border-border rounded-xl p-4 xl:p-5">
         <h3 className="text-sm font-semibold text-foreground mb-0.5">
           Today's Change by Position
         </h3>
@@ -768,12 +768,12 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
   if (investorMode === "novice") {
     return (
       <div className="h-full overflow-y-auto">
-        <div className="p-6 flex flex-col gap-5">
+        <div className="p-4 xl:p-6 flex flex-col gap-4 xl:gap-5">
           <div className="flex items-center justify-end">
             <ModePill mode={investorMode} onChange={onModeChange} />
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 xl:gap-4">
             <StatCard
               label="Money You Put In"
               value={formatCurrency(totalInvested)}
@@ -887,12 +887,12 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
   // ════════════════════════════════════════════════════════════════════════════
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-6 flex flex-col gap-5">
+      <div className="p-4 xl:p-6 flex flex-col gap-4 xl:gap-5">
         <div className="flex items-center justify-end">
           <ModePill mode={investorMode} onChange={onModeChange} />
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 xl:gap-4">
           <StatCard
             label="Total Invested"
             value={formatCurrency(totalInvested)}
