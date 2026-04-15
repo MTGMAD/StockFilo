@@ -4,6 +4,7 @@ import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
 import { searchTickers } from "../../lib/db";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
+import { TickerLogo } from "../shared/TickerLogo";
 import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
 import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
 import {
@@ -251,9 +252,12 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
                     >
                       {/* Ticker */}
                       <td className="px-4 py-2.5 font-semibold text-foreground">
-                        <div className="flex items-center gap-1.5">
-                          {triggered && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                          {item.ticker}
+                        <div className="flex items-center gap-2">
+                          <TickerLogo ticker={item.ticker} />
+                          <div className="flex items-center gap-1.5">
+                            {triggered && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                            {item.ticker}
+                          </div>
                         </div>
                       </td>
 
