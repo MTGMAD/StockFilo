@@ -21,6 +21,22 @@ A blazing-fast, privacy-first desktop app for tracking personal investments — 
 
 ---
 
+## 🖥️ Screenshots
+
+**Dashboard** — Novice mode with portfolio health, winners/losers, and holdings breakdown:
+
+![Novice Dashboard](docs/screenshots/Novice%20Dashboard.png)
+
+**Analysis** — Per-ticker price chart, cost basis overlay, P&L metrics, and live news:
+
+![Portfolio Analysis](docs/screenshots/Portfolio.png)
+
+**Purchases** — Full purchase log with live P&L, market value, and daily change:
+
+![Purchases](docs/screenshots/Purchases.png)
+
+---
+
 ## ✨ Features at a Glance
 
 ### 📊 Dual-Mode Dashboard
@@ -69,19 +85,6 @@ You own your data — completely:
 - **Import from CSV** — restore or migrate from another tool
 - **Theme support** — System / Light / Dark, persisted automatically
 - **Dashboard mode** persisted per device
-
----
-
-## 🖥️ Screenshots
-
-> **Coming soon** — drop your own screenshots in `docs/screenshots/` and reference them here.
-
-<!-- 
-![Dashboard - Novice Mode](docs/screenshots/dashboard-novice.png)
-![Dashboard - Advanced Mode](docs/screenshots/dashboard-advanced.png)
-![Analysis View](docs/screenshots/analysis.png)
-![Watchlist](docs/screenshots/watchlist.png)
--->
 
 ---
 
