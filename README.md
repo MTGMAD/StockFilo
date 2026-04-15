@@ -31,6 +31,10 @@ A blazing-fast, privacy-first desktop app for tracking personal investments — 
 
 ![Portfolio Analysis](docs/screenshots/Portfolio.png)
 
+**Watch List** — Track tickers before buying, with sparklines, target price alerts, and notes:
+
+![Watch List](docs/screenshots/Watch%20List.png)
+
 **Purchases** — Full purchase log with live P&L, market value, and daily change:
 
 ![Purchases](docs/screenshots/Purchases.png)
