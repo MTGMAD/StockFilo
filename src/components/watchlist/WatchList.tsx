@@ -10,7 +10,7 @@ import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
 import {
   Plus, Trash2, ShoppingCart, Search, Loader2,
   TrendingUp, TrendingDown, Minus,
-  Bell, BellOff, MessageSquare, MessageSquareDiff,
+  Bell, MessageSquare, MessageSquareDiff,
 } from "lucide-react";
 
 interface WatchListProps {
