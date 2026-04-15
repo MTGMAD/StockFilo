@@ -24,16 +24,18 @@ A blazing-fast, privacy-first desktop app for tracking personal investments — 
 ## ✨ Features at a Glance
 
 ### 📊 Dual-Mode Dashboard
+
 Switch between **Novice** and **Advanced** modes to match your experience level — no clutter, no confusion.
 
 | Novice Mode | Advanced Mode |
-|---|---|
+| --- | --- |
 | Plain-English labels with helpful tooltips | Full suite of professional metrics |
 | Portfolio Health indicator (diversification score) | Concentration risk analysis |
 | Winners vs. Losers count card | 10-column sortable table with all data |
 | Simplified 5-column holdings view | Asset Allocation breakdown by type |
 
 ### 📈 Deep-Dive Analysis
+
 Click any ticker for a full per-position breakdown:
 
 - **Mountain chart** with 8 time ranges — `1D · 5D · 1M · 6M · YTD · 1Y · 5Y · MAX`
@@ -43,6 +45,7 @@ Click any ticker for a full per-position breakdown:
 - **Yahoo Finance integration** — one click opens the ticker in your browser
 
 ### 👀 Smart Watchlist
+
 Never miss a move on stocks you're tracking but haven't bought yet:
 
 - **Live search-as-you-type** — finds tickers by name or symbol via Yahoo Finance
@@ -50,6 +53,7 @@ Never miss a move on stocks you're tracking but haven't bought yet:
 - **One-click buy** — purchase directly from the watchlist when you're ready
 
 ### 💼 Portfolio Management
+
 Accurately track your positions across stocks, ETFs, mutual funds, and crypto:
 
 - Log purchases with shares, price per share, and purchase date
@@ -58,6 +62,7 @@ Accurately track your positions across stocks, ETFs, mutual funds, and crypto:
 - Cost basis tracking across multiple purchases of the same ticker
 
 ### ⚙️ Settings & Data Control
+
 You own your data — completely:
 
 - **Export to CSV** — save your purchases any time
@@ -83,7 +88,7 @@ You own your data — completely:
 ## 🏗️ Tech Stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | **Desktop shell** | [Tauri 2](https://tauri.app) (Rust) |
 | **UI framework** | [React 19](https://react.dev) + [TypeScript 6](https://www.typescriptlang.org) |
 | **Styling** | [Tailwind CSS 4](https://tailwindcss.com) |
