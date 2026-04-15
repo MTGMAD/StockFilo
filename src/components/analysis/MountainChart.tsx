@@ -220,7 +220,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
                     year: "numeric",
                   });
                 }}
-                formatter={(value: number) => [formatCurrency(value), "Price"]}
+                formatter={(value) => [value != null ? formatCurrency(Number(value)) : "—", "Price"] as [string, string]}
                 contentStyle={{
                   background: "var(--background)",
                   border: "1px solid var(--border)",

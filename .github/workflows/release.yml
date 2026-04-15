@@ -1,0 +1,133 @@
+name: Release
+
+# Trigger: push a version tag  →  git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ── Windows build ──────────────────────────────────────────────────────────
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Tauri build (Windows)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: StockFilo ${{ github.ref_name }}
+          releaseBody: |
+            ## StockFilo ${{ github.ref_name }}
+
+            ### Windows
+            - **StockFilo_x.x.x_x64-setup.exe** — NSIS installer (recommended)
+            - **StockFilo_x.x.x_x64_en-US.msi** — MSI installer
+
+            > See the full changelog in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+
+  # ── macOS build ────────────────────────────────────────────────────────────
+  build-macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust stable + Apple targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Tauri build (macOS — universal binary)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: StockFilo ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+          args: --target universal-apple-darwin
+
+  # ── Linux build ────────────────────────────────────────────────────────────
+  build-linux:
+    name: Linux
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Tauri build (Linux)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: StockFilo ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
