@@ -1,36 +1,76 @@
 use std::path::Path;
 use std::process::Command;
+use tauri::{AppHandle, Manager};
 
-/// Finds a Chromium-based browser on Windows and launches the URL in --app mode.
-/// App mode strips the address bar and tab strip, making it feel like an in-app
-/// popup while still using the real browser engine with the user's login state/cookies.
-#[tauri::command]
-pub async fn open_browser_window(url: String, _title: String) -> Result<(), String> {
-    launch_app_mode(&url)
+struct BrowserGeometry {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
 }
 
-fn launch_app_mode(url: &str) -> Result<(), String> {
+/// Reads the main window's position/size and calculates a browser window that fits
+/// within it while leaving the app visible around the edges.
+fn browser_geometry(app: &AppHandle) -> BrowserGeometry {
+    let fallback = BrowserGeometry { x: 60, y: 60, width: 900, height: 700 };
+
+    let Some(win) = app.get_webview_window("main") else {
+        return fallback;
+    };
+    let (Ok(scale), Ok(pos), Ok(size)) = (
+        win.scale_factor(),
+        win.outer_position(),
+        win.outer_size(),
+    ) else {
+        return fallback;
+    };
+
+    // Convert physical pixels → logical pixels (what --window-size/position expect).
+    let log_w = (size.width as f64 / scale) as u32;
+    let log_h = (size.height as f64 / scale) as u32;
+    let log_x = (pos.x as f64 / scale) as i32;
+    let log_y = (pos.y as f64 / scale) as i32;
+
+    // 82% of app size so the app frame is visible on all sides; minimum 600×500.
+    let offset = 40i32;
+    BrowserGeometry {
+        x: log_x + offset,
+        y: log_y + offset,
+        width: ((log_w as f64 * 0.82) as u32).max(600),
+        height: ((log_h as f64 * 0.82) as u32).max(500),
+    }
+}
+
+/// Finds a Chromium-based browser on the system and launches the URL in --app mode.
+/// App mode strips the address bar and tab strip while using the real browser profile
+/// (cookies, logins, extensions all intact).
+#[tauri::command]
+pub async fn open_browser_window(app: AppHandle, url: String, _title: String) -> Result<(), String> {
+    let geo = browser_geometry(&app);
+    launch_app_mode(&url, &geo)
+}
+
+fn launch_app_mode(url: &str, geo: &BrowserGeometry) -> Result<(), String> {
+    let size_arg = format!("--window-size={},{}", geo.width, geo.height);
+    let pos_arg = format!("--window-position={},{}", geo.x, geo.y);
+    let app_arg = format!("--app={url}");
+
     #[cfg(target_os = "windows")]
     {
         let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
         let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
-        let pf86 =
-            std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
+        let pf86 = std::env::var("ProgramFiles(x86)")
+            .unwrap_or_else(|_| r"C:\Program Files (x86)".into());
 
-        // Chromium-based browsers that support --app mode, checked in preference order.
         let candidates = [
-            // Edge (pre-installed on Windows 10/11)
             format!(r"{pf86}\Microsoft\Edge\Application\msedge.exe"),
             format!(r"{pf}\Microsoft\Edge\Application\msedge.exe"),
             format!(r"{local}\Microsoft\Edge\Application\msedge.exe"),
-            // Chrome
             format!(r"{pf}\Google\Chrome\Application\chrome.exe"),
             format!(r"{pf86}\Google\Chrome\Application\chrome.exe"),
             format!(r"{local}\Google\Chrome\Application\chrome.exe"),
-            // Brave
             format!(r"{pf}\BraveSoftware\Brave-Browser\Application\brave.exe"),
             format!(r"{local}\BraveSoftware\Brave-Browser\Application\brave.exe"),
-            // Vivaldi
             format!(r"{local}\Vivaldi\Application\vivaldi.exe"),
             format!(r"{pf}\Vivaldi\Application\vivaldi.exe"),
         ];
@@ -38,18 +78,13 @@ fn launch_app_mode(url: &str) -> Result<(), String> {
         for exe in &candidates {
             if Path::new(exe).exists() {
                 Command::new(exe)
-                    .args([
-                        format!("--app={url}").as_str(),
-                        "--window-size=1024,768",
-                        "--new-window",
-                    ])
+                    .args([&app_arg, &size_arg, &pos_arg, "--new-window"])
                     .spawn()
                     .map_err(|e| format!("Failed to launch browser: {e}"))?;
                 return Ok(());
             }
         }
 
-        // Fallback: no Chromium browser found — open in default browser normally.
         Command::new("cmd")
             .args(["/c", "start", "", url])
             .spawn()
@@ -68,11 +103,7 @@ fn launch_app_mode(url: &str) -> Result<(), String> {
         for exe in candidates {
             if Path::new(exe).exists() {
                 Command::new(exe)
-                    .args([
-                        format!("--app={url}").as_str(),
-                        "--window-size=1024,768",
-                        "--new-window",
-                    ])
+                    .args([&app_arg, &size_arg, &pos_arg, "--new-window"])
                     .spawn()
                     .map_err(|e| format!("Failed to launch browser: {e}"))?;
                 return Ok(());
@@ -97,3 +128,4 @@ fn launch_app_mode(url: &str) -> Result<(), String> {
     #[allow(unreachable_code)]
     Ok(())
 }
+
