@@ -1,14 +1,21 @@
 import { useState } from "react";
-import type { Theme } from "../../types";
+import type { Theme, InvestorMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2 } from "lucide-react";
+import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart } from "lucide-react";
 import { exportPurchasesCsv, importPurchasesCsv, clearAllPurchases } from "../../lib/db";
 
 interface SettingsPanelProps {
   theme: Theme;
   onThemeChange: (t: Theme) => void;
   onDataChange: () => void;
+  investorMode: InvestorMode;
+  onInvestorModeChange: (m: InvestorMode) => void;
 }
+
+const investorModes: { id: InvestorMode; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "novice", label: "Novice", description: "Simplified view with plain-English labels and helpful context", Icon: GraduationCap },
+  { id: "advanced", label: "Advanced", description: "Full metrics, sortable table, asset breakdown, and concentration data", Icon: LineChart },
+];
 
 const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "system", label: "System", Icon: Monitor },
@@ -16,7 +23,7 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "dark", label: "Dark", Icon: Moon },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange }: SettingsPanelProps) {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -96,7 +103,33 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange }: SettingsPa
       </div>
 
       <div className="mt-8 pt-8 border-t border-border">
-        <h2 className="text-base font-semibold text-foreground mb-1">Data</h2>
+        <h2 className="text-base font-semibold text-foreground mb-1">Dashboard Mode</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Choose a view that matches your experience level.
+        </p>
+        <div className="flex flex-col gap-3">
+          {investorModes.map(({ id, label, description, Icon }) => (
+            <button
+              key={id}
+              onClick={() => onInvestorModeChange(id)}
+              className={cn(
+                "flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-colors",
+                investorMode === id
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+              )}
+            >
+              <Icon className="w-5 h-5 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-medium">{label}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{description}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-8 pt-8 border-t border-border">
         <p className="text-sm text-muted-foreground mb-4">
           Export your purchases to a CSV file or import from one. This makes it easy to move your data to a new machine.
         </p>

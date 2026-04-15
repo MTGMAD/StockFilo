@@ -61,6 +61,7 @@ export interface Favorite {
 
 export type View = 'dashboard' | 'purchases' | 'analysis' | 'watchlist' | 'settings';
 export type Theme = 'system' | 'light' | 'dark';
+export type InvestorMode = 'novice' | 'advanced';
 
 export interface ChartPoint {
   timestamp: number;

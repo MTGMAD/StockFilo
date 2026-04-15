@@ -10,6 +10,7 @@ import { Dashboard } from "./components/dashboard/Dashboard";
 import { usePortfolio } from "./hooks/usePortfolio";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useTheme } from "./hooks/useTheme";
+import { useInvestorMode } from "./hooks/useInvestorMode";
 
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Dashboard",
@@ -23,6 +24,7 @@ export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [analysisTicker, setAnalysisTicker] = useState<string | null>(null);
   const { theme, setTheme } = useTheme();
+  const { investorMode, setInvestorMode } = useInvestorMode();
   const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
     usePortfolio();
   const watchlist = useWatchlist();
@@ -49,7 +51,7 @@ export default function App() {
               Loading…
             </div>
           ) : view === "dashboard" ? (
-            <Dashboard summaries={summaries} />
+            <Dashboard summaries={summaries} investorMode={investorMode} onModeChange={setInvestorMode} />
           ) : view === "purchases" ? (
             <PurchasesTable
               purchases={purchases}
@@ -76,7 +78,7 @@ export default function App() {
               }}
             />
           ) : (
-            <SettingsPanel theme={theme} onThemeChange={setTheme} onDataChange={refresh} />
+            <SettingsPanel theme={theme} onThemeChange={setTheme} onDataChange={refresh} investorMode={investorMode} onInvestorModeChange={setInvestorMode} />
           )}
         </main>
       </div>
