@@ -1,0 +1,24 @@
+{
+  "version": "0.2",
+  "words": [
+    "tauri",
+    "reqwest",
+    "watchlist",
+    "stockfilo",
+    "recharts",
+    "lucide",
+    "radix",
+    "MTGMAD",
+    "uninit",
+    "webview",
+    "cdylib",
+    "rlib",
+    "serde",
+    "tokio",
+    "chrono",
+    "urlencoding",
+    "thiserror",
+    "sqlx",
+    "autofetch"
+  ]
+}
