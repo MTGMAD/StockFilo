@@ -5,6 +5,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
+// Match the user-agent to the OS TLS fingerprint to avoid Cloudflare bot detection.
+#[cfg(target_os = "macos")]
+const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
+#[cfg(not(target_os = "macos"))]
+const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36";
+
 #[derive(Debug, Deserialize)]
 struct YahooQuoteResponse {
     #[serde(rename = "quoteResponse")]
@@ -86,7 +92,7 @@ pub struct ChartData {
 async fn get_authenticated_client() -> Result<(Client, String), String> {
     let jar = Arc::new(Jar::default());
     let client = Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .user_agent(USER_AGENT)
         .cookie_provider(jar.clone())
         .timeout(Duration::from_secs(10))
         .build()
@@ -228,7 +234,7 @@ pub async fn search_tickers(query: &str) -> Result<Vec<SearchResult>, String> {
     }
 
     let client = Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
@@ -373,7 +379,7 @@ pub struct NewsArticle {
 /// Only returns articles where this ticker is the primary subject (first in relatedTickers).
 pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, String> {
     let client = Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;

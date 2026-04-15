@@ -1,5 +1,5 @@
 import type { View } from "../../types";
-import { BarChart2, List, Settings, Eye } from "lucide-react";
+import { LayoutDashboard, BarChart2, List, Settings, Eye } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 interface SidebarProps {
@@ -8,6 +8,7 @@ interface SidebarProps {
 }
 
 const navItems: { id: View; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { id: "analysis", label: "Analysis", Icon: BarChart2 },
   { id: "watchlist", label: "Watch List", Icon: Eye },
   { id: "purchases", label: "Purchases", Icon: List },
@@ -16,7 +17,7 @@ const navItems: { id: View; label: string; Icon: React.ComponentType<{ className
 
 export function Sidebar({ view, onNavigate }: SidebarProps) {
   return (
-    <aside className="flex flex-col w-52 min-h-screen bg-sidebar border-r border-border shrink-0">
+    <aside className="flex flex-col w-52 h-full bg-sidebar border-r border-border shrink-0">
       <div className="flex items-center gap-2 px-5 py-5 border-b border-border">
         <span className="text-xl font-bold tracking-tight text-foreground">StockFilo</span>
       </div>

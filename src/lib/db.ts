@@ -59,6 +59,12 @@ export async function deletePurchase(id: number): Promise<void> {
   await db.execute("DELETE FROM purchases WHERE id = ?", [id]);
 }
 
+export async function clearAllPurchases(): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM purchases", []);
+  await db.execute("DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist)", []);
+}
+
 // ── Stocks / Prices ────────────────────────────────────────────────────────
 
 export async function getCachedStocks(): Promise<Stock[]> {
@@ -219,6 +225,7 @@ export async function importPurchasesCsv(): Promise<number> {
   const startIdx = firstLine.includes("ticker") ? 1 : 0;
 
   let imported = 0;
+  const dataLines = lines.length - startIdx;
   for (let i = startIdx; i < lines.length; i++) {
     const cols = parseCsvLine(lines[i]);
     if (cols.length < 4) continue;
@@ -234,6 +241,13 @@ export async function importPurchasesCsv(): Promise<number> {
 
     await addPurchase(ticker, shares, price, date);
     imported++;
+  }
+
+  if (imported === 0 && dataLines > 0) {
+    throw new Error(
+      `No rows could be imported. Expected format: ticker,shares,price_per_share,purchased_at (YYYY-MM-DD). ` +
+      `Found ${dataLines} data row${dataLines === 1 ? "" : "s"} but none matched the required format.`
+    );
   }
 
   return imported;

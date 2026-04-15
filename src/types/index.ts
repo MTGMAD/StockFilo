@@ -59,7 +59,7 @@ export interface Favorite {
   sort_order: number;
 }
 
-export type View = 'purchases' | 'analysis' | 'watchlist' | 'settings';
+export type View = 'dashboard' | 'purchases' | 'analysis' | 'watchlist' | 'settings';
 export type Theme = 'system' | 'light' | 'dark';
 
 export interface ChartPoint {

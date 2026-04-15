@@ -6,11 +6,13 @@ import { PurchasesTable } from "./components/portfolio/PurchasesTable";
 import { AnalysisView } from "./components/analysis/AnalysisView";
 import { WatchList } from "./components/watchlist/WatchList";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
+import { Dashboard } from "./components/dashboard/Dashboard";
 import { usePortfolio } from "./hooks/usePortfolio";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useTheme } from "./hooks/useTheme";
 
 const VIEW_TITLES: Record<View, string> = {
+  dashboard: "Dashboard",
   purchases: "Purchases",
   analysis: "Analysis",
   watchlist: "Watch List",
@@ -18,17 +20,17 @@ const VIEW_TITLES: Record<View, string> = {
 };
 
 export default function App() {
-  const [view, setView] = useState<View>("analysis");
+  const [view, setView] = useState<View>("dashboard");
   const [analysisTicker, setAnalysisTicker] = useState<string | null>(null);
   const { theme, setTheme } = useTheme();
   const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
     usePortfolio();
   const watchlist = useWatchlist();
 
-  const showRefresh = view === "purchases" || view === "analysis";
+  const showRefresh = view === "purchases" || view === "analysis" || view === "dashboard";
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
+    <div className="flex h-dvh w-dvw overflow-hidden">
       <Sidebar view={view} onNavigate={setView} />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header
@@ -46,6 +48,8 @@ export default function App() {
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
               Loading…
             </div>
+          ) : view === "dashboard" ? (
+            <Dashboard summaries={summaries} />
           ) : view === "purchases" ? (
             <PurchasesTable
               purchases={purchases}

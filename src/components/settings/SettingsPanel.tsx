@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { Theme } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle } from "lucide-react";
-import { exportPurchasesCsv, importPurchasesCsv } from "../../lib/db";
+import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2 } from "lucide-react";
+import { exportPurchasesCsv, importPurchasesCsv, clearAllPurchases } from "../../lib/db";
 
 interface SettingsPanelProps {
   theme: Theme;
@@ -19,6 +19,8 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
 export function SettingsPanel({ theme, onThemeChange, onDataChange }: SettingsPanelProps) {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   async function handleExport() {
@@ -51,6 +53,21 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange }: SettingsPa
       setMessage({ type: "error", text: `Import failed: ${e}` });
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleClearAll() {
+    setClearing(true);
+    setMessage(null);
+    try {
+      await clearAllPurchases();
+      setMessage({ type: "success", text: "All purchases cleared." });
+      onDataChange();
+    } catch (e) {
+      setMessage({ type: "error", text: `Clear failed: ${e}` });
+    } finally {
+      setClearing(false);
+      setConfirmClear(false);
     }
   }
 
@@ -87,11 +104,11 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange }: SettingsPa
         <div className="flex gap-3">
           <button
             onClick={handleExport}
-            disabled={exporting || importing}
+            disabled={exporting || importing || clearing}
             className={cn(
               "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
               "border-border text-foreground hover:border-primary/50 hover:text-primary",
-              (exporting || importing) && "opacity-50 cursor-not-allowed"
+              (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
             )}
           >
             <Download className="w-4 h-4" />
@@ -99,16 +116,48 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange }: SettingsPa
           </button>
           <button
             onClick={handleImport}
-            disabled={exporting || importing}
+            disabled={exporting || importing || clearing}
             className={cn(
               "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
               "border-border text-foreground hover:border-primary/50 hover:text-primary",
-              (exporting || importing) && "opacity-50 cursor-not-allowed"
+              (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
             )}
           >
             <Upload className="w-4 h-4" />
             {importing ? "Importing…" : "Import CSV"}
           </button>
+          {!confirmClear ? (
+            <button
+              onClick={() => setConfirmClear(true)}
+              disabled={exporting || importing || clearing}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
+                "border-red-300 text-red-600 hover:border-red-500 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950",
+                (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
+              )}
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear All
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-red-600 font-medium">Are you sure?</span>
+              <button
+                onClick={handleClearAll}
+                disabled={clearing}
+                className="px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors"
+              >
+                {clearing ? "Clearing…" : "Yes, delete all"}
+              </button>
+              <button
+                onClick={() => setConfirmClear(false)}
+                disabled={clearing}
+                className="px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
 
         {message && (
