@@ -1,0 +1,51 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Diagonal violet → deep indigo gradient -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7c3aed"/>
+      <stop offset="100%" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <!-- Top gloss sheen -->
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="white" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Chart area fill — full height gradient under the line -->
+    <linearGradient id="chartFill" x1="0" y1="300" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="white" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0.02"/>
+    </linearGradient>
+    <clipPath id="clip">
+      <rect width="1024" height="1024" rx="200" ry="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Rounded gradient background -->
+  <rect width="1024" height="1024" rx="200" ry="200" fill="url(#bg)"/>
+
+  <!-- Top gloss sheen -->
+  <rect width="1024" height="420" fill="url(#gloss)" clip-path="url(#clip)"/>
+
+  <!-- Chart area fill — spans full canvas behind text -->
+  <path clip-path="url(#clip)" fill="url(#chartFill)"
+    d="M 0 820 C 120 760 240 800 360 740 C 480 680 580 620 700 560
+       C 820 500 900 440 1024 380 L 1024 1024 L 0 1024 Z"/>
+
+  <!-- Chart line — ascending bezier crossing the full canvas -->
+  <path clip-path="url(#clip)" fill="none"
+    stroke="rgba(255,255,255,0.30)" stroke-width="18"
+    stroke-linecap="round" stroke-linejoin="round"
+    d="M 0 820 C 120 760 240 800 360 740 C 480 680 580 620 700 560
+       C 820 500 900 440 1024 380"/>
+
+  <!-- Live-price pulse: outer ring -->
+  <circle cx="990" cy="396" r="34" fill="rgba(255,255,255,0.20)" clip-path="url(#clip)"/>
+  <!-- Live-price pulse: inner dot -->
+  <circle cx="990" cy="396" r="16" fill="rgba(255,255,255,0.85)" clip-path="url(#clip)"/>
+
+  <!-- SF monogram — vertically centred in full canvas -->
+  <text x="512" y="600"
+    font-family="'Arial Black', 'Arial Bold', Arial, Helvetica, sans-serif"
+    font-weight="900" font-size="480" text-anchor="middle" letter-spacing="-16"
+    fill="white">SF</text>
+</svg>
