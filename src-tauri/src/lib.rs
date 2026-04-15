@@ -45,6 +45,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V5,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 6,
+                            description: "add_watch_price_to_watchlist",
+                            sql: db::migrations::MIGRATION_V6,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

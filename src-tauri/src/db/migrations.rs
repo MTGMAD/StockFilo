@@ -42,3 +42,7 @@ ALTER TABLE stocks ADD COLUMN quote_type TEXT;
 pub const MIGRATION_V5: &str = r#"
 ALTER TABLE stocks ADD COLUMN daily_change_pct REAL;
 "#;
+
+pub const MIGRATION_V6: &str = r#"
+ALTER TABLE watchlist ADD COLUMN watch_price REAL;
+"#;

@@ -43,6 +43,7 @@ export interface TickerSummary {
 export interface WatchlistItem {
   id: number;
   ticker: string;
+  watch_price: number | null;
   created_at: number;
 }
 

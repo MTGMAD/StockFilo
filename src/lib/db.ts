@@ -110,17 +110,17 @@ export async function fetchAndCachePrices(tickers: string[]): Promise<QuoteResul
 export async function listWatchlist(): Promise<WatchlistItem[]> {
   const db = await getDb();
   return db.select<WatchlistItem[]>(
-    "SELECT id, ticker, created_at FROM watchlist ORDER BY created_at DESC"
+    "SELECT id, ticker, watch_price, created_at FROM watchlist ORDER BY created_at DESC"
   );
 }
 
-export async function addToWatchlist(ticker: string): Promise<void> {
+export async function addToWatchlist(ticker: string, watchPrice: number | null = null): Promise<void> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   const t = ticker.toUpperCase();
   await db.execute(
-    "INSERT OR IGNORE INTO watchlist (ticker, created_at) VALUES (?, ?)",
-    [t, now]
+    "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at) VALUES (?, ?, ?)",
+    [t, watchPrice, now]
   );
   await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
 }

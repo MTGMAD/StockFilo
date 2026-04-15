@@ -1,14 +1,21 @@
 import { useState, useEffect, useRef } from "react";
 import type { WatchlistItem, Stock, TickerSearchResult } from "../../types";
-import { formatCurrency, cn } from "../../lib/utils";
+import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
 import { searchTickers } from "../../lib/db";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
-import { Plus, Trash2, ShoppingCart, Search, Loader2 } from "lucide-react";
+import { SparkLine } from "./SparkLine";
+import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
+import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
+import {
+  Plus, Trash2, ShoppingCart, Search, Loader2,
+  TrendingUp, TrendingDown, Minus,
+  Bell, BellOff, MessageSquare, MessageSquareDiff,
+} from "lucide-react";
 
 interface WatchListProps {
   items: WatchlistItem[];
   stocks: Stock[];
-  onAdd: (ticker: string) => Promise<void>;
+  onAdd: (ticker: string, watchPrice: number | null) => Promise<void>;
   onRemove: (id: number) => Promise<void>;
   onPurchase: (ticker: string, shares: number, price: number, date: string) => Promise<void>;
 }
@@ -22,8 +29,16 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
   const [purchaseTicker, setPurchaseTicker] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  // Target price editing state: ticker -> draft string while editing
+  const [editingTarget, setEditingTarget] = useState<string | null>(null);
+  const [targetDraft, setTargetDraft] = useState("");
+  // Note expansion state: set of tickers with open note areas
+  const [openNotes, setOpenNotes] = useState<Set<string>>(new Set());
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const { getTarget, setTarget, isTriggered } = useWatchlistTargets();
+  const { getNote, setNote, hasNote } = useWatchlistNotes();
 
   const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
   const now = Math.floor(Date.now() / 1000);
@@ -69,7 +84,9 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
   async function addTicker(symbol: string) {
     setAdding(true);
     try {
-      await onAdd(symbol);
+      // Capture the current price at the moment of adding (upgrade 5)
+      const watchPrice = stockMap.get(symbol.toUpperCase())?.last_price ?? null;
+      await onAdd(symbol, watchPrice);
       setQuery("");
       setResults([]);
       setShowDropdown(false);
@@ -189,6 +206,10 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Ticker</th>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Name</th>
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Price</th>
+                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Today</th>
+                <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">1M Trend</th>
+                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Since Added</th>
+                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Target</th>
                 <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Actions</th>
               </tr>
             </thead>
@@ -196,45 +217,194 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
               {items.map((item) => {
                 const stock = stockMap.get(item.ticker);
                 const currentPrice = stock?.last_price ?? null;
-                const isStale =
-                  !stock?.last_fetched_at || now - stock.last_fetched_at > STALE_THRESHOLD;
+                const dailyChangePct = stock?.daily_change_pct ?? null;
+                const isStale = !stock?.last_fetched_at || now - stock.last_fetched_at > STALE_THRESHOLD;
+                const triggered = isTriggered(item.ticker, currentPrice);
+                const target = getTarget(item.ticker);
+                const note = getNote(item.ticker);
+                const noteOpen = openNotes.has(item.ticker);
+
+                // Upgrade 5: watch-since calculation
+                const watchPrice = item.watch_price;
+                let sinceChangePct: number | null = null;
+                if (watchPrice != null && currentPrice != null && watchPrice > 0) {
+                  sinceChangePct = ((currentPrice - watchPrice) / watchPrice) * 100;
+                }
+
+                // Upgrade 1: daily change icon
+                const DailyIcon =
+                  dailyChangePct == null ? null
+                  : dailyChangePct > 0 ? TrendingUp
+                  : dailyChangePct < 0 ? TrendingDown
+                  : Minus;
 
                 return (
-                  <tr
-                    key={item.id}
-                    className="border-b border-border hover:bg-muted/30 transition-colors"
-                  >
-                    <td className="px-4 py-2.5 font-semibold text-foreground">{item.ticker}</td>
-                    <td className="px-4 py-2.5 text-foreground">
-                      {stock?.name ?? <span className="text-muted-foreground">—</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-foreground">
-                      <span className={cn(isStale && currentPrice != null ? "opacity-50" : "")}>
-                        {currentPrice != null ? formatCurrency(currentPrice) : "—"}
-                      </span>
-                      {isStale && currentPrice != null && (
-                        <span className="ml-1 text-xs text-amber-500">stale</span>
+                  <>
+                    <tr
+                      key={item.id}
+                      className={cn(
+                        "border-b border-border transition-colors",
+                        triggered
+                          ? "bg-amber-500/10 hover:bg-amber-500/15"
+                          : "hover:bg-muted/30"
                       )}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-center gap-1">
-                        <button
-                          onClick={() => setPurchaseTicker(item.ticker)}
-                          className="p-1.5 rounded hover:bg-green-500/10 text-muted-foreground hover:text-green-500 transition-colors"
-                          title="Add Purchase"
-                        >
-                          <ShoppingCart className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setConfirmDelete(item.id)}
-                          className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
-                          title="Remove from Watchlist"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                    >
+                      {/* Ticker */}
+                      <td className="px-4 py-2.5 font-semibold text-foreground">
+                        <div className="flex items-center gap-1.5">
+                          {triggered && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                          {item.ticker}
+                        </div>
+                      </td>
+
+                      {/* Name */}
+                      <td className="px-4 py-2.5 text-foreground max-w-[220px] truncate">
+                        {stock?.name ?? <span className="text-muted-foreground">—</span>}
+                      </td>
+
+                      {/* Price (Upgrade 1 stale indicator kept) */}
+                      <td className="px-4 py-2.5 text-right text-foreground">
+                        <span className={cn(isStale && currentPrice != null ? "opacity-50" : "")}>
+                          {currentPrice != null ? formatCurrency(currentPrice) : "—"}
+                        </span>
+                        {isStale && currentPrice != null && (
+                          <span className="ml-1 text-xs text-amber-500">stale</span>
+                        )}
+                      </td>
+
+                      {/* Upgrade 1: daily change */}
+                      <td className="px-4 py-2.5 text-right">
+                        {DailyIcon && dailyChangePct != null ? (
+                          <span className={cn("flex items-center justify-end gap-1", pnlColor(dailyChangePct))}>
+                            <DailyIcon className="w-3.5 h-3.5" />
+                            {formatPercent(dailyChangePct)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+
+                      {/* Upgrade 3: sparkline */}
+                      <td className="px-4 py-2.5">
+                        <div className="flex justify-center">
+                          <SparkLine ticker={item.ticker} quoteType={stock?.quote_type} />
+                        </div>
+                      </td>
+
+                      {/* Upgrade 5: since-added change */}
+                      <td className="px-4 py-2.5 text-right">
+                        {watchPrice != null && currentPrice != null ? (
+                          <div className="flex flex-col items-end leading-tight">
+                            <span className="text-xs text-muted-foreground">{formatCurrency(watchPrice)}</span>
+                            <span className={cn("font-medium", pnlColor(sinceChangePct))}>
+                              {formatPercent(sinceChangePct)}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+
+                      {/* Upgrade 2: target price */}
+                      <td className="px-4 py-2.5 text-right">
+                        {editingTarget === item.ticker ? (
+                          <input
+                            autoFocus
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={targetDraft}
+                            onChange={(e) => setTargetDraft(e.target.value)}
+                            onBlur={() => {
+                              const val = parseFloat(targetDraft);
+                              setTarget(item.ticker, isNaN(val) || val <= 0 ? null : val);
+                              setEditingTarget(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                              if (e.key === "Escape") { setEditingTarget(null); }
+                            }}
+                            className="w-24 text-right rounded border border-primary bg-background px-2 py-0.5 text-sm outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setEditingTarget(item.ticker);
+                              setTargetDraft(target != null ? String(target) : "");
+                            }}
+                            className={cn(
+                              "text-sm rounded px-1.5 py-0.5 transition-colors",
+                              target != null
+                                ? triggered
+                                  ? "text-amber-500 font-semibold"
+                                  : "text-primary"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                            title="Click to set buy target"
+                          >
+                            {target != null ? formatCurrency(target) : "Set target"}
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center justify-center gap-1">
+                          {/* Upgrade 4: notes toggle */}
+                          <button
+                            onClick={() => setOpenNotes((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(item.ticker)) next.delete(item.ticker);
+                              else next.add(item.ticker);
+                              return next;
+                            })}
+                            className={cn(
+                              "p-1.5 rounded transition-colors",
+                              hasNote(item.ticker)
+                                ? "text-primary hover:bg-primary/10"
+                                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                            )}
+                            title={noteOpen ? "Hide notes" : "Add / view notes"}
+                          >
+                            {hasNote(item.ticker)
+                              ? <MessageSquare className="w-3.5 h-3.5" />
+                              : <MessageSquareDiff className="w-3.5 h-3.5" />
+                            }
+                          </button>
+                          <button
+                            onClick={() => setPurchaseTicker(item.ticker)}
+                            className="p-1.5 rounded hover:bg-green-500/10 text-muted-foreground hover:text-green-500 transition-colors"
+                            title="Buy — add to portfolio"
+                          >
+                            <ShoppingCart className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(item.id)}
+                            className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                            title="Remove from Watchlist"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+
+                    {/* Upgrade 4: inline note row */}
+                    {noteOpen && (
+                      <tr key={`${item.id}-note`} className="border-b border-border bg-muted/20">
+                        <td colSpan={8} className="px-6 py-2">
+                          <textarea
+                            autoFocus
+                            rows={2}
+                            value={note}
+                            onChange={(e) => setNote(item.ticker, e.target.value)}
+                            placeholder="Add your investment thesis, price targets, catalysts to watch…"
+                            className="w-full resize-none rounded border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 );
               })}
             </tbody>

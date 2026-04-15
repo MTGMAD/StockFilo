@@ -60,10 +60,10 @@ export function useWatchlist() {
   }, [items]);
 
   const add = useCallback(
-    async (ticker: string) => {
+    async (ticker: string, watchPrice: number | null = null) => {
       setError(null);
       try {
-        await addToWatchlist(ticker);
+        await addToWatchlist(ticker, watchPrice);
         await loadAll();
       } catch (e) {
         setError(String(e));
