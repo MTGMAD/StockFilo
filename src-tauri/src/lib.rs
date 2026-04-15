@@ -54,6 +54,7 @@ pub fn run() {
             commands::stocks::fetch_chart_command,
             commands::stocks::search_tickers_command,
             commands::stocks::fetch_news_command,
+            commands::browser::open_browser_window,
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]

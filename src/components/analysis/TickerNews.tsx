@@ -1,14 +1,15 @@
 import { useState, useEffect } from "react";
-import { open } from "@tauri-apps/plugin-shell";
-import type { NewsArticle } from "../../types";
+import type { NewsArticle, LinkOpenMode } from "../../types";
 import { fetchNews } from "../../lib/db";
 import { Newspaper, ExternalLink, Loader2 } from "lucide-react";
+import { openUrl } from "../../lib/openUrl";
 
 interface TickerNewsProps {
   ticker: string;
+  linkOpenMode: LinkOpenMode;
 }
 
-export function TickerNews({ ticker }: TickerNewsProps) {
+export function TickerNews({ ticker, linkOpenMode }: TickerNewsProps) {
   const [articles, setArticles] = useState<NewsArticle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,8 +35,8 @@ export function TickerNews({ ticker }: TickerNewsProps) {
     };
   }, [ticker]);
 
-  async function openArticle(url: string) {
-    await open(url);
+  async function openArticle(url: string, title: string) {
+    await openUrl(url, linkOpenMode, title);
   }
 
   return (
@@ -59,7 +60,7 @@ export function TickerNews({ ticker }: TickerNewsProps) {
           {articles.map((article, i) => (
             <button
               key={i}
-              onClick={() => openArticle(article.url)}
+              onClick={() => openArticle(article.url, article.title)}
               className="flex gap-3 p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/50 transition-colors text-left group"
             >
               {/* Thumbnail */}

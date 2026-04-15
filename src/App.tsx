@@ -11,6 +11,7 @@ import { usePortfolio } from "./hooks/usePortfolio";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useTheme } from "./hooks/useTheme";
 import { useInvestorMode } from "./hooks/useInvestorMode";
+import { useLinkOpenMode } from "./hooks/useLinkOpenMode";
 
 const VIEW_TITLES: Record<View, string> = {
   dashboard: "Dashboard",
@@ -26,6 +27,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { theme, setTheme } = useTheme();
   const { investorMode, setInvestorMode } = useInvestorMode();
+  const { linkOpenMode, setLinkOpenMode } = useLinkOpenMode();
   const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
     usePortfolio();
   const watchlist = useWatchlist();
@@ -72,6 +74,7 @@ export default function App() {
               purchases={purchases}
               selectedTicker={analysisTicker}
               onSelectTicker={setAnalysisTicker}
+              linkOpenMode={linkOpenMode}
             />
           ) : view === "watchlist" ? (
             <WatchList
@@ -84,7 +87,7 @@ export default function App() {
               }}
             />
           ) : (
-            <SettingsPanel theme={theme} onThemeChange={setTheme} onDataChange={refresh} investorMode={investorMode} onInvestorModeChange={setInvestorMode} />
+            <SettingsPanel theme={theme} onThemeChange={setTheme} onDataChange={refresh} investorMode={investorMode} onInvestorModeChange={setInvestorMode} linkOpenMode={linkOpenMode} onLinkOpenModeChange={setLinkOpenMode} />
           )}
         </main>
       </div>

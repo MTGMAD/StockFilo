@@ -1,7 +1,7 @@
 import { useState } from "react";
-import type { Theme, InvestorMode } from "../../types";
+import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart } from "lucide-react";
+import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow } from "lucide-react";
 import { exportPurchasesCsv, importPurchasesCsv, clearAllPurchases } from "../../lib/db";
 
 interface SettingsPanelProps {
@@ -10,7 +10,14 @@ interface SettingsPanelProps {
   onDataChange: () => void;
   investorMode: InvestorMode;
   onInvestorModeChange: (m: InvestorMode) => void;
+  linkOpenMode: LinkOpenMode;
+  onLinkOpenModeChange: (m: LinkOpenMode) => void;
 }
+
+const linkOpenModes: { id: LinkOpenMode; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "browser", label: "Default Browser", description: "Opens links in your system's default web browser", Icon: Globe },
+  { id: "inapp", label: "In-App Window", description: "Opens in your browser's app mode — no tabs or address bar, with your existing login state", Icon: AppWindow },
+];
 
 const investorModes: { id: InvestorMode; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "novice", label: "Novice", description: "Simplified view with plain-English labels and helpful context", Icon: GraduationCap },
@@ -23,7 +30,7 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "dark", label: "Dark", Icon: Moon },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange }: SettingsPanelProps) {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -115,6 +122,33 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
               className={cn(
                 "flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-colors",
                 investorMode === id
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+              )}
+            >
+              <Icon className="w-5 h-5 mt-0.5 shrink-0" />
+              <div>
+                <div className="text-sm font-medium">{label}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{description}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-8 pt-8 border-t border-border">
+        <h2 className="text-base font-semibold text-foreground mb-1">Link Behavior</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Choose how ticker and news links open when you click them.
+        </p>
+        <div className="flex flex-col gap-3">
+          {linkOpenModes.map(({ id, label, description, Icon }) => (
+            <button
+              key={id}
+              onClick={() => onLinkOpenModeChange(id)}
+              className={cn(
+                "flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-colors",
+                linkOpenMode === id
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
               )}

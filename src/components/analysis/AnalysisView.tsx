@@ -1,20 +1,21 @@
 import { useEffect, useState } from "react";
-import { open } from "@tauri-apps/plugin-shell";
-import type { TickerSummary, Purchase } from "../../types";
+import type { TickerSummary, Purchase, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
 import { ExternalLink, Star, ChevronUp, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { MountainChart } from "./MountainChart";
 import { TickerNews } from "./TickerNews";
 import { useFavorites } from "../../hooks/useFavorites";
+import { openUrl } from "../../lib/openUrl";
 
 interface AnalysisViewProps {
   summaries: TickerSummary[];
   purchases: Purchase[];
   selectedTicker: string | null;
   onSelectTicker: (ticker: string | null) => void;
+  linkOpenMode: LinkOpenMode;
 }
 
-export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTicker }: AnalysisViewProps) {
+export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTicker, linkOpenMode }: AnalysisViewProps) {
   const { favoriteTickers, loaded: favoritesLoaded, isFavorite, toggle, reorder } = useFavorites();
 
   // Categorize tickers
@@ -55,7 +56,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
   const tickerPurchases = purchases.filter((p) => p.ticker === selected);
 
   async function openGoogleFinance(ticker: string) {
-    await open(`https://finance.yahoo.com/quote/${ticker}`);
+    await openUrl(`https://finance.yahoo.com/quote/${ticker}`, linkOpenMode, `${ticker} - Yahoo Finance`);
   }
 
   async function moveFavorite(ticker: string, direction: "up" | "down") {
@@ -187,7 +188,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
           <MountainChart ticker={summary.ticker} quoteType={summary.quoteType} />
 
           {/* News */}
-          <TickerNews ticker={summary.ticker} />
+          <TickerNews ticker={summary.ticker} linkOpenMode={linkOpenMode} />
 
           {/* Transaction history */}
           <div>
