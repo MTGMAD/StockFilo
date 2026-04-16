@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow } from "lucide-react";
+import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info } from "lucide-react";
 import { exportPurchasesCsv, importPurchasesCsv, clearAllPurchases } from "../../lib/db";
 
 interface SettingsPanelProps {
@@ -12,6 +12,8 @@ interface SettingsPanelProps {
   onInvestorModeChange: (m: InvestorMode) => void;
   linkOpenMode: LinkOpenMode;
   onLinkOpenModeChange: (m: LinkOpenMode) => void;
+  showInfoTooltips: boolean;
+  onShowInfoTooltipsChange: (v: boolean) => void;
 }
 
 const linkOpenModes: { id: LinkOpenMode; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
@@ -30,7 +32,7 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "dark", label: "Dark", Icon: Moon },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange }: SettingsPanelProps) {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -167,6 +169,36 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
                 </div>
               </button>
             ))}
+          </div>
+        </div>
+
+        {/* Info Tooltips */}
+        <div className="flex items-center justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">Info Tooltips</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Show explanations on dashboard cards.</p>
+          </div>
+          <div className="flex items-center gap-3 flex-1">
+            <button
+              onClick={() => onShowInfoTooltipsChange(!showInfoTooltips)}
+              className={cn(
+                "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none",
+                showInfoTooltips ? "bg-primary" : "bg-muted-foreground/30"
+              )}
+              role="switch"
+              aria-checked={showInfoTooltips}
+            >
+              <span
+                className={cn(
+                  "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                  showInfoTooltips ? "translate-x-4" : "translate-x-0.5"
+                )}
+              />
+            </button>
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Info className="w-3.5 h-3.5" />
+              {showInfoTooltips ? "Tooltips enabled" : "Tooltips hidden"}
+            </div>
           </div>
         </div>
 

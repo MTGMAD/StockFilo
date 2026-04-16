@@ -31,6 +31,7 @@ interface DashboardProps {
   summaries: TickerSummary[];
   investorMode: InvestorMode;
   onModeChange: (m: InvestorMode) => void;
+  showInfoTooltips: boolean;
 }
 
 // ── Mode toggle pill ──────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ function StatCard({
   icon: Icon,
   accent,
   tooltip,
+  showTooltip = true,
 }: {
   label: string;
   value: string;
@@ -90,6 +92,7 @@ function StatCard({
   icon: React.ComponentType<{ className?: string }>;
   accent?: "positive" | "negative" | "none";
   tooltip?: string;
+  showTooltip?: boolean;
 }) {
   const borderClass =
     accent === "positive"
@@ -103,7 +106,7 @@ function StatCard({
       <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         <Icon className="w-3.5 h-3.5" />
         {label}
-        {tooltip && <Info className="w-3 h-3 ml-auto cursor-help opacity-60" />}
+        {tooltip && showTooltip && <Info className="w-3 h-3 ml-auto cursor-help opacity-40 hover:opacity-100 transition-opacity" />}
       </div>
       <div className="text-2xl font-bold text-foreground tabular-nums">{value}</div>
       {sub && (
@@ -112,7 +115,7 @@ function StatCard({
     </div>
   );
 
-  if (!tooltip) return card;
+  if (!tooltip || !showTooltip) return card;
 
   return (
     <RadixTooltip.Provider delayDuration={200}>
@@ -121,11 +124,11 @@ function StatCard({
         <RadixTooltip.Portal>
           <RadixTooltip.Content
             side="bottom"
-            sideOffset={6}
-            className="z-50 max-w-[220px] rounded-lg border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-lg"
+            sideOffset={8}
+            className="z-50 max-w-[240px] rounded-lg bg-foreground px-3 py-2 text-xs text-background shadow-xl"
           >
             {tooltip}
-            <RadixTooltip.Arrow className="fill-border" />
+            <RadixTooltip.Arrow className="fill-foreground" />
           </RadixTooltip.Content>
         </RadixTooltip.Portal>
       </RadixTooltip.Root>
@@ -535,7 +538,7 @@ function WinnersLosersBadge({ summaries }: { summaries: TickerSummary[] }) {
 const TOP_N = 15;
 const BAR_H = 44;
 
-export function Dashboard({ summaries, investorMode, onModeChange }: DashboardProps) {
+export function Dashboard({ summaries, investorMode, onModeChange, showInfoTooltips }: DashboardProps) {
   const [sortKey, setSortKey] = useState<SortKey>("marketValue");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -782,6 +785,7 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
               icon={Wallet}
               accent="none"
               tooltip="The total amount of money you have invested across all your positions."
+              showTooltip={showInfoTooltips}
             />
             <StatCard
               label="What It's Worth Now"
@@ -789,6 +793,7 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
               icon={DollarSign}
               accent="none"
               tooltip="The current market value of your entire portfolio based on the latest prices."
+              showTooltip={showInfoTooltips}
             />
             <StatCard
               label="Your Profit / Loss"
@@ -800,6 +805,7 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
                 !hasPrices ? "none" : totalPnlDollar > 0 ? "positive" : totalPnlDollar < 0 ? "negative" : "none"
               }
               tooltip="The difference between what your portfolio is worth today versus what you paid. Positive means you are up, negative means you are down."
+              showTooltip={showInfoTooltips}
             />
             <StatCard
               label="Change Since Yesterday"
@@ -811,6 +817,7 @@ export function Dashboard({ summaries, investorMode, onModeChange }: DashboardPr
                 !hasDaily ? "none" : dailyChangeDollar > 0 ? "positive" : dailyChangeDollar < 0 ? "negative" : "none"
               }
               tooltip="How much your total portfolio value changed since yesterday's market close."
+              showTooltip={showInfoTooltips}
             />
           </div>
 
