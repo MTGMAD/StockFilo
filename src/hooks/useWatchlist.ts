@@ -4,6 +4,7 @@ import {
   listWatchlist,
   addToWatchlist,
   removeFromWatchlist,
+  setWatchlistWatchPrice,
   getCachedStocks,
   fetchAndCachePrices,
 } from "../lib/db";
@@ -58,6 +59,40 @@ export function useWatchlist() {
       clearInterval(id);
     };
   }, [items]);
+
+  // Backfill watch_price when rows were created without a quote at add time.
+  useEffect(() => {
+    const missing = items.filter((i) => i.watch_price == null || i.watch_price <= 0);
+    if (missing.length === 0) return;
+
+    const stockByTicker = new Map(stocks.map((s) => [s.ticker, s]));
+    const updates = missing
+      .map((item) => {
+        const price = stockByTicker.get(item.ticker)?.last_price;
+        if (price == null || price <= 0) return null;
+        return { id: item.id, price };
+      })
+      .filter((v): v is { id: number; price: number } => v != null);
+
+    if (updates.length === 0) return;
+
+    let cancelled = false;
+    const runBackfill = async () => {
+      try {
+        await Promise.all(updates.map((u) => setWatchlistWatchPrice(u.id, u.price)));
+        if (!cancelled) {
+          await loadAll();
+        }
+      } catch {
+        // silently continue
+      }
+    };
+
+    runBackfill();
+    return () => {
+      cancelled = true;
+    };
+  }, [items, stocks, loadAll]);
 
   const add = useCallback(
     async (ticker: string, watchPrice: number | null = null) => {

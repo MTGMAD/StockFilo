@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-import type { WatchlistItem, Stock, TickerSearchResult } from "../../types";
+import type { WatchlistItem, Stock, TickerSearchResult, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
 import { searchTickers } from "../../lib/db";
+import { openUrl } from "../../lib/openUrl";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
 import { TickerLogo } from "../shared/TickerLogo";
@@ -10,18 +11,19 @@ import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
 import {
   Plus, Trash2, ShoppingCart, Search, Loader2,
   TrendingUp, TrendingDown, Minus,
-  Bell, MessageSquare, MessageSquareDiff,
+  Bell, MessageSquare, MessageSquareDiff, ExternalLink,
 } from "lucide-react";
 
 interface WatchListProps {
   items: WatchlistItem[];
   stocks: Stock[];
+  linkOpenMode: LinkOpenMode;
   onAdd: (ticker: string, watchPrice: number | null) => Promise<void>;
   onRemove: (id: number) => Promise<void>;
   onPurchase: (ticker: string, shares: number, price: number, date: string) => Promise<void>;
 }
 
-export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchListProps) {
+export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurchase }: WatchListProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<TickerSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -44,6 +46,18 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
   const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
   const now = Math.floor(Date.now() / 1000);
   const STALE_THRESHOLD = 3600;
+
+  function formatAddedDate(unixSeconds: number): string {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(new Date(unixSeconds * 1000));
+  }
+
+  async function openTickerPage(ticker: string) {
+    await openUrl(`https://finance.yahoo.com/quote/${ticker}`, linkOpenMode, `${ticker} - Yahoo Finance`);
+  }
 
   // Debounced search
   useEffect(() => {
@@ -209,7 +223,8 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Price</th>
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Today</th>
                 <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">1M Trend</th>
-                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Since Added</th>
+                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Added</th>
+                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Since Add %</th>
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Target</th>
                 <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Actions</th>
               </tr>
@@ -254,10 +269,16 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
                       <td className="px-4 py-2.5 font-semibold text-foreground">
                         <div className="flex items-center gap-2">
                           <TickerLogo ticker={item.ticker} />
-                          <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openTickerPage(item.ticker)}
+                            className="group flex items-center gap-1.5 text-left transition-colors hover:text-primary"
+                            title={`Open ${item.ticker} on Yahoo Finance`}
+                          >
                             {triggered && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
                             {item.ticker}
-                          </div>
+                            <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                          </button>
                         </div>
                       </td>
 
@@ -295,7 +316,12 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
                         </div>
                       </td>
 
-                      {/* Upgrade 5: since-added change */}
+                      {/* Added date */}
+                      <td className="px-4 py-2.5 text-right text-foreground">
+                        <span className="text-xs">{formatAddedDate(item.created_at)}</span>
+                      </td>
+
+                      {/* Upgrade 5: since-added return */}
                       <td className="px-4 py-2.5 text-right">
                         {watchPrice != null && currentPrice != null ? (
                           <div className="flex flex-col items-end leading-tight">
@@ -305,7 +331,7 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
                             </span>
                           </div>
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          <span className="text-xs text-muted-foreground">Tracking from next quote</span>
                         )}
                       </td>
 

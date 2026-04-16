@@ -130,6 +130,14 @@ export async function removeFromWatchlist(id: number): Promise<void> {
   await db.execute("DELETE FROM watchlist WHERE id = ?", [id]);
 }
 
+export async function setWatchlistWatchPrice(id: number, watchPrice: number): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE watchlist SET watch_price = ? WHERE id = ? AND (watch_price IS NULL OR watch_price <= 0)",
+    [watchPrice, id]
+  );
+}
+
 // ── Favorites ─────────────────────────────────────────────────────────────
 
 export async function listFavorites(): Promise<Favorite[]> {

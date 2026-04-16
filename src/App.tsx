@@ -82,6 +82,7 @@ export default function App() {
             <WatchList
               items={watchlist.items}
               stocks={watchlist.stocks}
+              linkOpenMode={linkOpenMode}
               onAdd={watchlist.add}
               onRemove={watchlist.remove}
               onPurchase={async (ticker, shares, price, date) => {
