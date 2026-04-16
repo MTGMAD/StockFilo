@@ -86,173 +86,188 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
   }
 
   return (
-    <div className="p-6 max-w-md">
-      <h2 className="text-base font-semibold text-foreground mb-1">Appearance</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        Choose how StockFilo looks. "System" follows your OS preference.
-      </p>
-      <div className="flex gap-3">
-        {themes.map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            onClick={() => onThemeChange(id)}
-            className={cn(
-              "flex flex-col items-center gap-2 px-5 py-4 rounded-lg border text-sm font-medium transition-colors",
-              theme === id
-                ? "border-primary bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-            )}
-          >
-            <Icon className="w-5 h-5" />
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="h-full overflow-y-auto">
+      <div className="p-6 max-w-2xl space-y-0">
 
-      <div className="mt-8 pt-8 border-t border-border">
-        <h2 className="text-base font-semibold text-foreground mb-1">Dashboard Mode</h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          Choose a view that matches your experience level.
-        </p>
-        <div className="flex flex-col gap-3">
-          {investorModes.map(({ id, label, description, Icon }) => (
-            <button
-              key={id}
-              onClick={() => onInvestorModeChange(id)}
-              className={cn(
-                "flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-colors",
-                investorMode === id
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-              )}
-            >
-              <Icon className="w-5 h-5 mt-0.5 shrink-0" />
-              <div>
-                <div className="text-sm font-medium">{label}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{description}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="mt-8 pt-8 border-t border-border">
-        <h2 className="text-base font-semibold text-foreground mb-1">Link Behavior</h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          Choose how ticker and news links open when you click them.
-        </p>
-        <div className="flex flex-col gap-3">
-          {linkOpenModes.map(({ id, label, description, Icon }) => (
-            <button
-              key={id}
-              onClick={() => onLinkOpenModeChange(id)}
-              className={cn(
-                "flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-colors",
-                linkOpenMode === id
-                  ? "border-primary bg-primary/10 text-primary"
-                  : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-              )}
-            >
-              <Icon className="w-5 h-5 mt-0.5 shrink-0" />
-              <div>
-                <div className="text-sm font-medium">{label}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{description}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="mt-8 pt-8 border-t border-border">
-        <p className="text-sm text-muted-foreground mb-4">
-          Export your purchases to a CSV file or import from one. This makes it easy to move your data to a new machine.
-        </p>
-
-        <div className="flex gap-3">
-          <button
-            onClick={handleExport}
-            disabled={exporting || importing || clearing}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
-              "border-border text-foreground hover:border-primary/50 hover:text-primary",
-              (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
-            )}
-          >
-            <Download className="w-4 h-4" />
-            {exporting ? "Exporting…" : "Export CSV"}
-          </button>
-          <button
-            onClick={handleImport}
-            disabled={exporting || importing || clearing}
-            className={cn(
-              "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
-              "border-border text-foreground hover:border-primary/50 hover:text-primary",
-              (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
-            )}
-          >
-            <Upload className="w-4 h-4" />
-            {importing ? "Importing…" : "Import CSV"}
-          </button>
-          {!confirmClear ? (
-            <button
-              onClick={() => setConfirmClear(true)}
-              disabled={exporting || importing || clearing}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors",
-                "border-red-300 text-red-600 hover:border-red-500 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950",
-                (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
-              )}
-            >
-              <Trash2 className="w-4 h-4" />
-              Clear All
-            </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-red-600 font-medium">Are you sure?</span>
-              <button
-                onClick={handleClearAll}
-                disabled={clearing}
-                className="px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors"
-              >
-                {clearing ? "Clearing…" : "Yes, delete all"}
-              </button>
-              <button
-                onClick={() => setConfirmClear(false)}
-                disabled={clearing}
-                className="px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent disabled:opacity-50 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-        </div>
-
-        {message && (
-          <div
-            className={cn(
-              "flex items-center gap-2 mt-3 text-sm",
-              message.type === "success" ? "text-green-600" : "text-red-600"
-            )}
-          >
-            {message.type === "success" ? (
-              <CheckCircle className="w-4 h-4 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 shrink-0" />
-            )}
-            {message.text}
+        {/* Appearance */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">Appearance</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Choose how StockFilo looks.</p>
           </div>
-        )}
+          <div className="flex gap-2 flex-wrap">
+            {themes.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                onClick={() => onThemeChange(id)}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
+                  theme === id
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-        <p className="text-xs text-muted-foreground mt-3">
-          CSV format: <code className="text-xs bg-muted px-1 rounded">ticker,shares,price_per_share,purchased_at</code>
-          <br />
-          Date format: <code className="text-xs bg-muted px-1 rounded">YYYY-MM-DD</code>
-        </p>
-      </div>
+        {/* Dashboard Mode */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">Dashboard Mode</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Choose a view that matches your experience level.</p>
+          </div>
+          <div className="flex flex-col gap-2 flex-1">
+            {investorModes.map(({ id, label, description, Icon }) => (
+              <button
+                key={id}
+                onClick={() => onInvestorModeChange(id)}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors",
+                  investorMode === id
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <div>
+                  <div className="text-sm font-medium leading-tight">{label}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5 leading-tight">{description}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
 
-      <div className="mt-8 pt-8 border-t border-border">
-        <h2 className="text-base font-semibold text-foreground mb-1">About</h2>
-        <p className="text-sm text-muted-foreground">StockFilo v0.1.0 — Personal stock portfolio tracker.</p>
+        {/* Link Behavior */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">Link Behavior</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Choose how ticker and news links open.</p>
+          </div>
+          <div className="flex flex-col gap-2 flex-1">
+            {linkOpenModes.map(({ id, label, description, Icon }) => (
+              <button
+                key={id}
+                onClick={() => onLinkOpenModeChange(id)}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors",
+                  linkOpenMode === id
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                <div>
+                  <div className="text-sm font-medium leading-tight">{label}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5 leading-tight">{description}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Data Management */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">Data Management</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Export or import purchases as CSV.</p>
+          </div>
+          <div className="flex-1">
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleExport}
+                disabled={exporting || importing || clearing}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
+                  "border-border text-foreground hover:border-primary/50 hover:text-primary",
+                  (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <Download className="w-4 h-4" />
+                {exporting ? "Exporting…" : "Export CSV"}
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={exporting || importing || clearing}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
+                  "border-border text-foreground hover:border-primary/50 hover:text-primary",
+                  (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
+                )}
+              >
+                <Upload className="w-4 h-4" />
+                {importing ? "Importing…" : "Import CSV"}
+              </button>
+              {!confirmClear ? (
+                <button
+                  onClick={() => setConfirmClear(true)}
+                  disabled={exporting || importing || clearing}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
+                    "border-red-300 text-red-600 hover:border-red-500 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950",
+                    (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Clear All
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-red-600 font-medium">Are you sure?</span>
+                  <button
+                    onClick={handleClearAll}
+                    disabled={clearing}
+                    className="px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors"
+                  >
+                    {clearing ? "Clearing…" : "Yes, delete all"}
+                  </button>
+                  <button
+                    onClick={() => setConfirmClear(false)}
+                    disabled={clearing}
+                    className="px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+            {message && (
+              <div
+                className={cn(
+                  "flex items-center gap-2 mt-3 text-sm",
+                  message.type === "success" ? "text-green-600" : "text-red-600"
+                )}
+              >
+                {message.type === "success" ? (
+                  <CheckCircle className="w-4 h-4 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                )}
+                {message.text}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-3">
+              Format: <code className="bg-muted px-1 rounded">ticker,shares,price_per_share,purchased_at</code>
+              {" · "}
+              Date: <code className="bg-muted px-1 rounded">YYYY-MM-DD</code>
+            </p>
+          </div>
+        </div>
+
+        {/* About */}
+        <div className="flex items-start justify-between gap-8 py-5">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">About</h2>
+          </div>
+          <div className="flex-1">
+            <p className="text-sm text-muted-foreground">StockFilo v0.1.0 — Personal stock portfolio tracker.</p>
+          </div>
+        </div>
+
       </div>
     </div>
   );
