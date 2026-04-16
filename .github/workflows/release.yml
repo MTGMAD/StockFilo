@@ -50,7 +50,9 @@ jobs:
           prerelease: false
           includeUpdaterJson: false
 
-  # ── macOS build ────────────────────────────────────────────────────────────
+  # ── macOS build (unsigned) ─────────────────────────────────────────────────
+  # App is unsigned — users must right-click → Open on first launch,
+  # or run: xattr -cr /Applications/StockFilo.app
   build-macos:
     name: macOS
     runs-on: macos-latest
@@ -76,13 +78,24 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - name: Tauri build (macOS — universal binary)
+      - name: Tauri build (macOS — universal binary, unsigned)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SKIP_DEVSERVER_CHECK: true
         with:
           tagName: ${{ github.ref_name }}
           releaseName: StockFilo ${{ github.ref_name }}
+          releaseBody: |
+            ## StockFilo ${{ github.ref_name }}
+
+            ### macOS (unsigned)
+            - **StockFilo_x.x.x_universal.dmg** — Universal disk image (Apple Silicon + Intel)
+
+            > **First launch:** Right-click the app → **Open**, then click **Open** in the dialog.
+            > Or run in Terminal: `xattr -cr /Applications/StockFilo.app`
+
+            > See the full changelog in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: false
