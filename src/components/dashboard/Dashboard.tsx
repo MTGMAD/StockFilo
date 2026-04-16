@@ -907,12 +907,16 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
             subColor="text-muted-foreground"
             icon={Wallet}
             accent="none"
+            tooltip="The total amount of money you have invested across all your positions."
+            showTooltip={showInfoTooltips}
           />
           <StatCard
             label="Portfolio Value"
             value={hasPrices ? formatCurrency(totalValue) : "—"}
             icon={DollarSign}
             accent="none"
+            tooltip="The current market value of your entire portfolio based on the latest prices."
+            showTooltip={showInfoTooltips}
           />
           <StatCard
             label="Total Return"
@@ -923,6 +927,8 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
             accent={
               !hasPrices ? "none" : totalPnlDollar > 0 ? "positive" : totalPnlDollar < 0 ? "negative" : "none"
             }
+            tooltip="Your total gain or loss in dollars and percentage across all positions since purchase."
+            showTooltip={showInfoTooltips}
           />
           <StatCard
             label="Today's Net Change"
@@ -933,6 +939,8 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
             accent={
               !hasDaily ? "none" : dailyChangeDollar > 0 ? "positive" : dailyChangeDollar < 0 ? "negative" : "none"
             }
+            tooltip="How much your total portfolio value changed since yesterday's market close."
+            showTooltip={showInfoTooltips}
           />
           <StatCard
             label="Concentration"
@@ -949,6 +957,8 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
             }
             icon={BarChart2}
             accent="none"
+            tooltip="The percentage of your portfolio held in your single largest position. High concentration increases risk."
+            showTooltip={showInfoTooltips}
           />
         </div>
 
