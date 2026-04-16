@@ -104,8 +104,8 @@ export function PurchasesTable({
           </div>
         ) : (
           <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
+            <thead className="sticky top-0 z-10">
+              <tr className="border-b border-border bg-muted">
                 <Th>Date</Th>
                 <Th>Ticker</Th>
                 <Th align="right">Shares</Th>

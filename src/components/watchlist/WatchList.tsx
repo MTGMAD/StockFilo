@@ -202,8 +202,8 @@ export function WatchList({ items, stocks, onAdd, onRemove, onPurchase }: WatchL
           </div>
         ) : (
           <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="border-b border-border bg-muted/50">
+            <thead className="sticky top-0 z-10">
+              <tr className="border-b border-border bg-muted">
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Ticker</th>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Name</th>
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Price</th>
