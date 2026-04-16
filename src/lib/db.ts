@@ -2,7 +2,16 @@ import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
-import type { Purchase, Stock, QuoteResult, WatchlistItem, TickerSearchResult, NewsArticle, Favorite } from "../types";
+import type {
+  Purchase,
+  Stock,
+  QuoteResult,
+  WatchlistItem,
+  TickerSearchResult,
+  NewsArticle,
+  Favorite,
+  UpcomingEarningsEvent,
+} from "../types";
 
 const DB_URL = "sqlite:stockfilo.db";
 
@@ -186,6 +195,25 @@ export async function searchTickers(query: string): Promise<TickerSearchResult[]
 
 export async function fetchNews(ticker: string, count = 10): Promise<NewsArticle[]> {
   return invoke<NewsArticle[]>("fetch_news_command", { ticker: ticker.toUpperCase(), count });
+}
+
+export async function fetchUpcomingEarnings(
+  tickers: string[],
+  withinDays = 30
+): Promise<UpcomingEarningsEvent[]> {
+  if (tickers.length === 0) return [];
+  const upper = Array.from(new Set(tickers.map((t) => t.toUpperCase())));
+  return invoke<UpcomingEarningsEvent[]>("fetch_upcoming_earnings_command", {
+    tickers: upper,
+    withinDays,
+  });
+}
+
+export async function addEarningsCallToCalendar(ticker: string, eventAt: number): Promise<void> {
+  await invoke("open_earnings_call_in_calendar", {
+    ticker: ticker.toUpperCase(),
+    eventAt,
+  });
 }
 
 // ── CSV Export / Import ───────────────────────────────────────────────────

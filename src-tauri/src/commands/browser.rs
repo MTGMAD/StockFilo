@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process::Command;
+use std::{fs::File, io::Write};
 use tauri::{AppHandle, Manager};
+use chrono::{TimeZone, Utc};
 
 struct BrowserGeometry {
     x: i32,
@@ -48,6 +50,70 @@ fn browser_geometry(app: &AppHandle) -> BrowserGeometry {
 pub async fn open_browser_window(app: AppHandle, url: String, _title: String) -> Result<(), String> {
     let geo = browser_geometry(&app);
     launch_app_mode(&url, &geo)
+}
+
+#[tauri::command]
+pub async fn open_earnings_call_in_calendar(ticker: String, event_at: i64) -> Result<(), String> {
+    let event_at_seconds = if event_at > 10_000_000_000 { event_at / 1000 } else { event_at };
+
+    let start = Utc
+        .timestamp_opt(event_at_seconds, 0)
+        .single()
+        .ok_or_else(|| "Invalid earnings event timestamp".to_string())?;
+    let end = start + chrono::Duration::hours(1);
+    let now = Utc::now();
+    let safe_ticker = ticker
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect::<String>();
+
+    let uid = format!("{}-{}@stockfilo", safe_ticker, event_at_seconds);
+    let ics = format!(
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//StockFilo//Earnings Call//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:{}\r\nDTSTART:{}\r\nDTEND:{}\r\nSUMMARY:{} Earnings Call\r\nDESCRIPTION:Earnings call reminder for {}.\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        now.format("%Y%m%dT%H%M%SZ"),
+        start.format("%Y%m%dT%H%M%SZ"),
+        end.format("%Y%m%dT%H%M%SZ"),
+        ticker,
+        ticker
+    );
+
+    let mut path = std::env::temp_dir();
+    path.push(format!("stockfilo-earnings-{}-{}.ics", safe_ticker, event_at_seconds));
+
+    let mut file = File::create(&path)
+        .map_err(|e| format!("Failed to create calendar invite: {e}"))?;
+    file.write_all(ics.as_bytes())
+        .map_err(|e| format!("Failed to write calendar invite: {e}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/c", "start", "", path.to_string_lossy().as_ref()])
+            .spawn()
+            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Ok(())
 }
 
 fn launch_app_mode(url: &str, geo: &BrowserGeometry) -> Result<(), String> {

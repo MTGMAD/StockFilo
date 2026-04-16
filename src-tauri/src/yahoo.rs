@@ -1,6 +1,7 @@
 use reqwest::cookie::Jar;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -35,6 +36,35 @@ struct QuoteResult {
     quote_type: Option<String>,
     #[serde(rename = "regularMarketChangePercent")]
     regular_market_change_percent: Option<f64>,
+    #[serde(rename = "earningsTimestamp")]
+    earnings_timestamp: Option<Value>,
+    #[serde(rename = "earningsTimestampStart")]
+    earnings_timestamp_start: Option<Value>,
+    #[serde(rename = "earningsTimestampEnd")]
+    earnings_timestamp_end: Option<Value>,
+}
+
+fn value_to_i64(v: &Value) -> Option<i64> {
+    match v {
+        Value::Number(n) => n.as_i64(),
+        Value::Array(arr) => arr.first().and_then(value_to_i64),
+        Value::Object(map) => map.get("raw").and_then(value_to_i64),
+        _ => None,
+    }
+}
+
+fn extract_earnings_timestamp(q: &QuoteResult) -> Option<i64> {
+    let candidates = [
+        q.earnings_timestamp.as_ref(),
+        q.earnings_timestamp_start.as_ref(),
+        q.earnings_timestamp_end.as_ref(),
+    ];
+
+    candidates
+        .into_iter()
+        .flatten()
+        .filter_map(value_to_i64)
+        .find(|ts| *ts > 0)
 }
 
 // ── Chart / historical data types ──────────────────────────────────────────
@@ -197,6 +227,65 @@ pub async fn fetch_quotes(
     }
 
     Ok(results)
+}
+
+/// Fetch upcoming earnings events for tickers within `within_days` from now.
+pub async fn fetch_upcoming_earnings(
+    tickers: &[String],
+    within_days: i64,
+) -> Result<HashMap<String, i64>, String> {
+    if tickers.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let (client, crumb) = get_authenticated_client().await?;
+    let mut events: HashMap<String, i64> = HashMap::new();
+    let now = chrono::Utc::now().timestamp();
+    let window_end = now + within_days.max(1) * 86_400;
+
+    for chunk in tickers.chunks(10) {
+        let symbols = chunk.join(",");
+        let url = format!(
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=earningsTimestamp,earningsTimestampStart,earningsTimestampEnd",
+            symbols,
+            urlencoding::encode(&crumb)
+        );
+
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Upcoming earnings request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "Yahoo Finance returned HTTP {status} for earnings [{symbols}]: {body}"
+            ));
+        }
+
+        let data: YahooQuoteResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse upcoming earnings response: {e}"))?;
+
+        if let Some(quote_results) = data.quote_response.result {
+            for q in quote_results {
+                if let Some(ts) = extract_earnings_timestamp(&q) {
+                    if ts >= now && ts <= window_end {
+                        events.insert(q.symbol, ts);
+                    }
+                }
+            }
+        }
+
+        if tickers.len() > 10 {
+            sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    Ok(events)
 }
 
 // ── Ticker search / autocomplete ───────────────────────────────────────────

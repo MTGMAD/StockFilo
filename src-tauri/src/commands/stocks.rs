@@ -1,6 +1,5 @@
 use crate::yahoo;
 use serde::Serialize;
-use std::collections::HashMap;
 
 #[derive(Debug, Serialize)]
 pub struct QuoteResult {
@@ -17,6 +16,12 @@ pub struct SearchResult {
     pub name: Option<String>,
     pub exchange: Option<String>,
     pub type_disp: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpcomingEarningsEvent {
+    pub ticker: String,
+    pub event_at: i64,
 }
 
 /// Called from the frontend to fetch live prices for a list of tickers.
@@ -78,5 +83,24 @@ pub async fn search_tickers_command(query: String) -> Result<Vec<SearchResult>, 
             exchange: r.exchange,
             type_disp: r.type_disp,
         })
+        .collect())
+}
+
+/// Fetch upcoming earnings-call timestamps for tickers occurring within the given day window.
+#[tauri::command]
+pub async fn fetch_upcoming_earnings_command(
+    tickers: Vec<String>,
+    within_days: Option<i64>,
+) -> Result<Vec<UpcomingEarningsEvent>, String> {
+    if tickers.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let upper: Vec<String> = tickers.iter().map(|t| t.to_uppercase()).collect();
+    let events = yahoo::fetch_upcoming_earnings(&upper, within_days.unwrap_or(30)).await?;
+
+    Ok(events
+        .into_iter()
+        .map(|(ticker, event_at)| UpcomingEarningsEvent { ticker, event_at })
         .collect())
 }

@@ -84,3 +84,8 @@ export interface NewsArticle {
   publisher: string | null;
   image_url: string | null;
 }
+
+export interface UpcomingEarningsEvent {
+  ticker: string;
+  event_at: number;
+}

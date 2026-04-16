@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import type { TickerSummary, Purchase, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
-import { ExternalLink, Star, ChevronUp, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { ExternalLink, Star, ChevronUp, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, CalendarDays } from "lucide-react";
 import { MountainChart } from "./MountainChart";
 import { TickerNews } from "./TickerNews";
 import { useFavorites } from "../../hooks/useFavorites";
 import { openUrl } from "../../lib/openUrl";
+import { addEarningsCallToCalendar, fetchUpcomingEarnings } from "../../lib/db";
 
 interface AnalysisViewProps {
   summaries: TickerSummary[];
@@ -17,6 +18,9 @@ interface AnalysisViewProps {
 
 export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTicker, linkOpenMode }: AnalysisViewProps) {
   const { favoriteTickers, loaded: favoritesLoaded, isFavorite, toggle, reorder } = useFavorites();
+  const [upcomingEarnings, setUpcomingEarnings] = useState<Record<string, number>>({});
+  const [addingCalendarFor, setAddingCalendarFor] = useState<string | null>(null);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
 
   // Categorize tickers
   const favorites = summaries
@@ -54,6 +58,36 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
 
   const summary = ordered.find((s) => s.ticker === selected) ?? null;
   const tickerPurchases = purchases.filter((p) => p.ticker === selected);
+  const selectedEarningsAt = summary ? upcomingEarnings[summary.ticker] : undefined;
+  const orderedTickers = ordered.map((s) => s.ticker);
+  const earningsKey = orderedTickers.join(",");
+
+  useEffect(() => {
+    if (orderedTickers.length === 0) {
+      setUpcomingEarnings({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadUpcoming = async () => {
+      try {
+        const events = await fetchUpcomingEarnings(orderedTickers, 30);
+        if (cancelled) return;
+        const nextMap: Record<string, number> = {};
+        for (const e of events) nextMap[e.ticker] = e.event_at;
+        setUpcomingEarnings(nextMap);
+      } catch {
+        if (!cancelled) setUpcomingEarnings({});
+      }
+    };
+
+    loadUpcoming();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [earningsKey]);
 
   async function openGoogleFinance(ticker: string) {
     await openUrl(`https://finance.yahoo.com/quote/${ticker}`, linkOpenMode, `${ticker} - Yahoo Finance`);
@@ -67,6 +101,29 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
     if (swapIdx < 0 || swapIdx >= newOrder.length) return;
     [newOrder[idx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[idx]];
     await reorder(newOrder);
+  }
+
+  async function handleAddEarningsCallToCalendar(ticker: string, eventAt: number) {
+    try {
+      setAddingCalendarFor(ticker);
+      setCalendarError(null);
+      await addEarningsCallToCalendar(ticker, eventAt);
+    } catch (e) {
+      setCalendarError(`Could not open calendar for ${ticker}. Please try again.`);
+      console.error("open_earnings_call_in_calendar failed", e);
+    } finally {
+      setAddingCalendarFor(null);
+    }
+  }
+
+  function formatDateTime(unixSeconds: number): string {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(unixSeconds * 1000));
   }
 
   if (summaries.length === 0) {
@@ -99,6 +156,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
               key={s.ticker}
               s={s}
               isSelected={selected === s.ticker}
+              hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
               isFav
               favIdx={favIdx}
               favCount={favoriteTickers.length}
@@ -114,6 +172,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
               key={s.ticker}
               s={s}
               isSelected={selected === s.ticker}
+              hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
               isFav={false}
               favIdx={-1}
               favCount={0}
@@ -129,6 +188,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
               key={s.ticker}
               s={s}
               isSelected={selected === s.ticker}
+              hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
               isFav={false}
               favIdx={-1}
               favCount={0}
@@ -153,6 +213,24 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
               <ExternalLink className="w-5 h-5 opacity-60" />
             </button>
             {summary.name && <span className="text-muted-foreground">{summary.name}</span>}
+            {selectedEarningsAt && (
+              <button
+                onClick={() => handleAddEarningsCallToCalendar(summary.ticker, selectedEarningsAt)}
+                disabled={addingCalendarFor === summary.ticker}
+                className="btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1.5"
+                title="Open your default calendar app and add an earnings-call invite"
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                {addingCalendarFor === summary.ticker
+                  ? "Opening Calendar..."
+                  : `Add Earning Call to Calendar (${formatDateTime(selectedEarningsAt)})`}
+              </button>
+            )}
+            {calendarError && (
+              <span className="text-xs bg-red-500/10 text-red-600 px-2 py-0.5 rounded-full">
+                {calendarError}
+              </span>
+            )}
             {summary.isStale && summary.currentPrice != null && (
               <span className="text-xs bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded-full">
                 stale price
@@ -286,6 +364,7 @@ function CollapsibleSection({
 function TickerRow({
   s,
   isSelected,
+  hasUpcomingEarnings,
   isFav,
   favIdx,
   favCount,
@@ -295,6 +374,7 @@ function TickerRow({
 }: {
   s: TickerSummary;
   isSelected: boolean;
+  hasUpcomingEarnings: boolean;
   isFav: boolean;
   favIdx: number;
   favCount: number;
@@ -330,7 +410,12 @@ function TickerRow({
         onClick={() => onSelect(s.ticker)}
         className="flex-1 text-left px-2 py-2 text-sm font-medium min-w-0"
       >
-        <div className="truncate">{s.ticker}</div>
+        <div className="truncate flex items-center gap-1.5">
+          <span>{s.ticker}</span>
+          {hasUpcomingEarnings && (
+            <CalendarDays className={cn("w-3.5 h-3.5 shrink-0", isSelected ? "text-primary-foreground/85" : "text-primary")} />
+          )}
+        </div>
         {s.name && <div className="text-xs opacity-70 truncate">{s.name}</div>}
       </button>
 
