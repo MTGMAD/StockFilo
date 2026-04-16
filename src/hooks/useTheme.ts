@@ -5,7 +5,7 @@ const THEME_KEY = "stockfilo-theme";
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
-  root.classList.remove("light", "dark");
+  root.classList.remove("light", "dark", "warm");
   if (theme === "system") {
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     root.classList.add(prefersDark ? "dark" : "light");

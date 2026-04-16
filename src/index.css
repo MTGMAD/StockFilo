@@ -14,6 +14,10 @@
   --accent: hsl(220 14.3% 95.9%);
   --accent-foreground: hsl(220.9 39.3% 11%);
   --sidebar: hsl(220 14.3% 97%);
+  --positive: hsl(142 71% 45%);
+  --negative: hsl(0 84% 60%);
+  --warning: hsl(38 92% 50%);
+  --chart-2: hsl(217 91% 60%);
 }
 
 /* ── Dark theme overrides ────────────────────────────────────────────────── */
@@ -30,6 +34,32 @@
   --accent: hsl(220 14% 22%);
   --accent-foreground: hsl(210 20% 92%);
   --sidebar: hsl(222 16% 11%);
+  --positive: hsl(142 60% 48%);
+  --negative: hsl(0 72% 62%);
+  --warning: hsl(38 85% 52%);
+  --chart-2: hsl(217 80% 62%);
+}
+
+/* ── Warm (parchment) theme ─────────────────────────────────────────────── */
+.warm {
+  --background: hsl(40 35% 96%);
+  --foreground: hsl(30 18% 14%);
+  --muted: hsl(38 22% 90%);
+  --muted-foreground: hsl(30 10% 46%);
+  --border: hsl(36 18% 84%);
+  --primary: hsl(142 32% 38%);
+  --primary-foreground: hsl(0 0% 98%);
+  --secondary: hsl(38 22% 90%);
+  --secondary-foreground: hsl(30 18% 18%);
+  --accent: hsl(38 20% 87%);
+  --accent-foreground: hsl(30 18% 18%);
+  --sidebar: hsl(40 28% 92%);
+  --popover: hsl(40 35% 96%);
+  --popover-foreground: hsl(30 18% 14%);
+  --positive: hsl(130 28% 42%);
+  --negative: hsl(8 38% 50%);
+  --warning: hsl(35 50% 46%);
+  --chart-2: hsl(210 30% 52%);
 }
 
 /* ── Wire CSS vars into Tailwind v4 theme ────────────────────────────────── */
@@ -46,6 +76,9 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-sidebar: var(--sidebar);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-warning: var(--warning);
 }
 
 /* ── Base styles ─────────────────────────────────────────────────────────── */

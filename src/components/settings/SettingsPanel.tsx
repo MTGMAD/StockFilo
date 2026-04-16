@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info } from "lucide-react";
+import { Monitor, Sun, Moon, Leaf, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info } from "lucide-react";
 import { exportPurchasesCsv, importPurchasesCsv, clearAllPurchases } from "../../lib/db";
 
 interface SettingsPanelProps {
@@ -30,6 +30,7 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "system", label: "System", Icon: Monitor },
   { id: "light", label: "Light", Icon: Sun },
   { id: "dark", label: "Dark", Icon: Moon },
+  { id: "warm", label: "Warm", Icon: Leaf },
 ];
 
 export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange }: SettingsPanelProps) {

@@ -27,7 +27,13 @@ export function formatShares(value: number): string {
 
 export function pnlColor(value: number | null | undefined): string {
   if (value == null) return "";
-  if (value > 0) return "text-green-500";
-  if (value < 0) return "text-red-500";
+  if (value > 0) return "text-positive";
+  if (value < 0) return "text-negative";
   return "text-muted-foreground";
+}
+
+/** Read a CSS custom property from :root as a color string usable in SVG fills. */
+export function getCssVar(name: string): string {
+  if (typeof document === "undefined") return "";
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }

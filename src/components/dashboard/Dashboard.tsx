@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { TickerSummary, InvestorMode } from "../../types";
-import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
+import { formatCurrency, formatPercent, pnlColor, getCssVar, cn } from "../../lib/utils";
 import {
   BarChart,
   Bar,
@@ -96,9 +96,9 @@ function StatCard({
 }) {
   const borderClass =
     accent === "positive"
-      ? "border-green-500/40 bg-green-500/5"
+      ? "border-positive/40 bg-positive/5"
       : accent === "negative"
-      ? "border-red-500/40 bg-red-500/5"
+      ? "border-negative/40 bg-negative/5"
       : "border-border bg-background";
 
   const card = (
@@ -315,21 +315,21 @@ function PortfolioHealth({
       : maxPct >= 50
       ? {
           label: "Concentrated",
-          color: "text-red-500",
-          bg: "bg-red-500/10 border-red-500/30",
+          color: "text-negative",
+          bg: "bg-negative/10 border-negative/30",
           desc: "One position makes up over half your portfolio.",
         }
       : maxPct >= 25
       ? {
           label: "Moderately Diversified",
-          color: "text-yellow-500",
-          bg: "bg-yellow-500/10 border-yellow-500/30",
+          color: "text-warning",
+          bg: "bg-warning/10 border-warning/30",
           desc: "One position holds a large share. Consider spreading out.",
         }
       : {
           label: "Well Diversified",
-          color: "text-green-500",
-          bg: "bg-green-500/10 border-green-500/30",
+          color: "text-positive",
+          bg: "bg-positive/10 border-positive/30",
           desc: "Your portfolio is spread across many positions.",
         };
 
@@ -378,15 +378,15 @@ function PortfolioHealth({
             <div className="flex items-center gap-3 mt-1">
               {winners > 0 && (
                 <div className="flex items-center gap-1">
-                  <TrendingUp className="w-4 h-4 text-green-500" />
-                  <span className="text-lg font-bold text-green-500">{winners}</span>
+                  <TrendingUp className="w-4 h-4 text-positive" />
+                  <span className="text-lg font-bold text-positive">{winners}</span>
                   <span className="text-xs text-muted-foreground">up</span>
                 </div>
               )}
               {losers > 0 && (
                 <div className="flex items-center gap-1">
-                  <TrendingDown className="w-4 h-4 text-red-500" />
-                  <span className="text-lg font-bold text-red-500">{losers}</span>
+                  <TrendingDown className="w-4 h-4 text-negative" />
+                  <span className="text-lg font-bold text-negative">{losers}</span>
                   <span className="text-xs text-muted-foreground">down</span>
                 </div>
               )}
@@ -447,7 +447,7 @@ function AssetAllocation({
   }
 
   const sorted = [...buckets.values()].sort((a, b) => b.value - a.value);
-  const COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#3b82f6", "#ec4899", "#14b8a6", "#f97316"];
+  const COLORS = [getCssVar("--primary"), getCssVar("--chart-2"), "#f59e0b", "#ec4899", "#14b8a6", "#f97316", "#a78bfa"];
 
   return (
     <div className="bg-background border border-border rounded-xl p-5">
@@ -502,13 +502,13 @@ function WinnersLosersBadge({ summaries }: { summaries: TickerSummary[] }) {
   return (
     <div className="flex flex-wrap items-center gap-3 px-5 py-3 bg-background border border-border rounded-xl text-sm">
       {winners > 0 && (
-        <span className="flex items-center gap-1 text-green-600 font-medium">
+        <span className="flex items-center gap-1 text-positive font-medium">
           <TrendingUp className="w-3.5 h-3.5" />
           {winners} gainer{winners !== 1 ? "s" : ""}
         </span>
       )}
       {losers > 0 && (
-        <span className="flex items-center gap-1 text-red-500 font-medium">
+        <span className="flex items-center gap-1 text-negative font-medium">
           <TrendingDown className="w-3.5 h-3.5" />
           {losers} loser{losers !== 1 ? "s" : ""}
         </span>
@@ -519,13 +519,13 @@ function WinnersLosersBadge({ summaries }: { summaries: TickerSummary[] }) {
       <span className="text-muted-foreground">·</span>
       {topGainer && (topGainer.pnlDollar ?? 0) > 0 && (
         <span className="text-xs text-muted-foreground">
-          Best: <span className="font-semibold text-green-600">{topGainer.ticker}</span>{" "}
+          Best: <span className="font-semibold text-positive">{topGainer.ticker}</span>{" "}
           {formatCurrency(topGainer.pnlDollar!)}
         </span>
       )}
       {topLoser && (topLoser.pnlDollar ?? 0) < 0 && (
         <span className="text-xs text-muted-foreground">
-          Worst: <span className="font-semibold text-red-500">{topLoser.ticker}</span>{" "}
+          Worst: <span className="font-semibold text-negative">{topLoser.ticker}</span>{" "}
           {formatCurrency(topLoser.pnlDollar!)}
         </span>
       )}
@@ -651,6 +651,10 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
     });
 
   // ── Shared charts ───────────────────────────────────────────────────────────
+  const positiveColor = getCssVar("--positive");
+  const negativeColor = getCssVar("--negative");
+  const primaryColor = getCssVar("--primary");
+
   const chartsSection = (
     <div className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-4">
       <div className="bg-background border border-border rounded-xl p-4 xl:p-5">
@@ -701,7 +705,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
               {holdingsChartData.map((d) => (
                 <Cell
                   key={d.ticker}
-                  fill={d.pnl == null ? "#7c3aed" : d.pnl >= 0 ? "#22c55e" : "#ef4444"}
+                  fill={d.pnl == null ? primaryColor : d.pnl >= 0 ? positiveColor : negativeColor}
                 />
               ))}
             </Bar>
@@ -755,7 +759,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
               />
               <Bar dataKey="change" radius={4} isAnimationActive={false}>
                 {dailyChartData.map((d) => (
-                  <Cell key={d.ticker} fill={d.change >= 0 ? "#22c55e" : "#ef4444"} />
+                  <Cell key={d.ticker} fill={d.change >= 0 ? positiveColor : negativeColor} />
                 ))}
               </Bar>
             </BarChart>
@@ -950,10 +954,10 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
               largestPositionPct == null
                 ? undefined
                 : largestPositionPct >= 50
-                ? "text-red-500"
+                ? "text-negative"
                 : largestPositionPct >= 25
-                ? "text-yellow-500"
-                : "text-green-500"
+                ? "text-warning"
+                : "text-positive"
             }
             icon={BarChart2}
             accent="none"

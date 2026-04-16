@@ -61,7 +61,7 @@ export interface Favorite {
 }
 
 export type View = 'dashboard' | 'purchases' | 'analysis' | 'watchlist' | 'settings';
-export type Theme = 'system' | 'light' | 'dark';
+export type Theme = 'system' | 'light' | 'dark' | 'warm';
 export type InvestorMode = 'novice' | 'advanced';
 export type LinkOpenMode = 'browser' | 'inapp';
 

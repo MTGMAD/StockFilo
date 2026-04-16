@@ -340,9 +340,9 @@ function TickerRow({
           className={cn(
             "flex items-center gap-0.5 pr-1 shrink-0 text-xs font-medium",
             s.dailyChangePct > 0
-              ? isSelected ? "text-green-200" : "text-green-500"
+              ? isSelected ? "text-primary-foreground/80" : "text-positive"
               : s.dailyChangePct < 0
-                ? isSelected ? "text-red-300" : "text-red-500"
+                ? isSelected ? "text-primary-foreground/70" : "text-negative"
                 : isSelected ? "text-primary-foreground/60" : "text-muted-foreground"
           )}
         >

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChartData } from "../../types";
 import { LineChart, Line, ResponsiveContainer } from "recharts";
+import { getCssVar } from "../../lib/utils";
 
 interface SparkLineProps {
   ticker: string;
@@ -37,7 +38,7 @@ export function SparkLine({ ticker, quoteType }: SparkLineProps) {
   }
 
   const color =
-    trend === "up" ? "#22c55e" : trend === "down" ? "#ef4444" : "#6b7280";
+    trend === "up" ? getCssVar("--positive") : trend === "down" ? getCssVar("--negative") : "#6b7280";
 
   return (
     <div className="w-20 h-8">

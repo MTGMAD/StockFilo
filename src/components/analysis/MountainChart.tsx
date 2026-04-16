@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChartData, ChartRange } from "../../types";
-import { formatCurrency, cn } from "../../lib/utils";
+import { formatCurrency, getCssVar, cn } from "../../lib/utils";
 import {
   AreaChart,
   Area,
@@ -104,7 +104,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
   const refPrice = previousClose ?? firstPrice;
   const isUp = lastPrice != null && refPrice != null ? lastPrice >= refPrice : true;
 
-  const chartColor = isUp ? "#22c55e" : "#ef4444"; // green-500 / red-500
+  const chartColor = isUp ? getCssVar("--positive") : getCssVar("--negative"); // theme-aware
   const gradientId = `mountain-gradient-${ticker}`;
 
   // Price change display
@@ -150,7 +150,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
             <span
               className={cn(
                 "text-sm font-medium",
-                isUp ? "text-green-500" : "text-red-500"
+                isUp ? "text-positive" : "text-negative"
               )}
             >
               {priceDelta >= 0 ? "+" : ""}
