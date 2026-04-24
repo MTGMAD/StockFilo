@@ -47,6 +47,25 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
   const now = Math.floor(Date.now() / 1000);
   const STALE_THRESHOLD = 3600;
 
+  function sinceAddedPct(item: WatchlistItem): number | null {
+    const stock = stockMap.get(item.ticker);
+    const currentPrice = stock?.last_price ?? null;
+    const watchPrice = item.watch_price;
+    if (watchPrice == null || currentPrice == null || watchPrice <= 0) return null;
+    return ((currentPrice - watchPrice) / watchPrice) * 100;
+  }
+
+  function liveRank(item: WatchlistItem): number {
+    const stock = stockMap.get(item.ticker);
+    return stock?.daily_change_pct ?? sinceAddedPct(item) ?? Number.NEGATIVE_INFINITY;
+  }
+
+  const rankedItems = [...items].sort((a, b) => {
+    const rankDelta = liveRank(b) - liveRank(a);
+    if (rankDelta !== 0) return rankDelta;
+    return a.ticker.localeCompare(b.ticker);
+  });
+
   function formatAddedDate(unixSeconds: number): string {
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
@@ -231,7 +250,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
+              {rankedItems.map((item) => {
                 const stock = stockMap.get(item.ticker);
                 const currentPrice = stock?.last_price ?? null;
                 const targetMeanPrice = stock?.target_mean_price ?? null;
@@ -244,10 +263,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
 
                 // Upgrade 5: watch-since calculation
                 const watchPrice = item.watch_price;
-                let sinceChangePct: number | null = null;
-                if (watchPrice != null && currentPrice != null && watchPrice > 0) {
-                  sinceChangePct = ((currentPrice - watchPrice) / watchPrice) * 100;
-                }
+                const sinceChangePct = sinceAddedPct(item);
 
                 const targetUpsidePct =
                   targetMeanPrice != null && currentPrice != null && currentPrice > 0
