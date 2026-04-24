@@ -419,6 +419,17 @@ function TickerRow({
         {s.name && <div className="text-xs opacity-70 truncate">{s.name}</div>}
       </button>
 
+      {/* Price vs avg cost indicator */}
+      {s.pnlDollar != null && (
+        <div
+          className={cn(
+            "w-2 h-2 rounded-full shrink-0 mr-1",
+            s.pnlDollar > 0 ? "bg-positive" : "bg-negative"
+          )}
+          title={s.pnlDollar > 0 ? "Price is above your avg cost" : "Price is below your avg cost"}
+        />
+      )}
+
       {/* Daily change indicator */}
       {s.dailyChangePct != null && (
         <div
