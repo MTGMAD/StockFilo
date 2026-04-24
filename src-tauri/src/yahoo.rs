@@ -180,7 +180,12 @@ pub async fn fetch_quotes(
 
     // Process in chunks of 10 to stay within Yahoo rate limits
     for chunk in tickers.chunks(10) {
-        let symbols = chunk.join(",");
+        let raw_symbols = chunk.join(",");
+        let symbols = chunk
+            .iter()
+            .map(|s| urlencoding::encode(s).into_owned())
+            .collect::<Vec<_>>()
+            .join(",");
         let url = format!(
             "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent",
             symbols,
@@ -197,7 +202,7 @@ pub async fn fetch_quotes(
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             return Err(format!(
-                "Yahoo Finance returned HTTP {status} for [{symbols}]: {body}"
+                "Yahoo Finance returned HTTP {status} for [{raw_symbols}]: {body}"
             ));
         }
 
@@ -244,7 +249,12 @@ pub async fn fetch_upcoming_earnings(
     let window_end = now + within_days.max(1) * 86_400;
 
     for chunk in tickers.chunks(10) {
-        let symbols = chunk.join(",");
+        let raw_symbols = chunk.join(",");
+        let symbols = chunk
+            .iter()
+            .map(|s| urlencoding::encode(s).into_owned())
+            .collect::<Vec<_>>()
+            .join(",");
         let url = format!(
             "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=earningsTimestamp,earningsTimestampStart,earningsTimestampEnd",
             symbols,
@@ -261,7 +271,7 @@ pub async fn fetch_upcoming_earnings(
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             return Err(format!(
-                "Yahoo Finance returned HTTP {status} for earnings [{symbols}]: {body}"
+                "Yahoo Finance returned HTTP {status} for earnings [{raw_symbols}]: {body}"
             ));
         }
 

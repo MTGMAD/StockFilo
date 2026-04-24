@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import type { WatchlistItem, Stock, TickerSearchResult, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
 import { searchTickers } from "../../lib/db";
@@ -255,9 +255,8 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                   : Minus;
 
                 return (
-                  <>
+                  <Fragment key={item.id}>
                     <tr
-                      key={item.id}
                       className={cn(
                         "border-b border-border transition-colors",
                         triggered
@@ -422,7 +421,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                     {/* Upgrade 4: inline note row */}
                     {noteOpen && (
                       <tr key={`${item.id}-note`} className="border-b border-border bg-muted/20">
-                        <td colSpan={8} className="px-6 py-2">
+                        <td colSpan={9} className="px-6 py-2">
                           <textarea
                             autoFocus
                             rows={2}
@@ -434,7 +433,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

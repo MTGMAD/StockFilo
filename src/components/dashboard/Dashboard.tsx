@@ -538,6 +538,13 @@ function WinnersLosersBadge({ summaries }: { summaries: TickerSummary[] }) {
 const TOP_N = 15;
 const BAR_H = 44;
 
+function dailyDollarChange(currentValue: number, dailyChangePct: number): number {
+  const changeRatio = dailyChangePct / 100;
+  if (changeRatio <= -1) return 0;
+  const previousValue = currentValue / (1 + changeRatio);
+  return currentValue - previousValue;
+}
+
 export function Dashboard({ summaries, investorMode, onModeChange, showInfoTooltips }: DashboardProps) {
   const [sortKey, setSortKey] = useState<SortKey>("marketValue");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -565,7 +572,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
     (s) => s.marketValue != null && s.dailyChangePct != null
   );
   const dailyChangeDollar = dailySummaries.reduce(
-    (s, t) => s + (t.marketValue! * t.dailyChangePct!) / 100,
+    (s, t) => s + dailyDollarChange(t.marketValue!, t.dailyChangePct!),
     0
   );
   const portfolioDailyPct =
@@ -602,7 +609,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
   const dailyChartData: DailyRow[] = [...dailySummaries]
     .map((s) => ({
       ticker: s.ticker,
-      change: (s.marketValue! * s.dailyChangePct!) / 100,
+      change: dailyDollarChange(s.marketValue!, s.dailyChangePct!),
       pct: s.dailyChangePct!,
     }))
     .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
