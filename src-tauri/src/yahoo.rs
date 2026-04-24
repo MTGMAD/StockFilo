@@ -36,6 +36,8 @@ struct QuoteResult {
     quote_type: Option<String>,
     #[serde(rename = "regularMarketChangePercent")]
     regular_market_change_percent: Option<f64>,
+    #[serde(rename = "targetMeanPrice")]
+    target_mean_price: Option<Value>,
     #[serde(rename = "earningsTimestamp")]
     earnings_timestamp: Option<Value>,
     #[serde(rename = "earningsTimestampStart")]
@@ -44,11 +46,43 @@ struct QuoteResult {
     earnings_timestamp_end: Option<Value>,
 }
 
+#[derive(Debug, Deserialize)]
+struct YahooQuoteSummaryResponse {
+    #[serde(rename = "quoteSummary")]
+    quote_summary: QuoteSummaryOuter,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuoteSummaryOuter {
+    result: Option<Vec<QuoteSummaryResult>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuoteSummaryResult {
+    #[serde(rename = "financialData")]
+    financial_data: Option<FinancialData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FinancialData {
+    #[serde(rename = "targetMeanPrice")]
+    target_mean_price: Option<Value>,
+}
+
 fn value_to_i64(v: &Value) -> Option<i64> {
     match v {
         Value::Number(n) => n.as_i64(),
         Value::Array(arr) => arr.first().and_then(value_to_i64),
         Value::Object(map) => map.get("raw").and_then(value_to_i64),
+        _ => None,
+    }
+}
+
+fn value_to_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::Array(arr) => arr.first().and_then(value_to_f64),
+        Value::Object(map) => map.get("raw").and_then(value_to_f64),
         _ => None,
     }
 }
@@ -164,6 +198,42 @@ pub struct QuoteData {
     pub name: Option<String>,
     pub quote_type: Option<String>,
     pub daily_change_pct: Option<f64>,
+    pub target_mean_price: Option<f64>,
+}
+
+async fn fetch_target_mean_price(
+    client: &Client,
+    ticker: &str,
+    crumb: &str,
+) -> Result<Option<f64>, String> {
+    let url = format!(
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{}?modules=financialData&crumb={}",
+        urlencoding::encode(ticker),
+        urlencoding::encode(crumb),
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Target estimate request failed for {ticker}: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+
+    let data: YahooQuoteSummaryResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse target estimate response for {ticker}: {e}"))?;
+
+    Ok(data
+        .quote_summary
+        .result
+        .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+        .and_then(|r| r.financial_data)
+        .and_then(|fd| fd.target_mean_price)
+        .and_then(|v| value_to_f64(&v)))
 }
 
 /// Fetch current prices for a batch of tickers from Yahoo Finance.
@@ -187,7 +257,7 @@ pub async fn fetch_quotes(
             .collect::<Vec<_>>()
             .join(",");
         let url = format!(
-            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent",
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent,targetMeanPrice",
             symbols,
             urlencoding::encode(&crumb)
         );
@@ -215,11 +285,18 @@ pub async fn fetch_quotes(
             for q in quote_results {
                 if let Some(price) = q.regular_market_price {
                     let name = q.long_name.or(q.short_name);
+                    let target_mean_price = match q.target_mean_price.as_ref().and_then(value_to_f64) {
+                        Some(price) => Some(price),
+                        None => fetch_target_mean_price(&client, &q.symbol, &crumb)
+                            .await
+                            .unwrap_or(None),
+                    };
                     results.insert(q.symbol, QuoteData {
                         price,
                         name,
                         quote_type: q.quote_type,
                         daily_change_pct: q.regular_market_change_percent,
+                        target_mean_price,
                     });
                 }
             }

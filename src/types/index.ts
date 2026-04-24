@@ -14,6 +14,7 @@ export interface Stock {
   last_fetched_at: number | null;
   quote_type: string | null;
   daily_change_pct: number | null;
+  target_mean_price: number | null;
 }
 
 export interface QuoteResult {
@@ -22,6 +23,7 @@ export interface QuoteResult {
   name: string | null;
   quote_type: string | null;
   daily_change_pct: number | null;
+  target_mean_price: number | null;
 }
 
 export interface TickerSummary {

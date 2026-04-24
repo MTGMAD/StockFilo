@@ -46,3 +46,7 @@ ALTER TABLE stocks ADD COLUMN daily_change_pct REAL;
 pub const MIGRATION_V6: &str = r#"
 ALTER TABLE watchlist ADD COLUMN watch_price REAL;
 "#;
+
+pub const MIGRATION_V7: &str = r#"
+ALTER TABLE stocks ADD COLUMN target_mean_price REAL;
+"#;

@@ -221,6 +221,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Ticker</th>
                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Name</th>
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Price</th>
+                <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">1Y Target</th>
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Today</th>
                 <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">1M Trend</th>
                 <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Added</th>
@@ -233,6 +234,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
               {items.map((item) => {
                 const stock = stockMap.get(item.ticker);
                 const currentPrice = stock?.last_price ?? null;
+                const targetMeanPrice = stock?.target_mean_price ?? null;
                 const dailyChangePct = stock?.daily_change_pct ?? null;
                 const isStale = !stock?.last_fetched_at || now - stock.last_fetched_at > STALE_THRESHOLD;
                 const triggered = isTriggered(item.ticker, currentPrice);
@@ -246,6 +248,11 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                 if (watchPrice != null && currentPrice != null && watchPrice > 0) {
                   sinceChangePct = ((currentPrice - watchPrice) / watchPrice) * 100;
                 }
+
+                const targetUpsidePct =
+                  targetMeanPrice != null && currentPrice != null && currentPrice > 0
+                    ? ((targetMeanPrice - currentPrice) / currentPrice) * 100
+                    : null;
 
                 // Upgrade 1: daily change icon
                 const DailyIcon =
@@ -293,6 +300,22 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                         </span>
                         {isStale && currentPrice != null && (
                           <span className="ml-1 text-xs text-amber-500">stale</span>
+                        )}
+                      </td>
+
+                      {/* Analyst 1-year target estimate */}
+                      <td className="px-4 py-2.5 text-right">
+                        {targetMeanPrice != null ? (
+                          <div className="flex flex-col items-end leading-tight">
+                            <span className="text-foreground">{formatCurrency(targetMeanPrice)}</span>
+                            {targetUpsidePct != null && (
+                              <span className={cn("text-xs font-medium", pnlColor(targetUpsidePct))}>
+                                {formatPercent(targetUpsidePct)}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
                         )}
                       </td>
 
@@ -421,7 +444,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                     {/* Upgrade 4: inline note row */}
                     {noteOpen && (
                       <tr key={`${item.id}-note`} className="border-b border-border bg-muted/20">
-                        <td colSpan={9} className="px-6 py-2">
+                        <td colSpan={10} className="px-6 py-2">
                           <textarea
                             autoFocus
                             rows={2}

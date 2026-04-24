@@ -9,6 +9,9 @@ pub struct Stock {
     pub name: Option<String>,
     pub last_price: Option<f64>,
     pub last_fetched_at: Option<i64>,
+    pub quote_type: Option<String>,
+    pub daily_change_pct: Option<f64>,
+    pub target_mean_price: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

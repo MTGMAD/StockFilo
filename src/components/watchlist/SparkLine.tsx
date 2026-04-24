@@ -12,9 +12,12 @@ interface SparkLineProps {
 export function SparkLine({ ticker, quoteType }: SparkLineProps) {
   const [data, setData] = useState<{ v: number }[]>([]);
   const [trend, setTrend] = useState<"up" | "down" | "flat">("flat");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setData([]);
+    setLoaded(false);
     const isFund = quoteType === "MUTUALFUND" || quoteType === "UIT";
     invoke<ChartData>("fetch_chart_command", {
       ticker,
@@ -22,18 +25,32 @@ export function SparkLine({ ticker, quoteType }: SparkLineProps) {
       interval: isFund ? "1d" : "1d",
     })
       .then((chart) => {
-        if (cancelled || chart.points.length < 2) return;
+        if (cancelled) return;
+        if (chart.points.length < 2) {
+          setLoaded(true);
+          return;
+        }
         const points = chart.points.map((p) => ({ v: p.close }));
         const first = points[0].v;
         const last = points[points.length - 1].v;
         setTrend(last > first ? "up" : last < first ? "down" : "flat");
         setData(points);
       })
-      .catch(() => {/* silently skip on error */});
+      .catch(() => {/* silently skip on error */})
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
     return () => { cancelled = true; };
   }, [ticker, quoteType]);
 
   if (data.length === 0) {
+    if (loaded) {
+      return (
+        <div className="flex h-8 w-20 items-center justify-center text-xs text-muted-foreground">
+          —
+        </div>
+      );
+    }
     return <div className="w-20 h-8 rounded bg-muted/50 animate-pulse" />;
   }
 

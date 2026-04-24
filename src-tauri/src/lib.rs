@@ -51,6 +51,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V6,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 7,
+                            description: "add_target_mean_price_to_stocks",
+                            sql: db::migrations::MIGRATION_V7,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),
