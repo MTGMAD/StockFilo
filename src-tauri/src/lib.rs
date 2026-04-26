@@ -13,7 +13,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
-                    "sqlite:stockfilo.db",
+                    "sqlite:stockfolio.db",
                     vec![
                         tauri_plugin_sql::Migration {
                             version: 1,
@@ -55,6 +55,12 @@ pub fn run() {
                             version: 7,
                             description: "add_target_mean_price_to_stocks",
                             sql: db::migrations::MIGRATION_V7,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 8,
+                            description: "add_portfolios_and_portfolio_id",
+                            sql: db::migrations::MIGRATION_V8,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
                     ],

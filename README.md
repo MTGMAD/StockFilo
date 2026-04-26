@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="src-tauri/icons/128x128@2x.png" width="120" alt="StockFilo" />
+<img src="src-tauri/icons/128x128@2x.png" width="120" alt="Stockfolio" />
 
-# StockFilo
+# Stockfolio
 
 **Your portfolio. Your machine. No cloud, no nonsense.**
 
@@ -17,7 +17,7 @@ A blazing-fast, privacy-first desktop app for tracking personal investments — 
 
 ---
 
-> **StockFilo** combines real-time market data with a beautiful, native desktop experience — without ever sending your financial data to a server. Every position, every purchase, every gain — stored locally on your machine.
+> **Stockfolio** combines real-time market data with a beautiful, native desktop experience — without ever sending your financial data to a server. Every position, every purchase, every gain — stored locally on your machine.
 
 ---
 
@@ -110,7 +110,7 @@ You own your data — completely:
 
 ## 🔒 Privacy First
 
-StockFilo makes **zero network requests from your browser**. All market data fetching happens in the Rust backend process and is stored in a local SQLite database on your machine. No accounts. No telemetry. No cloud sync. Your portfolio data never leaves your device.
+Stockfolio makes **zero network requests from your browser**. All market data fetching happens in the Rust backend process and is stored in a local SQLite database on your machine. No accounts. No telemetry. No cloud sync. Your portfolio data never leaves your device.
 
 ---
 

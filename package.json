@@ -1,5 +1,5 @@
 {
-  "name": "stockfilo",
+  "name": "stockfolio",
   "version": "1.0.0",
   "description": "App for tracking personal stocks and research",
   "main": "index.js",
@@ -49,6 +49,7 @@
     "react-dom": "^19.2.5",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.5.0",
-    "tailwindcss": "^4.2.2"
+    "tailwindcss": "^4.2.2",
+    "xlsx": "^0.18.5"
   }
 }

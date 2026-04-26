@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Theme } from "../types";
 
-const THEME_KEY = "stockfilo-theme";
+const THEME_KEY = "stockfolio-theme";
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;

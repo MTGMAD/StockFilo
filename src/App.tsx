@@ -1,40 +1,67 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { View } from "./types";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
-import { PurchasesTable } from "./components/portfolio/PurchasesTable";
-import { AnalysisView } from "./components/analysis/AnalysisView";
+import { PortfolioView } from "./components/portfolio/PortfolioView";
 import { WatchList } from "./components/watchlist/WatchList";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Dashboard } from "./components/dashboard/Dashboard";
 import { usePortfolio } from "./hooks/usePortfolio";
+import { usePortfolios } from "./hooks/usePortfolios";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useTheme } from "./hooks/useTheme";
 import { useInvestorMode } from "./hooks/useInvestorMode";
 import { useLinkOpenMode } from "./hooks/useLinkOpenMode";
 import { useInfoTooltips } from "./hooks/useInfoTooltips";
 
-const VIEW_TITLES: Record<View, string> = {
+const VIEW_TITLES: Partial<Record<View, string>> = {
   dashboard: "Dashboard",
-  purchases: "Purchases",
-  analysis: "Analysis",
   watchlist: "Watch List",
   settings: "Settings",
 };
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
-  const [analysisTicker, setAnalysisTicker] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { theme, setTheme } = useTheme();
   const { investorMode, setInvestorMode } = useInvestorMode();
   const { linkOpenMode, setLinkOpenMode } = useLinkOpenMode();
   const { showInfoTooltips, setShowInfoTooltips } = useInfoTooltips();
-  const { purchases, stocks, summaries, loading, refreshing, error, refresh, add, update, remove } =
-    usePortfolio();
+
+  const { portfolios, loading: portfoliosLoading, starredPortfolio, create, rename, remove, star, reorder } = usePortfolios();
+
+  const [activePortfolioId, setActivePortfolioId] = useState<number | null>(null);
+
+  // Once portfolios are loaded, default to the starred one
+  useEffect(() => {
+    if (!portfoliosLoading && activePortfolioId == null && starredPortfolio != null) {
+      setActivePortfolioId(starredPortfolio.id);
+    }
+  }, [portfoliosLoading, activePortfolioId, starredPortfolio]);
+
+  const resolvedPortfolioId = activePortfolioId ?? starredPortfolio?.id ?? null;
+  const activePortfolio = portfolios.find((p) => p.id === resolvedPortfolioId) ?? null;
+
+  const { purchases, stocks, summaries, loading, refreshing, error, refresh, reload, add, update, remove: deletePurchase } =
+    usePortfolio(resolvedPortfolioId);
+
   const watchlist = useWatchlist();
 
-  const showRefresh = view === "purchases" || view === "analysis" || view === "dashboard";
+  const showRefresh = view === "portfolio" || view === "dashboard";
+
+  const headerTitle =
+    view === "portfolio" && activePortfolio
+      ? activePortfolio.name
+      : VIEW_TITLES[view] ?? "";
+
+  async function handleSelectPortfolio(id: number) {
+    setActivePortfolioId(id);
+    setView("portfolio");
+  }
+
+  async function handleCreatePortfolio(name: string): Promise<number> {
+    return await create(name);
+  }
 
   return (
     <div className="flex h-dvh w-dvw overflow-hidden">
@@ -43,10 +70,29 @@ export default function App() {
         onNavigate={setView}
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((c) => !c)}
+        portfolios={portfolios}
+        activePortfolioId={resolvedPortfolioId}
+        onSelectPortfolio={handleSelectPortfolio}
+        onCreatePortfolio={handleCreatePortfolio}
+        onRenamePortfolio={rename}
+        onDeletePortfolio={async (id) => {
+          await remove(id);
+          if (id === resolvedPortfolioId) {
+            const remaining = portfolios.filter((p) => p.id !== id);
+            if (remaining.length > 0) {
+              setActivePortfolioId(remaining[0].id);
+            } else {
+              setActivePortfolioId(null);
+              setView("dashboard");
+            }
+          }
+        }}
+        onStarPortfolio={star}
+        onReorderPortfolios={reorder}
       />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header
-          title={VIEW_TITLES[view]}
+          title={headerTitle}
           onRefresh={showRefresh ? refresh : undefined}
           refreshing={refreshing}
         />
@@ -56,26 +102,33 @@ export default function App() {
           </div>
         )}
         <main className="flex-1 overflow-hidden">
-          {loading ? (
+          {loading || portfoliosLoading ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
               Loading…
             </div>
           ) : view === "dashboard" ? (
-            <Dashboard summaries={summaries} investorMode={investorMode} onModeChange={setInvestorMode} showInfoTooltips={showInfoTooltips} />
-          ) : view === "purchases" ? (
-            <PurchasesTable
+            <Dashboard
+              summaries={summaries}
+              investorMode={investorMode}
+              onModeChange={setInvestorMode}
+              showInfoTooltips={showInfoTooltips}
+              portfolios={portfolios}
+              activePortfolioId={resolvedPortfolioId}
+              onSelectPortfolio={(id) => {
+                setActivePortfolioId(id);
+              }}
+            />
+          ) : view === "portfolio" ? (
+            <PortfolioView
+              portfolioId={resolvedPortfolioId}
+              portfolioName={activePortfolio?.name ?? ""}
               purchases={purchases}
               stocks={stocks}
+              summaries={summaries}
               onAdd={add}
               onUpdate={update}
-              onDelete={remove}
-            />
-          ) : view === "analysis" ? (
-            <AnalysisView
-              summaries={summaries}
-              purchases={purchases}
-              selectedTicker={analysisTicker}
-              onSelectTicker={setAnalysisTicker}
+              onDelete={deletePurchase}
+              onRefresh={reload}
               linkOpenMode={linkOpenMode}
             />
           ) : view === "watchlist" ? (
@@ -90,10 +143,22 @@ export default function App() {
               }}
             />
           ) : (
-            <SettingsPanel theme={theme} onThemeChange={setTheme} onDataChange={refresh} investorMode={investorMode} onInvestorModeChange={setInvestorMode} linkOpenMode={linkOpenMode} onLinkOpenModeChange={setLinkOpenMode} showInfoTooltips={showInfoTooltips} onShowInfoTooltipsChange={setShowInfoTooltips} />
+            <SettingsPanel
+              theme={theme}
+              onThemeChange={setTheme}
+              onDataChange={refresh}
+              investorMode={investorMode}
+              onInvestorModeChange={setInvestorMode}
+              linkOpenMode={linkOpenMode}
+              onLinkOpenModeChange={setLinkOpenMode}
+              showInfoTooltips={showInfoTooltips}
+              onShowInfoTooltipsChange={setShowInfoTooltips}
+              activePortfolioId={resolvedPortfolioId}
+            />
           )}
         </main>
       </div>
     </div>
   );
 }
+

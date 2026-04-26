@@ -37,13 +37,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: StockFilo ${{ github.ref_name }}
+          releaseName: Stockfolio ${{ github.ref_name }}
           releaseBody: |
-            ## StockFilo ${{ github.ref_name }}
+            ## Stockfolio ${{ github.ref_name }}
 
             ### Windows
-            - **StockFilo_x.x.x_x64-setup.exe** — NSIS installer (recommended)
-            - **StockFilo_x.x.x_x64_en-US.msi** — MSI installer
+            - **Stockfolio_x.x.x_x64-setup.exe** — NSIS installer (recommended)
+            - **Stockfolio_x.x.x_x64_en-US.msi** — MSI installer
 
             > See the full changelog in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
           releaseDraft: true
@@ -52,7 +52,7 @@ jobs:
 
   # ── macOS build (unsigned) ─────────────────────────────────────────────────
   # App is unsigned — users must right-click → Open on first launch,
-  # or run: xattr -cr /Applications/StockFilo.app
+  # or run: xattr -cr /Applications/Stockfolio.app
   build-macos:
     name: macOS
     runs-on: macos-latest
@@ -85,15 +85,15 @@ jobs:
           TAURI_SKIP_DEVSERVER_CHECK: true
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: StockFilo ${{ github.ref_name }}
+          releaseName: Stockfolio ${{ github.ref_name }}
           releaseBody: |
-            ## StockFilo ${{ github.ref_name }}
+            ## Stockfolio ${{ github.ref_name }}
 
             ### macOS (unsigned)
-            - **StockFilo_x.x.x_universal.dmg** — Universal disk image (Apple Silicon + Intel)
+            - **Stockfolio_x.x.x_universal.dmg** — Universal disk image (Apple Silicon + Intel)
 
             > **First launch:** Right-click the app → **Open**, then click **Open** in the dialog.
-            > Or run in Terminal: `xattr -cr /Applications/StockFilo.app`
+            > Or run in Terminal: `xattr -cr /Applications/Stockfolio.app`
 
             > See the full changelog in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
           releaseDraft: true
@@ -140,7 +140,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: StockFilo ${{ github.ref_name }}
+          releaseName: Stockfolio ${{ github.ref_name }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: false

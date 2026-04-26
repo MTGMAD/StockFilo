@@ -263,7 +263,7 @@ function PrimerCard({
 
 function BuySignal({
   upsidePct,
-  dailyChangePct,
+  dailyChangePct: _dailyChangePct,
 }: {
   upsidePct: number | null;
   dailyChangePct: number | null;

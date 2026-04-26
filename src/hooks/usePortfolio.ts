@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import type { Purchase, Stock, TickerSummary } from "../types";
 import {
   listPurchases,
@@ -11,28 +11,49 @@ import {
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 
-export function usePortfolio() {
+export function usePortfolio(portfolioId: number | null) {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const purchasesRef = useRef<Purchase[]>([]);
+  // Track which portfolioId's data is currently in state.
+  // Ensures loading=true whenever portfolioId changes but new data hasn't arrived yet.
+  const loadedForRef = useRef<number | null | undefined>(undefined);
 
   const loadAll = useCallback(async () => {
+    if (portfolioId == null) {
+      setPurchases([]);
+      purchasesRef.current = [];
+      setLoading(false);
+      return;
+    }
     try {
-      const [p, s] = await Promise.all([listPurchases(), getCachedStocks()]);
+      const [p, s] = await Promise.all([listPurchases(portfolioId), getCachedStocks()]);
       setPurchases(p);
       purchasesRef.current = p;
       setStocks(s);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [portfolioId]);
+
+  // useLayoutEffect fires before paint — resets loading=true the moment portfolioId changes,
+  // preventing a render where loading=false but data is for a different portfolioId.
+  useLayoutEffect(() => {
+    if (portfolioId !== loadedForRef.current) {
+      setLoading(true);
+    }
+  }, [portfolioId]);
 
   useEffect(() => {
+    const pid = portfolioId;
     setLoading(true);
-    loadAll().finally(() => setLoading(false));
+    loadAll().finally(() => {
+      loadedForRef.current = pid;
+      setLoading(false);
+    });
   }, [loadAll]);
 
   // Auto-refresh prices: fetch immediately when purchases change, then poll every 30s
@@ -80,10 +101,11 @@ export function usePortfolio() {
 
   const add = useCallback(
     async (ticker: string, shares: number, price: number, date: string) => {
-      await addPurchase(ticker, shares, price, date);
+      if (portfolioId == null) return;
+      await addPurchase(portfolioId, ticker, shares, price, date);
       await loadAll();
     },
-    [loadAll]
+    [portfolioId, loadAll]
   );
 
   const update = useCallback(
@@ -153,8 +175,10 @@ export function usePortfolio() {
     refreshing,
     error,
     refresh,
+    reload: loadAll,
     add,
     update,
     remove,
   };
 }
+

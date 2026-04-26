@@ -17,7 +17,7 @@ interface AnalysisViewProps {
 }
 
 export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTicker, linkOpenMode }: AnalysisViewProps) {
-  const { favoriteTickers, loaded: favoritesLoaded, isFavorite, toggle, reorder } = useFavorites();
+  const { favoriteTickers, loaded: favoritesLoaded, isFavorite, toggle, reorder } = useFavorites(null);
   const [upcomingEarnings, setUpcomingEarnings] = useState<Record<string, number>>({});
   const [addingCalendarFor, setAddingCalendarFor] = useState<string | null>(null);
   const [calendarError, setCalendarError] = useState<string | null>(null);

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { TickerSummary, InvestorMode } from "../../types";
+import type { TickerSummary, InvestorMode, Portfolio } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, getCssVar, cn } from "../../lib/utils";
 import {
   BarChart,
@@ -24,6 +24,7 @@ import {
   ChevronDown,
   ChevronsUpDown,
   Info,
+  Star,
 } from "lucide-react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 
@@ -32,6 +33,9 @@ interface DashboardProps {
   investorMode: InvestorMode;
   onModeChange: (m: InvestorMode) => void;
   showInfoTooltips: boolean;
+  portfolios: Portfolio[];
+  activePortfolioId: number | null;
+  onSelectPortfolio: (id: number) => void;
 }
 
 // ── Mode toggle pill ──────────────────────────────────────────────────────────
@@ -545,17 +549,42 @@ function dailyDollarChange(currentValue: number, dailyChangePct: number): number
   return currentValue - previousValue;
 }
 
-export function Dashboard({ summaries, investorMode, onModeChange, showInfoTooltips }: DashboardProps) {
+export function Dashboard({ summaries, investorMode, onModeChange, showInfoTooltips, portfolios, activePortfolioId, onSelectPortfolio }: DashboardProps) {
   const [sortKey, setSortKey] = useState<SortKey>("marketValue");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  const portfolioTabBar = portfolios.length > 1 ? (
+    <div className="flex items-center gap-1 border-b border-border px-4 xl:px-6 overflow-x-auto shrink-0 bg-background">
+      {portfolios.map((p) => (
+        <button
+          key={p.id}
+          onClick={() => onSelectPortfolio(p.id)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 whitespace-nowrap transition-colors shrink-0",
+            activePortfolioId === p.id
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          {p.is_starred === 1 && (
+            <Star className="w-3 h-3 fill-yellow-500 text-yellow-500 shrink-0" />
+          )}
+          {p.name}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   if (summaries.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-6">
-        <div className="text-muted-foreground text-sm">
-          No purchases yet. Add some in the Purchases view.
+      <div className="flex flex-col h-full">
+        {portfolioTabBar}
+        <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center px-6">
+          <div className="text-muted-foreground text-sm">
+            No purchases yet. Select this portfolio and use the Purchases tab to add some.
+          </div>
+          <ModePill mode={investorMode} onChange={onModeChange} />
         </div>
-        <ModePill mode={investorMode} onChange={onModeChange} />
       </div>
     );
   }
@@ -781,7 +810,9 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
   // ════════════════════════════════════════════════════════════════════════════
   if (investorMode === "novice") {
     return (
-      <div className="h-full overflow-y-auto">
+      <div className="h-full flex flex-col overflow-hidden">
+        {portfolioTabBar}
+        <div className="flex-1 overflow-y-auto">
         <div className="p-4 xl:p-6 flex flex-col gap-4 xl:gap-5">
           <div className="flex items-center justify-end">
             <ModePill mode={investorMode} onChange={onModeChange} />
@@ -896,6 +927,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
             </div>
           </div>
         </div>
+        </div>
       </div>
     );
   }
@@ -904,7 +936,9 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
   // ADVANCED MODE
   // ════════════════════════════════════════════════════════════════════════════
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full flex flex-col overflow-hidden">
+      {portfolioTabBar}
+      <div className="flex-1 overflow-y-auto">
       <div className="p-4 xl:p-6 flex flex-col gap-4 xl:gap-5">
         <div className="flex items-center justify-end">
           <ModePill mode={investorMode} onChange={onModeChange} />
@@ -1066,6 +1100,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
           </div>
         </div>
 
+      </div>
       </div>
     </div>
   );

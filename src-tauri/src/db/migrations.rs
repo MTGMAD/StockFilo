@@ -50,3 +50,33 @@ ALTER TABLE watchlist ADD COLUMN watch_price REAL;
 pub const MIGRATION_V7: &str = r#"
 ALTER TABLE stocks ADD COLUMN target_mean_price REAL;
 "#;
+
+pub const MIGRATION_V8: &str = r#"
+CREATE TABLE IF NOT EXISTS portfolios (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_starred INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+INSERT INTO portfolios (id, name, sort_order, is_starred, created_at)
+    VALUES (1, 'My Portfolio', 0, 1, strftime('%s', 'now'));
+
+ALTER TABLE purchases ADD COLUMN portfolio_id INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE favorites RENAME TO favorites_old;
+
+CREATE TABLE favorites (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker       TEXT NOT NULL,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    portfolio_id INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(ticker, portfolio_id)
+);
+
+INSERT INTO favorites (id, ticker, sort_order, portfolio_id)
+    SELECT id, ticker, sort_order, 1 FROM favorites_old;
+
+DROP TABLE favorites_old;
+"#;

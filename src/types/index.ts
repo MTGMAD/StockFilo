@@ -5,6 +5,7 @@ export interface Purchase {
   price_per_share: number;
   purchased_at: string; // ISO date string YYYY-MM-DD
   created_at: number;   // unix timestamp
+  portfolio_id: number;
 }
 
 export interface Stock {
@@ -60,9 +61,18 @@ export interface Favorite {
   id: number;
   ticker: string;
   sort_order: number;
+  portfolio_id: number;
 }
 
-export type View = 'dashboard' | 'purchases' | 'analysis' | 'watchlist' | 'settings';
+export interface Portfolio {
+  id: number;
+  name: string;
+  sort_order: number;
+  is_starred: number; // 0 or 1
+  created_at: number;
+}
+
+export type View = 'dashboard' | 'portfolio' | 'watchlist' | 'settings';
 export type Theme = 'system' | 'light' | 'dark' | 'warm';
 export type InvestorMode = 'novice' | 'advanced';
 export type LinkOpenMode = 'browser' | 'inapp';

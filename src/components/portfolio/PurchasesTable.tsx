@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { Purchase, Stock } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
 import { PurchaseDialog } from "./PurchaseDialog";
-import { Pencil, Trash2, Plus, ExternalLink, Download } from "lucide-react";
+import { Pencil, Trash2, Plus, ExternalLink } from "lucide-react";
 import { TickerLogo } from "../shared/TickerLogo";
 
 // ── Table types ───────────────────────────────────────────────────────────────
@@ -37,54 +35,9 @@ export function PurchasesTable({
     await open(`https://finance.yahoo.com/quote/${ticker}`);
   }
 
-  async function exportCsv() {
-    const header = ["Date", "Ticker", "Shares", "Price Paid", "Total Cost", "Current Price", "Market Value", "P&L $", "P&L %"];
-    const rows = purchases.map((p) => {
-      const stock = stockMap.get(p.ticker);
-      const totalCost = p.shares * p.price_per_share;
-      const currentPrice = stock?.last_price ?? null;
-      const marketValue = currentPrice != null ? p.shares * currentPrice : null;
-      const pnl = marketValue != null ? marketValue - totalCost : null;
-      const pnlPct = pnl != null && totalCost > 0 ? (pnl / totalCost) * 100 : null;
-      return [
-        p.purchased_at,
-        p.ticker,
-        p.shares,
-        p.price_per_share.toFixed(2),
-        totalCost.toFixed(2),
-        currentPrice != null ? currentPrice.toFixed(2) : "",
-        marketValue != null ? marketValue.toFixed(2) : "",
-        pnl != null ? pnl.toFixed(2) : "",
-        pnlPct != null ? pnlPct.toFixed(2) : "",
-      ].join(",");
-    });
-    const csv = [header.join(","), ...rows].join("\n");
-
-    const filePath = await save({
-      defaultPath: `purchases_${new Date().toISOString().slice(0, 10)}.csv`,
-      filters: [{ name: "CSV", extensions: ["csv"] }],
-    });
-    if (filePath) {
-      try {
-        await writeTextFile(filePath, csv);
-      } catch (err) {
-        console.error("CSV write failed:", err);
-        alert(`Failed to save CSV: ${err}`);
-      }
-    }
-  }
-
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-end px-6 py-3 border-b border-border gap-2">
-        <button
-          onClick={exportCsv}
-          disabled={purchases.length === 0}
-          className="btn-secondary flex items-center gap-2"
-        >
-          <Download className="w-4 h-4" />
-          Export CSV
-        </button>
         <button
           onClick={() => { setEditing(null); setDialogOpen(true); }}
           className="btn-primary flex items-center gap-2"

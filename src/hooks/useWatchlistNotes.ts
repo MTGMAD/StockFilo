@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 
-const KEY = "stockfilo-watchlist-notes";
+const KEY = "stockfolio-watchlist-notes";
 
 function load(): Record<string, string> {
   try {

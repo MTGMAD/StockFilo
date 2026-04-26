@@ -1,10 +1,10 @@
 [package]
-name = "stockfilo"
+name = "stockfolio"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "stockfilo_lib"
+name = "stockfolio_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]

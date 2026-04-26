@@ -1,7 +1,8 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
+import { writeTextFile, readTextFile, writeFile, readFile } from "@tauri-apps/plugin-fs";
+import * as XLSX from "xlsx";
 import type {
   Purchase,
   Stock,
@@ -11,9 +12,10 @@ import type {
   NewsArticle,
   Favorite,
   UpcomingEarningsEvent,
+  Portfolio,
 } from "../types";
 
-const DB_URL = "sqlite:stockfilo.db";
+const DB_URL = "sqlite:stockfolio.db";
 
 let _db: Awaited<ReturnType<typeof Database.load>> | null = null;
 
@@ -24,16 +26,72 @@ async function getDb() {
   return _db;
 }
 
+// ── Portfolios ─────────────────────────────────────────────────────────────
+
+export async function listPortfolios(): Promise<Portfolio[]> {
+  const db = await getDb();
+  return db.select<Portfolio[]>(
+    "SELECT id, name, sort_order, is_starred, created_at FROM portfolios ORDER BY sort_order ASC, created_at ASC"
+  );
+}
+
+export async function createPortfolio(name: string): Promise<number> {
+  const db = await getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const rows = await db.select<{ max_order: number | null }[]>(
+    "SELECT MAX(sort_order) as max_order FROM portfolios"
+  );
+  const nextOrder = (rows[0]?.max_order ?? -1) + 1;
+  await db.execute(
+    "INSERT INTO portfolios (name, sort_order, is_starred, created_at) VALUES (?, ?, 0, ?)",
+    [name, nextOrder, now]
+  );
+  const result = await db.select<{ id: number }[]>("SELECT last_insert_rowid() as id");
+  return result[0].id;
+}
+
+export async function renamePortfolio(id: number, name: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE portfolios SET name = ? WHERE id = ?", [name, id]);
+}
+
+export async function deletePortfolio(id: number): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM purchases WHERE portfolio_id = ?", [id]);
+  await db.execute("DELETE FROM favorites WHERE portfolio_id = ?", [id]);
+  await db.execute("DELETE FROM portfolios WHERE id = ?", [id]);
+  // Clean up orphaned stocks not referenced anywhere
+  await db.execute(
+    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
+    []
+  );
+}
+
+export async function starPortfolio(id: number): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE portfolios SET is_starred = 0", []);
+  await db.execute("UPDATE portfolios SET is_starred = 1 WHERE id = ?", [id]);
+}
+
+export async function reorderPortfolios(ids: number[]): Promise<void> {
+  const db = await getDb();
+  for (let i = 0; i < ids.length; i++) {
+    await db.execute("UPDATE portfolios SET sort_order = ? WHERE id = ?", [i, ids[i]]);
+  }
+}
+
 // ── Purchases ──────────────────────────────────────────────────────────────
 
-export async function listPurchases(): Promise<Purchase[]> {
+export async function listPurchases(portfolioId: number): Promise<Purchase[]> {
   const db = await getDb();
   return db.select<Purchase[]>(
-    "SELECT id, ticker, shares, price_per_share, purchased_at, created_at FROM purchases ORDER BY purchased_at DESC, created_at DESC"
+    "SELECT id, ticker, shares, price_per_share, purchased_at, created_at, portfolio_id FROM purchases WHERE portfolio_id = ? ORDER BY purchased_at DESC, created_at DESC",
+    [portfolioId]
   );
 }
 
 export async function addPurchase(
+  portfolioId: number,
   ticker: string,
   shares: number,
   pricePerShare: number,
@@ -43,8 +101,8 @@ export async function addPurchase(
   const now = Math.floor(Date.now() / 1000);
   const t = ticker.toUpperCase();
   await db.execute(
-    "INSERT INTO purchases (ticker, shares, price_per_share, purchased_at, created_at) VALUES (?, ?, ?, ?, ?)",
-    [t, shares, pricePerShare, purchasedAt, now]
+    "INSERT INTO purchases (portfolio_id, ticker, shares, price_per_share, purchased_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    [portfolioId, t, shares, pricePerShare, purchasedAt, now]
   );
   await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
 }
@@ -71,6 +129,7 @@ export async function deletePurchase(id: number): Promise<void> {
 export async function clearAllPurchases(): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM purchases", []);
+  await db.execute("DELETE FROM favorites", []);
   await db.execute("DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist)", []);
 }
 
@@ -151,38 +210,42 @@ export async function setWatchlistWatchPrice(id: number, watchPrice: number): Pr
 
 // ── Favorites ─────────────────────────────────────────────────────────────
 
-export async function listFavorites(): Promise<Favorite[]> {
+export async function listFavorites(portfolioId: number): Promise<Favorite[]> {
   const db = await getDb();
   return db.select<Favorite[]>(
-    "SELECT id, ticker, sort_order FROM favorites ORDER BY sort_order ASC"
+    "SELECT id, ticker, sort_order, portfolio_id FROM favorites WHERE portfolio_id = ? ORDER BY sort_order ASC",
+    [portfolioId]
   );
 }
 
-export async function addFavorite(ticker: string): Promise<void> {
+export async function addFavorite(ticker: string, portfolioId: number): Promise<void> {
   const db = await getDb();
   const t = ticker.toUpperCase();
-  // Put new favorite at the end (max sort_order + 1)
   const rows = await db.select<{ max_order: number | null }[]>(
-    "SELECT MAX(sort_order) as max_order FROM favorites"
+    "SELECT MAX(sort_order) as max_order FROM favorites WHERE portfolio_id = ?",
+    [portfolioId]
   );
   const nextOrder = (rows[0]?.max_order ?? -1) + 1;
   await db.execute(
-    "INSERT OR IGNORE INTO favorites (ticker, sort_order) VALUES (?, ?)",
-    [t, nextOrder]
+    "INSERT OR IGNORE INTO favorites (ticker, sort_order, portfolio_id) VALUES (?, ?, ?)",
+    [t, nextOrder, portfolioId]
   );
 }
 
-export async function removeFavorite(ticker: string): Promise<void> {
+export async function removeFavorite(ticker: string, portfolioId: number): Promise<void> {
   const db = await getDb();
-  await db.execute("DELETE FROM favorites WHERE ticker = ?", [ticker.toUpperCase()]);
+  await db.execute(
+    "DELETE FROM favorites WHERE ticker = ? AND portfolio_id = ?",
+    [ticker.toUpperCase(), portfolioId]
+  );
 }
 
-export async function reorderFavorites(tickers: string[]): Promise<void> {
+export async function reorderFavorites(tickers: string[], portfolioId: number): Promise<void> {
   const db = await getDb();
   for (let i = 0; i < tickers.length; i++) {
     await db.execute(
-      "UPDATE favorites SET sort_order = ? WHERE ticker = ?",
-      [i, tickers[i].toUpperCase()]
+      "UPDATE favorites SET sort_order = ? WHERE ticker = ? AND portfolio_id = ?",
+      [i, tickers[i].toUpperCase(), portfolioId]
     );
   }
 }
@@ -227,8 +290,8 @@ function escCsv(value: string): string {
   return value;
 }
 
-export async function exportPurchasesCsv(): Promise<boolean> {
-  const purchases = await listPurchases();
+export async function exportPurchasesCsv(portfolioId: number): Promise<boolean> {
+  const purchases = await listPurchases(portfolioId);
   const header = "ticker,shares,price_per_share,purchased_at";
   const rows = purchases.map(
     (p) => `${escCsv(p.ticker)},${p.shares},${p.price_per_share},${escCsv(p.purchased_at)}`
@@ -237,7 +300,7 @@ export async function exportPurchasesCsv(): Promise<boolean> {
 
   const path = await save({
     title: "Export Purchases",
-    defaultPath: "stockfilo-purchases.csv",
+      defaultPath: "stockfolio-purchases.csv",
     filters: [{ name: "CSV", extensions: ["csv"] }],
   });
   if (!path) return false;
@@ -246,7 +309,7 @@ export async function exportPurchasesCsv(): Promise<boolean> {
   return true;
 }
 
-export async function importPurchasesCsv(): Promise<number> {
+export async function importPurchasesCsv(portfolioId: number): Promise<number> {
   const path = await openDialog({
     title: "Import Purchases",
     multiple: false,
@@ -277,7 +340,7 @@ export async function importPurchasesCsv(): Promise<number> {
     // Basic date format validation (YYYY-MM-DD)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
 
-    await addPurchase(ticker, shares, price, date);
+    await addPurchase(portfolioId, ticker, shares, price, date);
     imported++;
   }
 
@@ -320,4 +383,168 @@ function parseCsvLine(line: string): string[] {
   }
   result.push(current);
   return result;
+}
+
+// ── XLSX Export / Import ──────────────────────────────────────────────────
+
+export async function exportPurchasesXlsx(portfolioId: number): Promise<boolean> {
+  const purchases = await listPurchases(portfolioId);
+
+  const wsData = [
+    ["ticker", "shares", "price_per_share", "purchased_at"],
+    ...purchases.map((p) => [p.ticker, p.shares, p.price_per_share, p.purchased_at]),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Purchases");
+
+  const path = await save({
+    title: "Export Purchases",
+    defaultPath: "stockfolio-purchases.xlsx",
+    filters: [{ name: "Excel Workbook", extensions: ["xlsx"] }],
+  });
+  if (!path) return false;
+
+  const buf: ArrayBuffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  await writeFile(path, new Uint8Array(buf));
+  return true;
+}
+
+export async function importPurchasesXlsx(portfolioId: number): Promise<number> {
+  const path = await openDialog({
+    title: "Import Purchases",
+    multiple: false,
+    filters: [{ name: "Excel Workbook", extensions: ["xlsx", "xls"] }],
+  });
+  if (!path) return 0;
+
+  const data = await readFile(path as string);
+  const wb = XLSX.read(data, { type: "array" });
+
+  const wsName = wb.SheetNames[0];
+  if (!wsName) return 0;
+
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wsName], { header: 1 });
+  if (rows.length === 0) return 0;
+
+  // Detect and skip header row
+  const firstRow = rows[0] as unknown[];
+  const startIdx = firstRow.some((c) => String(c).toLowerCase() === "ticker") ? 1 : 0;
+
+  let imported = 0;
+  for (let i = startIdx; i < rows.length; i++) {
+    const cols = rows[i] as unknown[];
+    if (cols.length < 4) continue;
+
+    const ticker = String(cols[0] ?? "").trim().toUpperCase();
+    const shares = Number(cols[1]);
+    const price = Number(cols[2]);
+    const rawDate = cols[3];
+
+    // SheetJS may give a numeric serial date — convert if needed
+    let date: string;
+    if (typeof rawDate === "number") {
+      const d = XLSX.SSF.parse_date_code(rawDate);
+      date = `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
+    } else {
+      date = String(rawDate ?? "").trim();
+    }
+
+    if (!ticker || isNaN(shares) || isNaN(price) || !date) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+
+    await addPurchase(portfolioId, ticker, shares, price, date);
+    imported++;
+  }
+
+  return imported;
+}
+
+// ── Ameriprise CSV Import ─────────────────────────────────────────────────
+// Handles the "Account Activity" CSV exported from Ameriprise SPS accounts.
+// Imports BUY transactions and dividend/capital-gain reinvestments (all of
+// which represent real share acquisitions).
+
+export async function importAmeripriseCSV(portfolioId: number): Promise<number> {
+  const path = await openDialog({
+    title: "Import from Ameriprise",
+    multiple: false,
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  if (!path) return 0;
+
+  const csv = await readTextFile(path as string);
+  const lines = csv.split(/\r?\n/);
+
+  // Locate the actual data header row (contains "Transaction Date")
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].toLowerCase().includes("transaction date")) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx === -1) {
+    throw new Error(
+      "Could not find a header row containing \"Transaction Date\". " +
+      "Make sure this is an Ameriprise account activity CSV."
+    );
+  }
+
+  let imported = 0;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    const cols = parseCsvLine(line);
+    if (cols.length < 7) continue;
+
+    // Columns: 0=Transaction Date, 1=Account, 2=Description, 3=Amount,
+    //          4=Quantity, 5=Price, 6=Symbol
+    const rawDate     = cols[0].trim();   // MM/DD/YYYY
+    const description = cols[2].trim();
+    const rawQty      = cols[4].trim();
+    const rawPrice    = cols[5].trim();
+    const symbol      = cols[6].trim().toUpperCase();
+
+    // Skip rows with no usable symbol (money market, fees, blank, etc.)
+    if (!symbol || symbol === "9999840") continue;
+
+    const isBuy      = /^BUY\s+-\s+/i.test(description);
+    const isReinvest = /REINVEST AT ([\d.]+)/i.test(description);
+
+    if (!isBuy && !isReinvest) continue;
+
+    // Quantity — strip thousands separators
+    const shares = parseFloat(rawQty.replace(/,/g, ""));
+    if (isNaN(shares) || shares <= 0) continue;
+
+    // Price — from column for BUY rows; extracted from description for reinvests
+    let price: number;
+    if (isBuy) {
+      price = parseFloat(rawPrice.replace(/[$,]/g, ""));
+      if (isNaN(price) || price <= 0) continue;
+    } else {
+      const m = description.match(/REINVEST AT ([\d.]+)/i);
+      if (!m) continue;
+      price = parseFloat(m[1]);
+      if (isNaN(price) || price <= 0) continue;
+    }
+
+    // Convert MM/DD/YYYY → YYYY-MM-DD
+    const dateParts = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!dateParts) continue;
+    const date = `${dateParts[3]}-${dateParts[1]}-${dateParts[2]}`;
+
+    await addPurchase(portfolioId, symbol, shares, price, date);
+    imported++;
+  }
+
+  if (imported === 0) {
+    throw new Error(
+      "No importable transactions found. Expected BUY or DIVIDEND REINVEST rows with a ticker symbol."
+    );
+  }
+
+  return imported;
 }

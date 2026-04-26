@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 
-const KEY = "stockfilo-watchlist-targets";
+const KEY = "stockfolio-watchlist-targets";
 
 function load(): Record<string, number> {
   try {

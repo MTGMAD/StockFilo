@@ -6,7 +6,7 @@ use tauri_plugin_sql::{DbPool, Migration, MigrationKind};
 pub async fn list_purchases(
     db: tauri::State<'_, DbPool>,
 ) -> Result<Vec<Purchase>, String> {
-    let pool = db.get("sqlite:stockfilo.db").await.map_err(|e| e.to_string())?;
+    let pool = db.get("sqlite:stockfolio.db").await.map_err(|e| e.to_string())?;
     let rows = sqlx::query_as!(
         Purchase,
         r#"SELECT id, ticker, shares, price_per_share, purchased_at, created_at FROM purchases ORDER BY purchased_at DESC, created_at DESC"#
@@ -22,7 +22,7 @@ pub async fn add_purchase(
     db: tauri::State<'_, DbPool>,
     purchase: NewPurchase,
 ) -> Result<i64, String> {
-    let pool = db.get("sqlite:stockfilo.db").await.map_err(|e| e.to_string())?;
+    let pool = db.get("sqlite:stockfolio.db").await.map_err(|e| e.to_string())?;
     let now = Utc::now().timestamp();
     let ticker = purchase.ticker.to_uppercase();
 
@@ -55,7 +55,7 @@ pub async fn update_purchase(
     db: tauri::State<'_, DbPool>,
     purchase: UpdatePurchase,
 ) -> Result<(), String> {
-    let pool = db.get("sqlite:stockfilo.db").await.map_err(|e| e.to_string())?;
+    let pool = db.get("sqlite:stockfolio.db").await.map_err(|e| e.to_string())?;
     let ticker = purchase.ticker.to_uppercase();
     sqlx::query!(
         r#"UPDATE purchases SET ticker = ?, shares = ?, price_per_share = ?, purchased_at = ? WHERE id = ?"#,
@@ -76,7 +76,7 @@ pub async fn delete_purchase(
     db: tauri::State<'_, DbPool>,
     id: i64,
 ) -> Result<(), String> {
-    let pool = db.get("sqlite:stockfilo.db").await.map_err(|e| e.to_string())?;
+    let pool = db.get("sqlite:stockfolio.db").await.map_err(|e| e.to_string())?;
     sqlx::query!(r#"DELETE FROM purchases WHERE id = ?"#, id)
         .execute(&pool)
         .await

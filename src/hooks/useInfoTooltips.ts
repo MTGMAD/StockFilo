@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 
-const KEY = "stockfilo-info-tooltips";
+const KEY = "stockfolio-info-tooltips";
 
 export function useInfoTooltips() {
   const [showInfoTooltips, setShowState] = useState<boolean>(

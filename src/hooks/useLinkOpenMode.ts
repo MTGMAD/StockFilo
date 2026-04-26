@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import type { LinkOpenMode } from "../types";
 
-const LINK_OPEN_MODE_KEY = "stockfilo-link-open-mode";
+const LINK_OPEN_MODE_KEY = "stockfolio-link-open-mode";
 
 export function useLinkOpenMode() {
   const [linkOpenMode, setModeState] = useState<LinkOpenMode>(

@@ -1,4 +1,4 @@
-# StockFilo — Developer Setup Guide
+# Stockfolio — Developer Setup Guide
 
 This guide covers everything you need to get a local development environment running from scratch.
 

@@ -67,9 +67,9 @@ pub async fn open_earnings_call_in_calendar(ticker: String, event_at: i64) -> Re
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect::<String>();
 
-    let uid = format!("{}-{}@stockfilo", safe_ticker, event_at_seconds);
+    let uid = format!("{}-{}@stockfolio", safe_ticker, event_at_seconds);
     let ics = format!(
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//StockFilo//Earnings Call//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:{}\r\nDTSTART:{}\r\nDTEND:{}\r\nSUMMARY:{} Earnings Call\r\nDESCRIPTION:Earnings call reminder for {}.\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Stockfolio//Earnings Call//EN\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:{}\r\nDTSTART:{}\r\nDTEND:{}\r\nSUMMARY:{} Earnings Call\r\nDESCRIPTION:Earnings call reminder for {}.\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
         now.format("%Y%m%dT%H%M%SZ"),
         start.format("%Y%m%dT%H%M%SZ"),
         end.format("%Y%m%dT%H%M%SZ"),
@@ -78,7 +78,7 @@ pub async fn open_earnings_call_in_calendar(ticker: String, event_at: i64) -> Re
     );
 
     let mut path = std::env::temp_dir();
-    path.push(format!("stockfilo-earnings-{}-{}.ics", safe_ticker, event_at_seconds));
+    path.push(format!("stockfolio-earnings-{}-{}.ics", safe_ticker, event_at_seconds));
 
     let mut file = File::create(&path)
         .map_err(|e| format!("Failed to create calendar invite: {e}"))?;

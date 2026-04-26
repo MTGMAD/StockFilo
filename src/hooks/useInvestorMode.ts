@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import type { InvestorMode } from "../types";
 
-const MODE_KEY = "stockfilo-investor-mode";
+const MODE_KEY = "stockfolio-investor-mode";
 
 export function useInvestorMode() {
   const [investorMode, setModeState] = useState<InvestorMode>(
