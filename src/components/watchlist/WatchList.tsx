@@ -6,6 +6,7 @@ import { openUrl } from "../../lib/openUrl";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
 import { TickerLogo } from "../shared/TickerLogo";
+import { StockDetailModal } from "./StockDetailModal";
 import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
 import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
 import {
@@ -32,6 +33,7 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
   const [purchaseTicker, setPurchaseTicker] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [detailTicker, setDetailTicker] = useState<string | null>(null);
   // Target price editing state: ticker -> draft string while editing
   const [editingTarget, setEditingTarget] = useState<string | null>(null);
   const [targetDraft, setTargetDraft] = useState("");
@@ -281,11 +283,13 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
                   <Fragment key={item.id}>
                     <tr
                       className={cn(
-                        "border-b border-border transition-colors",
+                        "border-b border-border transition-colors cursor-pointer",
                         triggered
                           ? "bg-amber-500/10 hover:bg-amber-500/15"
                           : "hover:bg-muted/30"
                       )}
+                      onDoubleClick={() => setDetailTicker(item.ticker)}
+                      title="Double-click for detailed analysis"
                     >
                       {/* Ticker */}
                       <td className="px-4 py-2.5 font-semibold text-foreground">
@@ -479,6 +483,21 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
           </table>
         )}
       </div>
+
+      {/* Stock detail modal — double-click on a row */}
+      {detailTicker != null && (
+        <StockDetailModal
+          ticker={detailTicker}
+          stock={stockMap.get(detailTicker)}
+          watchPrice={items.find((i) => i.ticker === detailTicker)?.watch_price ?? null}
+          linkOpenMode={linkOpenMode}
+          onClose={() => setDetailTicker(null)}
+          onBuy={(ticker) => {
+            setDetailTicker(null);
+            setPurchaseTicker(ticker);
+          }}
+        />
+      )}
 
       {/* Purchase dialog triggered from watchlist */}
       <PurchaseDialog
