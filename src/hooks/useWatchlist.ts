@@ -26,6 +26,14 @@ export function useWatchlist(watchlistId: number | null) {
       const [w, s] = await Promise.all([listWatchlist(watchlistId), getCachedStocks()]);
       setItems(w);
       setStocks(s);
+      // Fire a background price refresh so switching watchlists always shows current data
+      const tickers = w.map((i) => i.ticker);
+      if (tickers.length > 0) {
+        fetchAndCachePrices(tickers)
+          .then(() => getCachedStocks())
+          .then((fresh) => setStocks(fresh))
+          .catch(() => {});
+      }
     } catch (e) {
       setError(String(e));
     }

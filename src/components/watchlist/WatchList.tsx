@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef } from "react";
 import type { WatchlistItem, Stock, TickerSearchResult, LinkOpenMode, Watchlist } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
-import { searchTickers, exportAllWatchlistsBackup, importAllWatchlistsBackup } from "../../lib/db";
+import { searchTickers, exportAllWatchlistsBackup, importAllWatchlistsBackup, fetchUpcomingEarnings } from "../../lib/db";
 import { openUrl } from "../../lib/openUrl";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
@@ -13,7 +13,7 @@ import {
   Plus, Trash2, ShoppingCart, Search, Loader2,
   TrendingUp, TrendingDown, Minus,
   Bell, MessageSquare, MessageSquareDiff, ExternalLink,
-  Settings, Download, Upload, CheckCircle, AlertCircle, Check, X, Pencil,
+  Settings, Download, Upload, CheckCircle, AlertCircle, Check, X, Pencil, CalendarDays,
 } from "lucide-react";
 
 type WatchListTab = "list" | "settings";
@@ -86,6 +86,24 @@ export function WatchList({
 
   const { getTarget, setTarget, isTriggered, refresh: refreshTargets } = useWatchlistTargets(activeWatchlistId);
   const { getNote, setNote, hasNote, refresh: refreshNotes } = useWatchlistNotes(activeWatchlistId);
+
+  const [upcomingEarnings, setUpcomingEarnings] = useState<Record<string, number>>({});
+  const earningsKey = items.map((i) => i.ticker).join(",");
+  useEffect(() => {
+    const tickers = items.map((i) => i.ticker);
+    if (tickers.length === 0) { setUpcomingEarnings({}); return; }
+    let cancelled = false;
+    fetchUpcomingEarnings(tickers, 30)
+      .then((events) => {
+        if (cancelled) return;
+        const map: Record<string, number> = {};
+        for (const e of events) map[e.ticker] = e.event_at;
+        setUpcomingEarnings(map);
+      })
+      .catch(() => { if (!cancelled) setUpcomingEarnings({}); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [earningsKey]);
 
   // Sync rename draft when watchlist changes or settings opens
   useEffect(() => {
@@ -632,6 +650,11 @@ export function WatchList({
                               >
                                 {triggered && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
                                 {item.ticker}
+                                {upcomingEarnings[item.ticker] && (
+                                  <span title="Upcoming earnings call">
+                                    <CalendarDays className="w-3.5 h-3.5 text-primary shrink-0" />
+                                  </span>
+                                )}
                                 <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                               </button>
                             </div>
