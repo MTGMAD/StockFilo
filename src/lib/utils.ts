@@ -37,3 +37,9 @@ export function getCssVar(name: string): string {
   if (typeof document === "undefined") return "";
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
+
+/** Returns true if the ticker looks like a CUSIP (9 alphanumeric chars).
+ *  Used to identify bonds, CDs, and structured notes imported from Ameriprise. */
+export function isCusip(ticker: string): boolean {
+  return /^[A-Z0-9]{9}$/i.test(ticker);
+}

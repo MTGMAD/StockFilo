@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { TickerSummary, Purchase, Stock, LinkOpenMode } from "../../types";
-import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
+import { formatCurrency, formatPercent, formatShares, pnlColor, cn, isCusip } from "../../lib/utils";
 import {
   ExternalLink,
   Star,
@@ -16,6 +16,7 @@ import {
   Settings,
   Download,
   Upload,
+  Landmark,
 } from "lucide-react";
 import { MountainChart } from "../analysis/MountainChart";
 import { TickerNews } from "../analysis/TickerNews";
@@ -80,21 +81,28 @@ export function PortfolioView({
     }
   }, [favoritesLoaded, summaries.length]);
 
-  const isMutualFund = (qt: string | null) => qt === "MUTUALFUND" || qt === "UIT";
+  const isMutualFund = (qt: string | null) => {
+    const q = qt?.toUpperCase() ?? "";
+    return q === "MUTUALFUND" || q === "UIT" || q === "MONEYMARKET" || q === "MONEYMARKETS";
+  };
 
   const favorites = summaries
     .filter((s) => isFavorite(s.ticker))
     .sort((a, b) => favoriteTickers.indexOf(a.ticker) - favoriteTickers.indexOf(b.ticker));
 
   const nonFavStocks = summaries
-    .filter((s) => !isFavorite(s.ticker) && !isMutualFund(s.quoteType))
+    .filter((s) => !isFavorite(s.ticker) && !isMutualFund(s.quoteType) && !isCusip(s.ticker))
     .sort((a, b) => a.ticker.localeCompare(b.ticker));
 
   const nonFavFunds = summaries
     .filter((s) => !isFavorite(s.ticker) && isMutualFund(s.quoteType))
     .sort((a, b) => a.ticker.localeCompare(b.ticker));
 
-  const ordered = [...favorites, ...nonFavStocks, ...nonFavFunds];
+  const nonFavBonds = summaries
+    .filter((s) => !isFavorite(s.ticker) && isCusip(s.ticker))
+    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+
+  const ordered = [...favorites, ...nonFavStocks, ...nonFavFunds, ...nonFavBonds];
 
   const selected =
     selectedTicker && ordered.some((s) => s.ticker === selectedTicker)
@@ -125,10 +133,11 @@ export function PortfolioView({
       setUpcomingEarnings({});
       return;
     }
+    const quotableTickers = orderedTickers.filter((t) => !isCusip(t));
     let cancelled = false;
     const loadUpcoming = async () => {
       try {
-        const events = await fetchUpcomingEarnings(orderedTickers, 30);
+        const events = await fetchUpcomingEarnings(quotableTickers, 30);
         if (cancelled) return;
         const nextMap: Record<string, number> = {};
         for (const e of events) nextMap[e.ticker] = e.event_at;
@@ -300,6 +309,22 @@ export function PortfolioView({
             />
           ))}
         </CollapsibleSection>
+        <CollapsibleSection label="Bonds & CDs" items={nonFavBonds}>
+          {nonFavBonds.map((s) => (
+            <TickerRow
+              key={s.ticker}
+              s={s}
+              isSelected={selected === s.ticker}
+              hasUpcomingEarnings={false}
+              isFav={false}
+              favIdx={-1}
+              favCount={0}
+              onSelect={setSelectedTicker}
+              onToggleFav={toggle}
+              onMoveFav={moveFavorite}
+            />
+          ))}
+        </CollapsibleSection>
       </div>
       )}
 
@@ -308,6 +333,7 @@ export function PortfolioView({
         {/* Tab bar */}
         <div className="flex items-center border-b border-border bg-background shrink-0">
           <button
+            type="button"
             onClick={() => setActiveTab("analysis")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
@@ -320,6 +346,7 @@ export function PortfolioView({
             Analysis
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab("purchases")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
@@ -332,6 +359,7 @@ export function PortfolioView({
             Purchases
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab("settings")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
@@ -363,11 +391,11 @@ export function PortfolioView({
                     Save all purchases in this portfolio to a file.
                   </p>
                   <div className="flex gap-2">
-                    <button onClick={handleExportCsv} className="btn-secondary flex items-center gap-2 text-sm">
+                    <button type="button" onClick={handleExportCsv} className="btn-secondary flex items-center gap-2 text-sm">
                       <Download className="w-4 h-4" />
                       Export CSV
                     </button>
-                    <button onClick={handleExportXlsx} className="btn-secondary flex items-center gap-2 text-sm">
+                    <button type="button" onClick={handleExportXlsx} className="btn-secondary flex items-center gap-2 text-sm">
                       <Download className="w-4 h-4" />
                       Export XLSX
                     </button>
@@ -381,11 +409,11 @@ export function PortfolioView({
                     <code className="text-xs bg-muted px-1 rounded">ticker, shares, price_per_share, purchased_at (YYYY-MM-DD)</code>
                   </p>
                   <div className="flex gap-2">
-                    <button onClick={handleImportCsv} className="btn-secondary flex items-center gap-2 text-sm">
+                    <button type="button" onClick={handleImportCsv} className="btn-secondary flex items-center gap-2 text-sm">
                       <Upload className="w-4 h-4" />
                       Import CSV
                     </button>
-                    <button onClick={handleImportXlsx} className="btn-secondary flex items-center gap-2 text-sm">
+                    <button type="button" onClick={handleImportXlsx} className="btn-secondary flex items-center gap-2 text-sm">
                       <Upload className="w-4 h-4" />
                       Import XLSX
                     </button>
@@ -398,7 +426,7 @@ export function PortfolioView({
                     Import BUY transactions and dividend reinvestments directly from an Ameriprise
                     account activity CSV export.
                   </p>
-                  <button onClick={handleImportAmeriprise} className="btn-secondary flex items-center gap-2 text-sm">
+                  <button type="button" onClick={handleImportAmeriprise} className="btn-secondary flex items-center gap-2 text-sm">
                     <Upload className="w-4 h-4" />
                     Import Ameriprise CSV
                   </button>
@@ -417,6 +445,7 @@ export function PortfolioView({
                 >
                   <span>{dataOpStatus.msg}</span>
                   <button
+                    type="button"
                     onClick={() => setDataOpStatus(null)}
                     className="shrink-0 opacity-60 hover:opacity-100 transition-opacity text-xs"
                   >
@@ -438,6 +467,7 @@ export function PortfolioView({
           <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">
             <p className="text-sm">No purchases yet.</p>
             <button
+              type="button"
               onClick={() => setActiveTab("purchases")}
               className="btn-primary text-sm"
             >
@@ -450,18 +480,31 @@ export function PortfolioView({
               <>
                 {/* Ticker header */}
                 <div className="flex items-center gap-3 flex-wrap">
-                  <button
-                    onClick={() => openYahooFinance(summary.ticker)}
-                    className="flex items-center gap-2 text-2xl font-bold text-primary hover:underline"
-                  >
-                    {summary.ticker}
-                    <ExternalLink className="w-5 h-5 opacity-60" />
-                  </button>
+                  {isCusip(summary.ticker) ? (
+                    <>
+                      <span className="text-2xl font-bold font-mono text-foreground">
+                        {summary.ticker}
+                      </span>
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                        Fixed Income
+                      </span>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openYahooFinance(summary.ticker)}
+                      className="flex items-center gap-2 text-2xl font-bold text-primary hover:underline"
+                    >
+                      {summary.ticker}
+                      <ExternalLink className="w-5 h-5 opacity-60" />
+                    </button>
+                  )}
                   {summary.name && (
                     <span className="text-muted-foreground">{summary.name}</span>
                   )}
-                  {selectedEarningsAt && (
+                  {!isCusip(summary.ticker) && selectedEarningsAt && (
                     <button
+                      type="button"
                       onClick={() =>
                         handleAddEarningsCallToCalendar(summary.ticker, selectedEarningsAt)
                       }
@@ -480,41 +523,61 @@ export function PortfolioView({
                       {calendarError}
                     </span>
                   )}
-                  {summary.isStale && summary.currentPrice != null && (
+                  {!isCusip(summary.ticker) && summary.isStale && summary.currentPrice != null && (
                     <span className="text-xs bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded-full">
                       stale price
                     </span>
                   )}
                 </div>
 
-                {/* Stats grid */}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  <StatCard label="Total Shares" value={formatShares(summary.totalShares)} />
-                  <StatCard label="Total Invested" value={formatCurrency(summary.totalInvested)} />
-                  <StatCard label="Avg Cost Basis" value={formatCurrency(summary.avgCostBasis)} />
-                  <StatCard
-                    label="Current Price"
-                    value={
-                      summary.currentPrice != null ? formatCurrency(summary.currentPrice) : "—"
-                    }
-                  />
-                  <StatCard label="Market Value" value={formatCurrency(summary.marketValue)} />
-                  <StatCard
-                    label="Total P&L"
-                    value={
-                      summary.pnlDollar != null
-                        ? `${formatCurrency(summary.pnlDollar)} (${formatPercent(summary.pnlPercent)})`
-                        : "—"
-                    }
-                    valueClass={pnlColor(summary.pnlDollar)}
-                  />
-                </div>
+                {isCusip(summary.ticker) ? (
+                  <>
+                    {/* Fixed income stats */}
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <StatCard label="CUSIP" value={summary.ticker} />
+                      <StatCard label="Face Value" value={formatCurrency(summary.totalInvested)} />
+                      <StatCard label="Total Invested" value={formatCurrency(summary.totalInvested)} />
+                    </div>
 
-                {/* Chart */}
-                <MountainChart ticker={summary.ticker} quoteType={summary.quoteType} />
+                    {/* Fixed income info notice */}
+                    <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
+                      This is a fixed income position (bond or CD) identified by CUSIP.
+                      Live price data is not available via Yahoo Finance for CUSIP-identified
+                      securities — performance is tracked by cost basis only.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Stats grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <StatCard label="Total Shares" value={formatShares(summary.totalShares)} />
+                      <StatCard label="Total Invested" value={formatCurrency(summary.totalInvested)} />
+                      <StatCard label="Avg Cost Basis" value={formatCurrency(summary.avgCostBasis)} />
+                      <StatCard
+                        label="Current Price"
+                        value={
+                          summary.currentPrice != null ? formatCurrency(summary.currentPrice) : "—"
+                        }
+                      />
+                      <StatCard label="Market Value" value={formatCurrency(summary.marketValue)} />
+                      <StatCard
+                        label="Total P&L"
+                        value={
+                          summary.pnlDollar != null
+                            ? `${formatCurrency(summary.pnlDollar)} (${formatPercent(summary.pnlPercent)})`
+                            : "—"
+                        }
+                        valueClass={pnlColor(summary.pnlDollar)}
+                      />
+                    </div>
 
-                {/* News */}
-                <TickerNews ticker={summary.ticker} linkOpenMode={linkOpenMode} />
+                    {/* Chart */}
+                    <MountainChart ticker={summary.ticker} quoteType={summary.quoteType} />
+
+                    {/* News */}
+                    <TickerNews ticker={summary.ticker} linkOpenMode={linkOpenMode} />
+                  </>
+                )}
 
                 {/* Transaction history */}
                 <div>
@@ -528,7 +591,7 @@ export function PortfolioView({
                           Date
                         </th>
                         <th className="text-right px-3 py-2 text-muted-foreground font-medium">
-                          Shares
+                          {isCusip(summary.ticker) ? "Face Value" : "Shares"}
                         </th>
                         <th className="text-right px-3 py-2 text-muted-foreground font-medium">
                           Price Paid
@@ -542,9 +605,13 @@ export function PortfolioView({
                       {tickerPurchases.map((p) => (
                         <tr key={p.id} className="border-b border-border/50">
                           <td className="px-3 py-2">{p.purchased_at}</td>
-                          <td className="px-3 py-2 text-right">{formatShares(p.shares)}</td>
                           <td className="px-3 py-2 text-right">
-                            {formatCurrency(p.price_per_share)}
+                            {isCusip(summary.ticker)
+                              ? formatCurrency(p.shares * p.price_per_share)
+                              : formatShares(p.shares)}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {isCusip(summary.ticker) ? "at par" : formatCurrency(p.price_per_share)}
                           </td>
                           <td className="px-3 py-2 text-right">
                             {formatCurrency(p.shares * p.price_per_share)}
@@ -656,6 +723,7 @@ function TickerRow({
     >
       {/* Star toggle */}
       <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           onToggleFav(s.ticker);
@@ -677,6 +745,7 @@ function TickerRow({
 
       {/* Ticker name */}
       <button
+        type="button"
         onClick={() => onSelect(s.ticker)}
         className="flex-1 text-left px-2 py-2 text-sm font-medium min-w-0"
       >
@@ -694,55 +763,70 @@ function TickerRow({
         {s.name && <div className="text-xs opacity-70 truncate">{s.name}</div>}
       </button>
 
-      {/* P&L dot */}
-      {s.pnlDollar != null && (
-        <div
-          className={cn(
-            "w-2 h-2 rounded-full shrink-0 mr-1",
-            s.pnlDollar > 0 ? "bg-positive" : "bg-negative"
+      {isCusip(s.ticker) ? (
+        /* Fixed income icon */
+        <span title="Fixed income (bond / CD)">
+          <Landmark
+            className={cn(
+              "w-3.5 h-3.5 shrink-0 mr-2",
+              isSelected ? "text-primary-foreground/60" : "text-blue-500/70"
+            )}
+          />
+        </span>
+      ) : (
+        <>
+          {/* P&L dot */}
+          {s.pnlDollar != null && (
+            <div
+              className={cn(
+                "w-2 h-2 rounded-full shrink-0 mr-1",
+                s.pnlDollar > 0 ? "bg-positive" : "bg-negative"
+              )}
+              title={
+                s.pnlDollar > 0 ? "Price is above your avg cost" : "Price is below your avg cost"
+              }
+            />
           )}
-          title={
-            s.pnlDollar > 0 ? "Price is above your avg cost" : "Price is below your avg cost"
-          }
-        />
-      )}
 
-      {/* Daily change */}
-      {s.dailyChangePct != null && (
-        <div
-          className={cn(
-            "flex items-center gap-0.5 pr-1 shrink-0 text-xs font-medium",
-            s.dailyChangePct > 0
-              ? isSelected
-                ? "text-primary-foreground/80"
-                : "text-positive"
-              : s.dailyChangePct < 0
-              ? isSelected
-                ? "text-primary-foreground/70"
-                : "text-negative"
-              : isSelected
-              ? "text-primary-foreground/60"
-              : "text-muted-foreground"
+          {/* Daily change */}
+          {s.dailyChangePct != null && (
+            <div
+              className={cn(
+                "flex items-center gap-0.5 pr-1 shrink-0 text-xs font-medium",
+                s.dailyChangePct > 0
+                  ? isSelected
+                    ? "text-primary-foreground/80"
+                    : "text-positive"
+                  : s.dailyChangePct < 0
+                  ? isSelected
+                    ? "text-primary-foreground/70"
+                    : "text-negative"
+                  : isSelected
+                  ? "text-primary-foreground/60"
+                  : "text-muted-foreground"
+              )}
+            >
+              {s.dailyChangePct > 0 ? (
+                <TrendingUp className="w-3.5 h-3.5" />
+              ) : s.dailyChangePct < 0 ? (
+                <TrendingDown className="w-3.5 h-3.5" />
+              ) : (
+                <Minus className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {s.dailyChangePct >= 0 ? "+" : ""}
+                {s.dailyChangePct.toFixed(2)}%
+              </span>
+            </div>
           )}
-        >
-          {s.dailyChangePct > 0 ? (
-            <TrendingUp className="w-3.5 h-3.5" />
-          ) : s.dailyChangePct < 0 ? (
-            <TrendingDown className="w-3.5 h-3.5" />
-          ) : (
-            <Minus className="w-3.5 h-3.5" />
-          )}
-          <span>
-            {s.dailyChangePct >= 0 ? "+" : ""}
-            {s.dailyChangePct.toFixed(2)}%
-          </span>
-        </div>
+        </>
       )}
 
       {/* Move buttons for favorites */}
       {isFav && (
         <div className="flex flex-col pr-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onMoveFav(s.ticker, "up");
@@ -759,6 +843,7 @@ function TickerRow({
             <ChevronUp className="w-3 h-3" />
           </button>
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
               onMoveFav(s.ticker, "down");

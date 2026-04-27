@@ -8,6 +8,7 @@ import {
   getCachedStocks,
   fetchAndCachePrices,
 } from "../lib/db";
+import { isCusip } from "../lib/utils";
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 
@@ -58,7 +59,7 @@ export function usePortfolio(portfolioId: number | null) {
 
   // Auto-refresh prices: fetch immediately when purchases change, then poll every 30s
   useEffect(() => {
-    const tickers = [...new Set(purchases.map((p) => p.ticker))];
+    const tickers = [...new Set(purchases.map((p) => p.ticker))].filter((t) => !isCusip(t));
     if (tickers.length === 0) return;
 
     let cancelled = false;
@@ -88,7 +89,7 @@ export function usePortfolio(portfolioId: number | null) {
     setRefreshing(true);
     setError(null);
     try {
-      const tickers = [...new Set(purchasesRef.current.map((p) => p.ticker))];
+      const tickers = [...new Set(purchasesRef.current.map((p) => p.ticker))].filter((t) => !isCusip(t));
       await fetchAndCachePrices(tickers);
       const s = await getCachedStocks();
       setStocks(s);

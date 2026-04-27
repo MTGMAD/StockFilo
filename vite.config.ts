@@ -28,6 +28,9 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  optimizeDeps: {
+    include: ["xlsx"],
+  },
   build: {
     target:
       process.env.TAURI_ENV_PLATFORM == "windows"

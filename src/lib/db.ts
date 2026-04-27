@@ -126,6 +126,14 @@ export async function deletePurchase(id: number): Promise<void> {
   await db.execute("DELETE FROM purchases WHERE id = ?", [id]);
 }
 
+export async function hintStockQuoteType(ticker: string, quoteType: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE stocks SET quote_type = ? WHERE ticker = ? AND quote_type IS NULL",
+    [quoteType, ticker]
+  );
+}
+
 export async function clearAllPurchases(): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM purchases", []);
@@ -503,6 +511,7 @@ export async function importAmeripriseCSV(portfolioId: number): Promise<number> 
     //          4=Quantity, 5=Price, 6=Symbol
     const rawDate     = cols[0].trim();   // MM/DD/YYYY
     const description = cols[2].trim();
+    const rawAmount   = cols[3].trim();
     const rawQty      = cols[4].trim();
     const rawPrice    = cols[5].trim();
     const symbol      = cols[6].trim().toUpperCase();
@@ -519,10 +528,17 @@ export async function importAmeripriseCSV(portfolioId: number): Promise<number> 
     const shares = parseFloat(rawQty.replace(/,/g, ""));
     if (isNaN(shares) || shares <= 0) continue;
 
-    // Price — from column for BUY rows; extracted from description for reinvests
+    // Price — derived from Amount/Quantity for BUY rows (handles bonds where the
+    // price column is per-$100-face-value, which would otherwise cause a 100x
+    // overstatement); extracted from description for reinvests.
     let price: number;
     if (isBuy) {
-      price = parseFloat(rawPrice.replace(/[$,]/g, ""));
+      const amount = parseFloat(rawAmount.replace(/[$,()\-]/g, ""));
+      if (!isNaN(amount) && amount > 0 && shares > 0) {
+        price = amount / shares;
+      } else {
+        price = parseFloat(rawPrice.replace(/[$,]/g, ""));
+      }
       if (isNaN(price) || price <= 0) continue;
     } else {
       const m = description.match(/REINVEST AT ([\d.]+)/i);
@@ -537,6 +553,13 @@ export async function importAmeripriseCSV(portfolioId: number): Promise<number> 
     const date = `${dateParts[3]}-${dateParts[1]}-${dateParts[2]}`;
 
     await addPurchase(portfolioId, symbol, shares, price, date);
+
+    // Dividend reinvestments are always mutual funds — hint the type so the
+    // ticker appears in the right sidebar section even before Yahoo fetches it.
+    if (isReinvest) {
+      await hintStockQuoteType(symbol, "MUTUALFUND");
+    }
+
     imported++;
   }
 
