@@ -97,6 +97,7 @@ export function SparkLine({ ticker, quoteType }: SparkLineProps) {
             cursor={{ stroke: color, strokeWidth: 1, strokeDasharray: "3 3" }}
             position={{ y: -52 }}
             allowEscapeViewBox={{ x: false, y: true }}
+            wrapperStyle={{ zIndex: 50 }}
           />
           <Line
             type="monotone"
