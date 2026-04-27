@@ -156,6 +156,7 @@ export default function App() {
               linkOpenMode={linkOpenMode}
               onAdd={watchlist.add}
               onRemove={watchlist.remove}
+              onReload={watchlist.reload}
               onPurchase={async (ticker, shares, price, date) => {
                 await add(ticker, shares, price, date);
               }}

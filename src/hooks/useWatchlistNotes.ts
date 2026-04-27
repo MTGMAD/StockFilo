@@ -37,5 +37,14 @@ export function useWatchlistNotes() {
     [notes]
   );
 
-  return { notes, setNote, getNote, hasNote };
+  const replaceAll = useCallback((data: Record<string, string>) => {
+    const filtered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v.trim()) filtered[k] = v;
+    }
+    localStorage.setItem(KEY, JSON.stringify(filtered));
+    setNotes(filtered);
+  }, []);
+
+  return { notes, setNote, getNote, hasNote, replaceAll };
 }

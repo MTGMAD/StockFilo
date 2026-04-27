@@ -41,5 +41,10 @@ export function useWatchlistTargets() {
     [targets]
   );
 
-  return { targets, setTarget, getTarget, isTriggered };
+  const replaceAll = useCallback((data: Record<string, number>) => {
+    localStorage.setItem(KEY, JSON.stringify(data));
+    setTargets(data);
+  }, []);
+
+  return { targets, setTarget, getTarget, isTriggered, replaceAll };
 }

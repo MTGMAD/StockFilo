@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef } from "react";
 import type { WatchlistItem, Stock, TickerSearchResult, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
-import { searchTickers } from "../../lib/db";
+import { searchTickers, exportWatchlistBackup, importWatchlistBackup } from "../../lib/db";
 import { openUrl } from "../../lib/openUrl";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
@@ -13,7 +13,10 @@ import {
   Plus, Trash2, ShoppingCart, Search, Loader2,
   TrendingUp, TrendingDown, Minus,
   Bell, MessageSquare, MessageSquareDiff, ExternalLink,
+  Settings, Download, Upload, CheckCircle, AlertCircle,
 } from "lucide-react";
+
+type WatchListTab = "list" | "settings";
 
 interface WatchListProps {
   items: WatchlistItem[];
@@ -21,10 +24,11 @@ interface WatchListProps {
   linkOpenMode: LinkOpenMode;
   onAdd: (ticker: string, watchPrice: number | null) => Promise<void>;
   onRemove: (id: number) => Promise<void>;
+  onReload: () => Promise<void>;
   onPurchase: (ticker: string, shares: number, price: number, date: string) => Promise<void>;
 }
 
-export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurchase }: WatchListProps) {
+export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onReload, onPurchase }: WatchListProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<TickerSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -42,8 +46,48 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { getTarget, setTarget, isTriggered } = useWatchlistTargets();
-  const { getNote, setNote, hasNote } = useWatchlistNotes();
+  const [activeTab, setActiveTab] = useState<WatchListTab>("list");
+  const [backupStatus, setBackupStatus] = useState<{ kind: "success" | "error"; msg: string } | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  const { targets, getTarget, setTarget, isTriggered, replaceAll: replaceAllTargets } = useWatchlistTargets();
+  const { notes, getNote, setNote, hasNote, replaceAll: replaceAllNotes } = useWatchlistNotes();
+
+  async function handleExport() {
+    setExporting(true);
+    setBackupStatus(null);
+    try {
+      const ok = await exportWatchlistBackup(items, targets, notes);
+      if (ok) setBackupStatus({ kind: "success", msg: "Watchlist exported successfully." });
+    } catch (e) {
+      setBackupStatus({ kind: "error", msg: `Export failed: ${e}` });
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleImport() {
+    setImporting(true);
+    setBackupStatus(null);
+    try {
+      const result = await importWatchlistBackup();
+      if (result == null) return; // user cancelled
+      replaceAllTargets({ ...targets, ...result.targets });
+      replaceAllNotes({ ...notes, ...result.notes });
+      await onReload();
+      setBackupStatus({
+        kind: "success",
+        msg: result.count > 0
+          ? `Restored ${result.count} ticker${result.count === 1 ? "" : "s"} plus targets and notes.`
+          : "No new tickers added (all already present). Targets and notes restored.",
+      });
+    } catch (e) {
+      setBackupStatus({ kind: "error", msg: `Import failed: ${e}` });
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
   const now = Math.floor(Date.now() / 1000);
@@ -157,6 +201,95 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
 
   return (
     <div className="flex flex-col h-full">
+      {/* Settings toggle */}
+      <div className="flex items-center border-b border-border bg-background shrink-0 px-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab(activeTab === "settings" ? "list" : "settings")}
+          title={activeTab === "settings" ? "Back to Watch List" : "Watch List Settings"}
+          className={cn(
+            "ml-auto p-2 rounded-md transition-colors",
+            activeTab === "settings"
+              ? "text-primary"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          )}
+        >
+          <Settings className="w-4 h-4" />
+        </button>
+      </div>
+
+      {activeTab === "settings" ? (
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-lg flex flex-col gap-8">
+            <div>
+              <h2 className="text-base font-semibold text-foreground mb-1">Watch List Settings</h2>
+              <p className="text-xs text-muted-foreground">Back up and restore your watch list, targets, and notes.</p>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-0.5">Export Backup</h3>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Save your watch list, buy targets, and notes to a JSON file you can restore from later.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  disabled={exporting || importing}
+                  className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download className="w-4 h-4" />
+                  {exporting ? "Exporting…" : "Export Backup"}
+                </button>
+              </div>
+
+              <div className="border-t border-border pt-4">
+                <h3 className="text-sm font-semibold text-foreground mb-0.5">Import Backup</h3>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Restore from a previously exported backup. Existing tickers are kept; targets and notes from the
+                  backup are merged in (existing values are preserved).
+                </p>
+                <button
+                  type="button"
+                  onClick={handleImport}
+                  disabled={exporting || importing}
+                  className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Upload className="w-4 h-4" />
+                  {importing ? "Importing…" : "Import Backup"}
+                </button>
+              </div>
+            </div>
+
+            {backupStatus && (
+              <div
+                className={cn(
+                  "text-sm px-4 py-3 rounded-lg border flex items-center justify-between gap-3",
+                  backupStatus.kind === "success"
+                    ? "bg-positive/10 border-positive/30 text-positive"
+                    : "bg-negative/10 border-negative/30 text-negative"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  {backupStatus.kind === "success"
+                    ? <CheckCircle className="w-4 h-4 shrink-0" />
+                    : <AlertCircle className="w-4 h-4 shrink-0" />
+                  }
+                  <span>{backupStatus.msg}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBackupStatus(null)}
+                  className="shrink-0 opacity-60 hover:opacity-100 transition-opacity text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <>
       {/* Search & add ticker */}
       <form
         onSubmit={handleSubmit}
@@ -533,6 +666,8 @@ export function WatchList({ items, stocks, linkOpenMode, onAdd, onRemove, onPurc
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

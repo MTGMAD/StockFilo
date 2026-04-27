@@ -226,6 +226,73 @@ export async function setWatchlistWatchPrice(id: number, watchPrice: number): Pr
   );
 }
 
+interface WatchlistBackup {
+  version: number;
+  exported_at: number;
+  watchlist: { ticker: string; watch_price: number | null; created_at: number }[];
+  targets: Record<string, number>;
+  notes: Record<string, string>;
+}
+
+export async function exportWatchlistBackup(
+  items: WatchlistItem[],
+  targets: Record<string, number>,
+  notes: Record<string, string>
+): Promise<boolean> {
+  const path = await save({
+    defaultPath: `watchlist-backup-${new Date().toISOString().slice(0, 10)}.json`,
+    filters: [{ name: "JSON Backup", extensions: ["json"] }],
+  });
+  if (!path) return false;
+  const backup: WatchlistBackup = {
+    version: 1,
+    exported_at: Math.floor(Date.now() / 1000),
+    watchlist: items.map(({ ticker, watch_price, created_at }) => ({ ticker, watch_price, created_at })),
+    targets,
+    notes,
+  };
+  await writeTextFile(path, JSON.stringify(backup, null, 2));
+  return true;
+}
+
+export async function importWatchlistBackup(): Promise<{
+  count: number;
+  targets: Record<string, number>;
+  notes: Record<string, string>;
+} | null> {
+  const path = await openDialog({
+    filters: [{ name: "JSON Backup", extensions: ["json"] }],
+    multiple: false,
+  });
+  if (!path) return null;
+  const text = await readTextFile(path as string);
+  let backup: WatchlistBackup;
+  try {
+    backup = JSON.parse(text);
+  } catch {
+    throw new Error("Could not parse backup file — make sure it's a valid Stockfolio watchlist backup.");
+  }
+  if (!Array.isArray(backup.watchlist)) {
+    throw new Error("Invalid backup file: missing watchlist array.");
+  }
+  const db = await getDb();
+  let count = 0;
+  for (const item of backup.watchlist) {
+    if (!item.ticker) continue;
+    const result = await db.execute(
+      "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at) VALUES (?, ?, ?)",
+      [item.ticker.toUpperCase(), item.watch_price ?? null, item.created_at ?? Math.floor(Date.now() / 1000)]
+    );
+    await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [item.ticker.toUpperCase()]);
+    if (result.rowsAffected > 0) count++;
+  }
+  return {
+    count,
+    targets: backup.targets ?? {},
+    notes: backup.notes ?? {},
+  };
+}
+
 // ── Favorites ─────────────────────────────────────────────────────────────
 
 export async function listFavorites(portfolioId: number): Promise<Favorite[]> {
