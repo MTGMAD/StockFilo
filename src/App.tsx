@@ -9,6 +9,7 @@ import { Dashboard } from "./components/dashboard/Dashboard";
 import { usePortfolio } from "./hooks/usePortfolio";
 import { usePortfolios } from "./hooks/usePortfolios";
 import { useWatchlist } from "./hooks/useWatchlist";
+import { useWatchlists } from "./hooks/useWatchlists";
 import { useTheme } from "./hooks/useTheme";
 import { useInvestorMode } from "./hooks/useInvestorMode";
 import { useLinkOpenMode } from "./hooks/useLinkOpenMode";
@@ -46,7 +47,16 @@ export default function App() {
   const { purchases, stocks, summaries, loading, refreshing, error, refresh, reload, add, update, remove: deletePurchase } =
     usePortfolio(resolvedPortfolioId);
 
-  const watchlist = useWatchlist();
+  const { watchlists, loading: watchlistsLoading, create: createWatchlist, rename: renameWatchlist, remove: removeWatchlist, reload: reloadWatchlists } = useWatchlists();
+  const [activeWatchlistId, setActiveWatchlistId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!watchlistsLoading && activeWatchlistId == null && watchlists.length > 0) {
+      setActiveWatchlistId(watchlists[0].id);
+    }
+  }, [watchlistsLoading, watchlists, activeWatchlistId]);
+
+  const watchlist = useWatchlist(activeWatchlistId);
 
   const showRefresh = view === "portfolio" || view === "dashboard";
 
@@ -151,6 +161,23 @@ export default function App() {
             />
           ) : view === "watchlist" ? (
             <WatchList
+              watchlists={watchlists}
+              activeWatchlistId={activeWatchlistId}
+              onSelectWatchlist={setActiveWatchlistId}
+              onCreateWatchlist={createWatchlist}
+              onRenameWatchlist={renameWatchlist}
+              onDeleteWatchlist={async (id) => {
+                await removeWatchlist(id);
+                const remaining = watchlists.filter((w) => w.id !== id);
+                if (remaining.length > 0) {
+                  setActiveWatchlistId(remaining[0].id);
+                } else {
+                  // Auto-create a replacement so the user always has at least one
+                  const newId = await createWatchlist("My Watchlist");
+                  setActiveWatchlistId(newId);
+                }
+              }}
+              onReloadWatchlists={reloadWatchlists}
               items={watchlist.items}
               stocks={watchlist.stocks}
               linkOpenMode={linkOpenMode}

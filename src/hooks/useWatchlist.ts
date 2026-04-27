@@ -11,21 +11,25 @@ import {
 
 const POLL_INTERVAL_MS = 30_000;
 
-export function useWatchlist() {
+export function useWatchlist(watchlistId: number | null) {
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
+    if (watchlistId == null) {
+      setItems([]);
+      return;
+    }
     try {
-      const [w, s] = await Promise.all([listWatchlist(), getCachedStocks()]);
+      const [w, s] = await Promise.all([listWatchlist(watchlistId), getCachedStocks()]);
       setItems(w);
       setStocks(s);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [watchlistId]);
 
   useEffect(() => {
     setLoading(true);
@@ -60,7 +64,7 @@ export function useWatchlist() {
     };
   }, [items]);
 
-  // Backfill watch_price when rows were created without a quote at add time.
+  // Backfill watch_price when rows were created without a quote at add time
   useEffect(() => {
     const missing = items.filter((i) => i.watch_price == null || i.watch_price <= 0);
     if (missing.length === 0) return;
@@ -80,31 +84,28 @@ export function useWatchlist() {
     const runBackfill = async () => {
       try {
         await Promise.all(updates.map((u) => setWatchlistWatchPrice(u.id, u.price)));
-        if (!cancelled) {
-          await loadAll();
-        }
+        if (!cancelled) await loadAll();
       } catch {
         // silently continue
       }
     };
 
     runBackfill();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [items, stocks, loadAll]);
 
   const add = useCallback(
     async (ticker: string, watchPrice: number | null = null) => {
+      if (watchlistId == null) return;
       setError(null);
       try {
-        await addToWatchlist(ticker, watchPrice);
+        await addToWatchlist(ticker, watchlistId, watchPrice);
         await loadAll();
       } catch (e) {
         setError(String(e));
       }
     },
-    [loadAll]
+    [watchlistId, loadAll]
   );
 
   const remove = useCallback(

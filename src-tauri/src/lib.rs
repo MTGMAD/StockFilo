@@ -63,6 +63,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V8,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 9,
+                            description: "add_watchlists_table",
+                            sql: db::migrations::MIGRATION_V9,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

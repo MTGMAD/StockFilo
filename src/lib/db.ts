@@ -13,6 +13,7 @@ import type {
   Favorite,
   UpcomingEarningsEvent,
   Portfolio,
+  Watchlist,
 } from "../types";
 
 const DB_URL = "sqlite:stockfolio.db";
@@ -193,22 +194,65 @@ export async function fetchAndCachePrices(tickers: string[]): Promise<QuoteResul
   return results;
 }
 
-// ── Watchlist ──────────────────────────────────────────────────────────────
+// ── Watchlists ────────────────────────────────────────────────────────────
 
-export async function listWatchlist(): Promise<WatchlistItem[]> {
+export async function listWatchlists(): Promise<Watchlist[]> {
   const db = await getDb();
-  return db.select<WatchlistItem[]>(
-    "SELECT id, ticker, watch_price, created_at FROM watchlist ORDER BY created_at DESC"
+  return db.select<Watchlist[]>(
+    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC, id ASC"
   );
 }
 
-export async function addToWatchlist(ticker: string, watchPrice: number | null = null): Promise<void> {
+export async function createWatchlist(name: string): Promise<number> {
+  const db = await getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const rows = await db.select<{ max_order: number | null }[]>(
+    "SELECT MAX(sort_order) as max_order FROM watchlists"
+  );
+  const nextOrder = (rows[0]?.max_order ?? -1) + 1;
+  await db.execute(
+    "INSERT INTO watchlists (name, sort_order, created_at) VALUES (?, ?, ?)",
+    [name, nextOrder, now]
+  );
+  const result = await db.select<{ id: number }[]>(
+    "SELECT id FROM watchlists WHERE created_at = ? AND name = ? ORDER BY id DESC LIMIT 1",
+    [now, name]
+  );
+  return result[0].id;
+}
+
+export async function renameWatchlist(id: number, name: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE watchlists SET name = ? WHERE id = ?", [name, id]);
+}
+
+export async function deleteWatchlist(id: number): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM watchlist WHERE watchlist_id = ?", [id]);
+  await db.execute("DELETE FROM watchlists WHERE id = ?", [id]);
+  await db.execute(
+    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
+    []
+  );
+}
+
+// ── Watchlist items ────────────────────────────────────────────────────────
+
+export async function listWatchlist(watchlistId: number): Promise<WatchlistItem[]> {
+  const db = await getDb();
+  return db.select<WatchlistItem[]>(
+    "SELECT id, ticker, watch_price, created_at FROM watchlist WHERE watchlist_id = ? ORDER BY created_at DESC",
+    [watchlistId]
+  );
+}
+
+export async function addToWatchlist(ticker: string, watchlistId: number, watchPrice: number | null = null): Promise<void> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   const t = ticker.toUpperCase();
   await db.execute(
-    "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at) VALUES (?, ?, ?)",
-    [t, watchPrice, now]
+    "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?)",
+    [t, watchPrice, now, watchlistId]
   );
   await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
 }
@@ -226,39 +270,67 @@ export async function setWatchlistWatchPrice(id: number, watchPrice: number): Pr
   );
 }
 
-interface WatchlistBackup {
-  version: number;
-  exported_at: number;
-  watchlist: { ticker: string; watch_price: number | null; created_at: number }[];
+// ── Watchlist backup (all watchlists) ─────────────────────────────────────
+
+interface WatchlistBackupEntry {
+  name: string;
+  sort_order: number;
+  items: { ticker: string; watch_price: number | null; created_at: number }[];
   targets: Record<string, number>;
   notes: Record<string, string>;
 }
 
-export async function exportWatchlistBackup(
-  items: WatchlistItem[],
-  targets: Record<string, number>,
-  notes: Record<string, string>
-): Promise<boolean> {
+interface AllWatchlistsBackup {
+  version: 2;
+  exported_at: number;
+  watchlists: WatchlistBackupEntry[];
+}
+
+function readLocalJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export async function exportAllWatchlistsBackup(): Promise<boolean> {
+  const db = await getDb();
+  const watchlists = await db.select<Watchlist[]>(
+    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC"
+  );
+  const allItems = await db.select<(WatchlistItem & { watchlist_id: number })[]>(
+    "SELECT id, ticker, watch_price, created_at, watchlist_id FROM watchlist ORDER BY created_at DESC"
+  );
+
+  const entries: WatchlistBackupEntry[] = watchlists.map((wl) => ({
+    name: wl.name,
+    sort_order: wl.sort_order,
+    items: allItems
+      .filter((i) => i.watchlist_id === wl.id)
+      .map(({ ticker, watch_price, created_at }) => ({ ticker, watch_price, created_at })),
+    targets: readLocalJson<Record<string, number>>(`stockfolio-watchlist-targets-${wl.id}`, {}),
+    notes: readLocalJson<Record<string, string>>(`stockfolio-watchlist-notes-${wl.id}`, {}),
+  }));
+
   const path = await save({
-    defaultPath: `watchlist-backup-${new Date().toISOString().slice(0, 10)}.json`,
+    defaultPath: `watchlists-backup-${new Date().toISOString().slice(0, 10)}.json`,
     filters: [{ name: "JSON Backup", extensions: ["json"] }],
   });
   if (!path) return false;
-  const backup: WatchlistBackup = {
-    version: 1,
+  const backup: AllWatchlistsBackup = {
+    version: 2,
     exported_at: Math.floor(Date.now() / 1000),
-    watchlist: items.map(({ ticker, watch_price, created_at }) => ({ ticker, watch_price, created_at })),
-    targets,
-    notes,
+    watchlists: entries,
   };
   await writeTextFile(path, JSON.stringify(backup, null, 2));
   return true;
 }
 
-export async function importWatchlistBackup(): Promise<{
-  count: number;
-  targets: Record<string, number>;
-  notes: Record<string, string>;
+export async function importAllWatchlistsBackup(): Promise<{
+  watchlistsImported: number;
+  tickersImported: number;
 } | null> {
   const path = await openDialog({
     filters: [{ name: "JSON Backup", extensions: ["json"] }],
@@ -266,31 +338,72 @@ export async function importWatchlistBackup(): Promise<{
   });
   if (!path) return null;
   const text = await readTextFile(path as string);
-  let backup: WatchlistBackup;
+  let backup: AllWatchlistsBackup;
   try {
     backup = JSON.parse(text);
   } catch {
-    throw new Error("Could not parse backup file — make sure it's a valid Stockfolio watchlist backup.");
+    throw new Error("Could not parse backup file — make sure it is a valid Stockfolio watchlist backup.");
   }
-  if (!Array.isArray(backup.watchlist)) {
-    throw new Error("Invalid backup file: missing watchlist array.");
+  if (!Array.isArray(backup.watchlists)) {
+    throw new Error("Invalid backup file: missing watchlists array.");
   }
+
   const db = await getDb();
-  let count = 0;
-  for (const item of backup.watchlist) {
-    if (!item.ticker) continue;
-    const result = await db.execute(
-      "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at) VALUES (?, ?, ?)",
-      [item.ticker.toUpperCase(), item.watch_price ?? null, item.created_at ?? Math.floor(Date.now() / 1000)]
+  const now = Math.floor(Date.now() / 1000);
+  let watchlistsImported = 0;
+  let tickersImported = 0;
+
+  for (const entry of backup.watchlists) {
+    // Find or create the watchlist by name
+    const existing = await db.select<{ id: number }[]>(
+      "SELECT id FROM watchlists WHERE name = ? LIMIT 1",
+      [entry.name]
     );
-    await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [item.ticker.toUpperCase()]);
-    if (result.rowsAffected > 0) count++;
+    let watchlistId: number;
+    if (existing.length > 0) {
+      watchlistId = existing[0].id;
+    } else {
+      const rows = await db.select<{ max_order: number | null }[]>(
+        "SELECT MAX(sort_order) as max_order FROM watchlists"
+      );
+      const nextOrder = (rows[0]?.max_order ?? -1) + 1;
+      await db.execute(
+        "INSERT INTO watchlists (name, sort_order, created_at) VALUES (?, ?, ?)",
+        [entry.name, entry.sort_order ?? nextOrder, now]
+      );
+      const created = await db.select<{ id: number }[]>(
+        "SELECT id FROM watchlists WHERE name = ? ORDER BY id DESC LIMIT 1",
+        [entry.name]
+      );
+      watchlistId = created[0].id;
+      watchlistsImported++;
+    }
+
+    // Import items
+    for (const item of entry.items ?? []) {
+      if (!item.ticker) continue;
+      const result = await db.execute(
+        "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?)",
+        [item.ticker.toUpperCase(), item.watch_price ?? null, item.created_at ?? now, watchlistId]
+      );
+      await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [item.ticker.toUpperCase()]);
+      if (result.rowsAffected > 0) tickersImported++;
+    }
+
+    // Merge targets (existing values win)
+    const targetsKey = `stockfolio-watchlist-targets-${watchlistId}`;
+    const existingTargets = readLocalJson<Record<string, number>>(targetsKey, {});
+    const mergedTargets = { ...entry.targets, ...existingTargets };
+    localStorage.setItem(targetsKey, JSON.stringify(mergedTargets));
+
+    // Merge notes (existing values win)
+    const notesKey = `stockfolio-watchlist-notes-${watchlistId}`;
+    const existingNotes = readLocalJson<Record<string, string>>(notesKey, {});
+    const mergedNotes = { ...entry.notes, ...existingNotes };
+    localStorage.setItem(notesKey, JSON.stringify(mergedNotes));
   }
-  return {
-    count,
-    targets: backup.targets ?? {},
-    notes: backup.notes ?? {},
-  };
+
+  return { watchlistsImported, tickersImported };
 }
 
 // ── Favorites ─────────────────────────────────────────────────────────────

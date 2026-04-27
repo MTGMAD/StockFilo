@@ -1,20 +1,42 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 
-const KEY = "stockfolio-watchlist-notes";
+const OLD_KEY = "stockfolio-watchlist-notes";
 
-function load(): Record<string, string> {
+function storageKey(watchlistId: number | null): string | null {
+  return watchlistId != null ? `stockfolio-watchlist-notes-${watchlistId}` : null;
+}
+
+function loadNotes(watchlistId: number | null): Record<string, string> {
+  const key = storageKey(watchlistId);
+  if (!key) return {};
   try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : {};
+    const raw = localStorage.getItem(key);
+    if (raw != null) return JSON.parse(raw);
+    // One-time migration from old global key for the first watchlist
+    if (watchlistId === 1) {
+      const old = localStorage.getItem(OLD_KEY);
+      if (old) {
+        localStorage.setItem(key, old);
+        localStorage.removeItem(OLD_KEY);
+        return JSON.parse(old);
+      }
+    }
+    return {};
   } catch {
     return {};
   }
 }
 
-export function useWatchlistNotes() {
-  const [notes, setNotes] = useState<Record<string, string>>(load);
+export function useWatchlistNotes(watchlistId: number | null) {
+  const [notes, setNotes] = useState<Record<string, string>>(() => loadNotes(watchlistId));
+
+  useEffect(() => {
+    setNotes(loadNotes(watchlistId));
+  }, [watchlistId]);
 
   const setNote = useCallback((ticker: string, text: string) => {
+    const key = storageKey(watchlistId);
+    if (!key) return;
     setNotes((prev) => {
       const next = { ...prev };
       if (text.trim() === "") {
@@ -22,10 +44,10 @@ export function useWatchlistNotes() {
       } else {
         next[ticker] = text;
       }
-      localStorage.setItem(KEY, JSON.stringify(next));
+      localStorage.setItem(key, JSON.stringify(next));
       return next;
     });
-  }, []);
+  }, [watchlistId]);
 
   const getNote = useCallback(
     (ticker: string): string => notes[ticker] ?? "",
@@ -38,13 +60,19 @@ export function useWatchlistNotes() {
   );
 
   const replaceAll = useCallback((data: Record<string, string>) => {
+    const key = storageKey(watchlistId);
+    if (!key) return;
     const filtered: Record<string, string> = {};
     for (const [k, v] of Object.entries(data)) {
       if (v.trim()) filtered[k] = v;
     }
-    localStorage.setItem(KEY, JSON.stringify(filtered));
+    localStorage.setItem(key, JSON.stringify(filtered));
     setNotes(filtered);
-  }, []);
+  }, [watchlistId]);
 
-  return { notes, setNote, getNote, hasNote, replaceAll };
+  const refresh = useCallback(() => {
+    setNotes(loadNotes(watchlistId));
+  }, [watchlistId]);
+
+  return { notes, setNote, getNote, hasNote, replaceAll, refresh };
 }

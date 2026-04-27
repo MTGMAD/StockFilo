@@ -72,6 +72,13 @@ export interface Portfolio {
   created_at: number;
 }
 
+export interface Watchlist {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: number;
+}
+
 export type View = 'dashboard' | 'portfolio' | 'watchlist' | 'settings';
 export type Theme = 'system' | 'light' | 'dark' | 'warm';
 export type InvestorMode = 'novice' | 'advanced';

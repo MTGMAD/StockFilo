@@ -51,6 +51,20 @@ pub const MIGRATION_V7: &str = r#"
 ALTER TABLE stocks ADD COLUMN target_mean_price REAL;
 "#;
 
+pub const MIGRATION_V9: &str = r#"
+CREATE TABLE IF NOT EXISTS watchlists (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+INSERT INTO watchlists (id, name, sort_order, created_at)
+    VALUES (1, 'My Watchlist', 0, strftime('%s', 'now'));
+
+ALTER TABLE watchlist ADD COLUMN watchlist_id INTEGER NOT NULL DEFAULT 1;
+"#;
+
 pub const MIGRATION_V8: &str = r#"
 CREATE TABLE IF NOT EXISTS portfolios (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

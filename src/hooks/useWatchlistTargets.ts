@@ -1,20 +1,42 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 
-const KEY = "stockfolio-watchlist-targets";
+const OLD_KEY = "stockfolio-watchlist-targets";
 
-function load(): Record<string, number> {
+function storageKey(watchlistId: number | null): string | null {
+  return watchlistId != null ? `stockfolio-watchlist-targets-${watchlistId}` : null;
+}
+
+function loadTargets(watchlistId: number | null): Record<string, number> {
+  const key = storageKey(watchlistId);
+  if (!key) return {};
   try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : {};
+    const raw = localStorage.getItem(key);
+    if (raw != null) return JSON.parse(raw);
+    // One-time migration from old global key for the first watchlist
+    if (watchlistId === 1) {
+      const old = localStorage.getItem(OLD_KEY);
+      if (old) {
+        localStorage.setItem(key, old);
+        localStorage.removeItem(OLD_KEY);
+        return JSON.parse(old);
+      }
+    }
+    return {};
   } catch {
     return {};
   }
 }
 
-export function useWatchlistTargets() {
-  const [targets, setTargets] = useState<Record<string, number>>(load);
+export function useWatchlistTargets(watchlistId: number | null) {
+  const [targets, setTargets] = useState<Record<string, number>>(() => loadTargets(watchlistId));
+
+  useEffect(() => {
+    setTargets(loadTargets(watchlistId));
+  }, [watchlistId]);
 
   const setTarget = useCallback((ticker: string, price: number | null) => {
+    const key = storageKey(watchlistId);
+    if (!key) return;
     setTargets((prev) => {
       const next = { ...prev };
       if (price == null || isNaN(price)) {
@@ -22,10 +44,10 @@ export function useWatchlistTargets() {
       } else {
         next[ticker] = price;
       }
-      localStorage.setItem(KEY, JSON.stringify(next));
+      localStorage.setItem(key, JSON.stringify(next));
       return next;
     });
-  }, []);
+  }, [watchlistId]);
 
   const getTarget = useCallback(
     (ticker: string): number | null => targets[ticker] ?? null,
@@ -42,9 +64,15 @@ export function useWatchlistTargets() {
   );
 
   const replaceAll = useCallback((data: Record<string, number>) => {
-    localStorage.setItem(KEY, JSON.stringify(data));
+    const key = storageKey(watchlistId);
+    if (!key) return;
+    localStorage.setItem(key, JSON.stringify(data));
     setTargets(data);
-  }, []);
+  }, [watchlistId]);
 
-  return { targets, setTarget, getTarget, isTriggered, replaceAll };
+  const refresh = useCallback(() => {
+    setTargets(loadTargets(watchlistId));
+  }, [watchlistId]);
+
+  return { targets, setTarget, getTarget, isTriggered, replaceAll, refresh };
 }
