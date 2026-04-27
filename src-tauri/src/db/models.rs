@@ -1,6 +1,8 @@
 // Database row shapes — kept here for reference.
 // Actual SQL queries are executed from the frontend via tauri-plugin-sql.
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
