@@ -1,12 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { Stock, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
+import { fetchUpcomingEarnings, addEarningsCallToCalendar } from "../../lib/db";
 import { MountainChart } from "../analysis/MountainChart";
 import { TickerNews } from "../analysis/TickerNews";
 import { TickerLogo } from "../shared/TickerLogo";
 import {
   X, TrendingUp, TrendingDown, Minus, ShoppingCart, ExternalLink,
-  Target, BarChart2, Info,
+  Target, BarChart2, Info, CalendarDays,
 } from "lucide-react";
 import { openUrl } from "../../lib/openUrl";
 
@@ -27,6 +28,10 @@ export function StockDetailModal({
   onClose,
   onBuy,
 }: StockDetailModalProps) {
+  const [earningsAt, setEarningsAt] = useState<number | null>(null);
+  const [addingToCalendar, setAddingToCalendar] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+
   // Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -35,6 +40,42 @@ export function StockDetailModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Fetch upcoming earnings for this ticker
+  useEffect(() => {
+    let cancelled = false;
+    fetchUpcomingEarnings([ticker], 30)
+      .then((events) => {
+        if (cancelled) return;
+        const event = events.find((e) => e.ticker === ticker);
+        setEarningsAt(event?.event_at ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [ticker]);
+
+  async function handleAddToCalendar() {
+    if (earningsAt == null) return;
+    setAddingToCalendar(true);
+    setCalendarError(null);
+    try {
+      await addEarningsCallToCalendar(ticker, earningsAt);
+    } catch {
+      setCalendarError("Could not open calendar. Please try again.");
+    } finally {
+      setAddingToCalendar(false);
+    }
+  }
+
+  function formatDateTime(unixSeconds: number): string {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(unixSeconds * 1000));
+  }
 
   const currentPrice = stock?.last_price ?? null;
   const dailyChangePct = stock?.daily_change_pct ?? null;
@@ -85,7 +126,21 @@ export function StockDetailModal({
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {earningsAt != null && (
+              <button
+                onClick={handleAddToCalendar}
+                disabled={addingToCalendar}
+                className="btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+                title="Add earnings call to your default calendar app"
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+                {addingToCalendar ? "Opening…" : `Add Earnings Call (${formatDateTime(earningsAt)})`}
+              </button>
+            )}
+            {calendarError && (
+              <span className="text-xs text-red-500">{calendarError}</span>
+            )}
             <button
               onClick={openYahoo}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
