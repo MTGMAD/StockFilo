@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Leaf, Download, Upload, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info } from "lucide-react";
-import { exportPurchasesCsv, importPurchasesCsv, clearAllPurchases } from "../../lib/db";
+import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info } from "lucide-react";
+import { clearAllPurchases } from "../../lib/db";
 
 interface SettingsPanelProps {
   theme: Theme;
@@ -14,7 +14,6 @@ interface SettingsPanelProps {
   onLinkOpenModeChange: (m: LinkOpenMode) => void;
   showInfoTooltips: boolean;
   onShowInfoTooltipsChange: (v: boolean) => void;
-  activePortfolioId: number | null;
 }
 
 const linkOpenModes: { id: LinkOpenMode; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
@@ -34,54 +33,17 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "warm", label: "Warm", Icon: Leaf },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange, activePortfolioId }: SettingsPanelProps) {
-  const [exporting, setExporting] = useState(false);
-  const [importing, setImporting] = useState(false);
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange }: SettingsPanelProps) {
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  async function handleExport() {
-    if (activePortfolioId == null) return;
-    setExporting(true);
-    setMessage(null);
-    try {
-      const saved = await exportPurchasesCsv(activePortfolioId);
-      if (saved) {
-        setMessage({ type: "success", text: "Purchases exported successfully." });
-      }
-    } catch (e) {
-      setMessage({ type: "error", text: `Export failed: ${e}` });
-    } finally {
-      setExporting(false);
-    }
-  }
-
-  async function handleImport() {
-    if (activePortfolioId == null) return;
-    setImporting(true);
-    setMessage(null);
-    try {
-      const count = await importPurchasesCsv(activePortfolioId);
-      if (count > 0) {
-        setMessage({ type: "success", text: `Imported ${count} purchase${count === 1 ? "" : "s"} successfully.` });
-        onDataChange();
-      } else if (count === 0) {
-        // User may have cancelled the dialog — don't show error
-      }
-    } catch (e) {
-      setMessage({ type: "error", text: `Import failed: ${e}` });
-    } finally {
-      setImporting(false);
-    }
-  }
 
   async function handleClearAll() {
     setClearing(true);
     setMessage(null);
     try {
       await clearAllPurchases();
-      setMessage({ type: "success", text: "All purchases cleared." });
+      setMessage({ type: "success", text: "All data cleared." });
       onDataChange();
     } catch (e) {
       setMessage({ type: "error", text: `Clear failed: ${e}` });
@@ -210,56 +172,32 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
         <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
           <div className="min-w-0 shrink-0 w-48">
             <h2 className="text-sm font-semibold text-foreground">Data Management</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Export or import purchases as CSV.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Clear all data across every portfolio.</p>
           </div>
           <div className="flex-1">
             <div className="flex flex-wrap gap-2">
-              <button
-                onClick={handleExport}
-                disabled={exporting || importing || clearing}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
-                  "border-border text-foreground hover:border-primary/50 hover:text-primary",
-                  (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
-                )}
-              >
-                <Download className="w-4 h-4" />
-                {exporting ? "Exporting…" : "Export CSV"}
-              </button>
-              <button
-                onClick={handleImport}
-                disabled={exporting || importing || clearing}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
-                  "border-border text-foreground hover:border-primary/50 hover:text-primary",
-                  (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
-                )}
-              >
-                <Upload className="w-4 h-4" />
-                {importing ? "Importing…" : "Import CSV"}
-              </button>
               {!confirmClear ? (
                 <button
                   onClick={() => setConfirmClear(true)}
-                  disabled={exporting || importing || clearing}
+                  disabled={clearing}
                   className={cn(
                     "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
                     "border-red-300 text-red-600 hover:border-red-500 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950",
-                    (exporting || importing || clearing) && "opacity-50 cursor-not-allowed"
+                    clearing && "opacity-50 cursor-not-allowed"
                   )}
                 >
                   <Trash2 className="w-4 h-4" />
-                  Clear All
+                  Clear All Data
                 </button>
               ) : (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-red-600 font-medium">Are you sure?</span>
+                  <span className="text-sm text-red-600 font-medium">Are you sure? This clears all portfolios.</span>
                   <button
                     onClick={handleClearAll}
                     disabled={clearing}
                     className="px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors"
                   >
-                    {clearing ? "Clearing…" : "Yes, delete all"}
+                    {clearing ? "Clearing…" : "Yes, clear all"}
                   </button>
                   <button
                     onClick={() => setConfirmClear(false)}
@@ -286,11 +224,6 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
                 {message.text}
               </div>
             )}
-            <p className="text-xs text-muted-foreground mt-3">
-              Format: <code className="bg-muted px-1 rounded">ticker,shares,price_per_share,purchased_at</code>
-              {" · "}
-              Date: <code className="bg-muted px-1 rounded">YYYY-MM-DD</code>
-            </p>
           </div>
         </div>
 

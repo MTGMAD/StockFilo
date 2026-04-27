@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { View, Portfolio } from "../../types";
 import {
   LayoutDashboard,
@@ -32,6 +32,7 @@ interface SidebarProps {
   onDeletePortfolio: (id: number) => Promise<void>;
   onStarPortfolio: (id: number) => Promise<void>;
   onReorderPortfolios: (ids: number[]) => Promise<void>;
+  newPortfolioTrigger?: number;
 }
 
 export function Sidebar({
@@ -47,12 +48,19 @@ export function Sidebar({
   onDeletePortfolio,
   onStarPortfolio,
   onReorderPortfolios,
+  newPortfolioTrigger,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [creatingNew, setCreatingNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (newPortfolioTrigger && newPortfolioTrigger > 0) {
+      setCreatingNew(true);
+    }
+  }, [newPortfolioTrigger]);
 
   function startEdit(p: Portfolio) {
     setEditingId(p.id);

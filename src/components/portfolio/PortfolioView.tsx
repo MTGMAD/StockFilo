@@ -31,6 +31,7 @@ import {
   exportPurchasesXlsx,
   importPurchasesXlsx,
   importAmeripriseCSV,
+  clearPortfolioPurchases,
 } from "../../lib/db";
 
 type PortfolioTab = "analysis" | "purchases" | "settings";
@@ -46,6 +47,7 @@ interface PortfolioViewProps {
   onDelete: (id: number) => Promise<void>;
   onRefresh: () => void;
   linkOpenMode: LinkOpenMode;
+  onDeletePortfolio: (id: number) => Promise<void>;
 }
 
 export function PortfolioView({
@@ -59,6 +61,7 @@ export function PortfolioView({
   onDelete,
   onRefresh,
   linkOpenMode,
+  onDeletePortfolio,
 }: PortfolioViewProps) {
   const [activeTab, setActiveTab] = useState<PortfolioTab>("analysis");
 
@@ -73,6 +76,10 @@ export function PortfolioView({
   const [addingCalendarFor, setAddingCalendarFor] = useState<string | null>(null);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [dataOpStatus, setDataOpStatus] = useState<{ kind: "success" | "error"; msg: string } | null>(null);
+  const [confirmClearPortfolio, setConfirmClearPortfolio] = useState(false);
+  const [clearingPortfolio, setClearingPortfolio] = useState(false);
+  const [confirmDeletePortfolio, setConfirmDeletePortfolio] = useState(false);
+  const [deletingPortfolio, setDeletingPortfolio] = useState(false);
 
   // Switch to Purchases tab automatically when portfolio is empty
   useEffect(() => {
@@ -241,6 +248,33 @@ export function PortfolioView({
       onRefresh();
     } catch (e) {
       setDataOpStatus({ kind: "error", msg: `Ameriprise import failed: ${e}` });
+    }
+  }
+
+  async function handleClearPortfolio() {
+    if (portfolioId == null) return;
+    setClearingPortfolio(true);
+    try {
+      await clearPortfolioPurchases(portfolioId);
+      setDataOpStatus({ kind: "success", msg: "Portfolio data cleared." });
+      onRefresh();
+    } catch (e) {
+      setDataOpStatus({ kind: "error", msg: `Clear failed: ${e}` });
+    } finally {
+      setClearingPortfolio(false);
+      setConfirmClearPortfolio(false);
+    }
+  }
+
+  async function handleDeletePortfolio() {
+    if (portfolioId == null) return;
+    setDeletingPortfolio(true);
+    try {
+      await onDeletePortfolio(portfolioId);
+    } catch (e) {
+      setDeletingPortfolio(false);
+      setConfirmDeletePortfolio(false);
+      setDataOpStatus({ kind: "error", msg: `Delete failed: ${e}` });
     }
   }
 
@@ -453,6 +487,94 @@ export function PortfolioView({
                   </button>
                 </div>
               )}
+
+              {/* Danger Zone */}
+              <div className="border-t border-red-500/20 pt-6 flex flex-col gap-6">
+                <div>
+                  <h3 className="text-sm font-semibold text-red-600 dark:text-red-400 mb-0.5">Danger Zone</h3>
+                  <p className="text-xs text-muted-foreground">These actions are permanent and cannot be undone.</p>
+                </div>
+
+                {/* Clear portfolio data */}
+                <div className="flex flex-col gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Clear portfolio data</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Removes all purchases and favorites from this portfolio. The portfolio itself is kept.
+                    </p>
+                  </div>
+                  {!confirmClearPortfolio ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearPortfolio(true)}
+                      disabled={clearingPortfolio || deletingPortfolio}
+                      className="self-start flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors border-red-300 text-red-600 hover:border-red-500 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Clear Data
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm text-red-600 font-medium">Are you sure?</span>
+                      <button
+                        type="button"
+                        onClick={handleClearPortfolio}
+                        disabled={clearingPortfolio}
+                        className="px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors"
+                      >
+                        {clearingPortfolio ? "Clearing…" : "Yes, clear data"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClearPortfolio(false)}
+                        disabled={clearingPortfolio}
+                        className="px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Delete portfolio */}
+                <div className="flex flex-col gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Delete portfolio</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Permanently deletes this portfolio and all its data.
+                    </p>
+                  </div>
+                  {!confirmDeletePortfolio ? (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeletePortfolio(true)}
+                      disabled={clearingPortfolio || deletingPortfolio}
+                      className="self-start flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors border-red-300 text-red-600 hover:border-red-500 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Delete Portfolio
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm text-red-600 font-medium">Are you sure? This cannot be undone.</span>
+                      <button
+                        type="button"
+                        onClick={handleDeletePortfolio}
+                        disabled={deletingPortfolio}
+                        className="px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 disabled:opacity-50 transition-colors"
+                      >
+                        {deletingPortfolio ? "Deleting…" : "Yes, delete portfolio"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeletePortfolio(false)}
+                        disabled={deletingPortfolio}
+                        className="px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent disabled:opacity-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         ) : activeTab === "purchases" ? (

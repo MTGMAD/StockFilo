@@ -31,6 +31,7 @@ export default function App() {
   const { portfolios, loading: portfoliosLoading, starredPortfolio, create, rename, remove, star, reorder } = usePortfolios();
 
   const [activePortfolioId, setActivePortfolioId] = useState<number | null>(null);
+  const [newPortfolioTrigger, setNewPortfolioTrigger] = useState(0);
 
   // Once portfolios are loaded, default to the starred one
   useEffect(() => {
@@ -81,12 +82,16 @@ export default function App() {
             const remaining = portfolios.filter((p) => p.id !== id);
             if (remaining.length > 0) {
               setActivePortfolioId(remaining[0].id);
+              setView("portfolio");
             } else {
               setActivePortfolioId(null);
               setView("dashboard");
+              setSidebarCollapsed(false);
+              setNewPortfolioTrigger((c) => c + 1);
             }
           }
         }}
+        newPortfolioTrigger={newPortfolioTrigger}
         onStarPortfolio={star}
         onReorderPortfolios={reorder}
       />
@@ -130,6 +135,19 @@ export default function App() {
               onDelete={deletePurchase}
               onRefresh={reload}
               linkOpenMode={linkOpenMode}
+              onDeletePortfolio={async (id) => {
+                await remove(id);
+                const remaining = portfolios.filter((p) => p.id !== id);
+                if (remaining.length > 0) {
+                  setActivePortfolioId(remaining[0].id);
+                  setView("portfolio");
+                } else {
+                  setActivePortfolioId(null);
+                  setView("dashboard");
+                  setSidebarCollapsed(false);
+                  setNewPortfolioTrigger((c) => c + 1);
+                }
+              }}
             />
           ) : view === "watchlist" ? (
             <WatchList
@@ -153,7 +171,6 @@ export default function App() {
               onLinkOpenModeChange={setLinkOpenMode}
               showInfoTooltips={showInfoTooltips}
               onShowInfoTooltipsChange={setShowInfoTooltips}
-              activePortfolioId={resolvedPortfolioId}
             />
           )}
         </main>

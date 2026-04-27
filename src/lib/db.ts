@@ -141,6 +141,16 @@ export async function clearAllPurchases(): Promise<void> {
   await db.execute("DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist)", []);
 }
 
+export async function clearPortfolioPurchases(id: number): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM purchases WHERE portfolio_id = ?", [id]);
+  await db.execute("DELETE FROM favorites WHERE portfolio_id = ?", [id]);
+  await db.execute(
+    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
+    []
+  );
+}
+
 // ── Stocks / Prices ────────────────────────────────────────────────────────
 
 export async function getCachedStocks(): Promise<Stock[]> {
