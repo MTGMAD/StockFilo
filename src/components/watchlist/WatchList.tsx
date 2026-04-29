@@ -1,7 +1,18 @@
 import { Fragment, useState, useEffect, useRef } from "react";
-import type { WatchlistItem, Stock, TickerSearchResult, LinkOpenMode, Watchlist } from "../../types";
+import type {
+  WatchlistItem,
+  Stock,
+  TickerSearchResult,
+  LinkOpenMode,
+  Watchlist,
+} from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
-import { searchTickers, exportAllWatchlistsBackup, importAllWatchlistsBackup, fetchUpcomingEarnings } from "../../lib/db";
+import {
+  searchTickers,
+  exportAllWatchlistsBackup,
+  importAllWatchlistsBackup,
+  fetchUpcomingEarnings,
+} from "../../lib/db";
 import { openUrl } from "../../lib/openUrl";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
@@ -10,10 +21,27 @@ import { StockDetailModal } from "./StockDetailModal";
 import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
 import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
 import {
-  Plus, Trash2, ShoppingCart, Search, Loader2,
-  TrendingUp, TrendingDown, Minus,
-  Bell, MessageSquare, MessageSquareDiff, ExternalLink,
-  Settings, Download, Upload, CheckCircle, AlertCircle, Check, X, Pencil, CalendarDays,
+  Plus,
+  Trash2,
+  ShoppingCart,
+  Search,
+  Loader2,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  Bell,
+  MessageSquare,
+  MessageSquareDiff,
+  ExternalLink,
+  Settings,
+  Download,
+  Upload,
+  CheckCircle,
+  AlertCircle,
+  Check,
+  X,
+  Pencil,
+  CalendarDays,
 } from "lucide-react";
 
 type WatchListTab = "list" | "settings";
@@ -32,7 +60,12 @@ interface WatchListProps {
   onAdd: (ticker: string, watchPrice: number | null) => Promise<void>;
   onRemove: (id: number) => Promise<void>;
   onReload: () => Promise<void>;
-  onPurchase: (ticker: string, shares: number, price: number, date: string) => Promise<void>;
+  onPurchase: (
+    ticker: string,
+    shares: number,
+    price: number,
+    date: string,
+  ) => Promise<void>;
 }
 
 export function WatchList({
@@ -80,18 +113,36 @@ export function WatchList({
   const [deletingWatchlist, setDeletingWatchlist] = useState(false);
 
   // Backup status
-  const [backupStatus, setBackupStatus] = useState<{ kind: "success" | "error"; msg: string } | null>(null);
+  const [backupStatus, setBackupStatus] = useState<{
+    kind: "success" | "error";
+    msg: string;
+  } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
 
-  const { getTarget, setTarget, isTriggered, refresh: refreshTargets } = useWatchlistTargets(activeWatchlistId);
-  const { getNote, setNote, hasNote, refresh: refreshNotes } = useWatchlistNotes(activeWatchlistId);
+  const {
+    getTarget,
+    setTarget,
+    isTriggered,
+    refresh: refreshTargets,
+  } = useWatchlistTargets(activeWatchlistId);
+  const {
+    getNote,
+    setNote,
+    hasNote,
+    refresh: refreshNotes,
+  } = useWatchlistNotes(activeWatchlistId);
 
-  const [upcomingEarnings, setUpcomingEarnings] = useState<Record<string, number>>({});
+  const [upcomingEarnings, setUpcomingEarnings] = useState<
+    Record<string, number>
+  >({});
   const earningsKey = items.map((i) => i.ticker).join(",");
   useEffect(() => {
     const tickers = items.map((i) => i.ticker);
-    if (tickers.length === 0) { setUpcomingEarnings({}); return; }
+    if (tickers.length === 0) {
+      setUpcomingEarnings({});
+      return;
+    }
     let cancelled = false;
     fetchUpcomingEarnings(tickers, 30)
       .then((events) => {
@@ -100,9 +151,13 @@ export function WatchList({
         for (const e of events) map[e.ticker] = e.event_at;
         setUpcomingEarnings(map);
       })
-      .catch(() => { if (!cancelled) setUpcomingEarnings({}); });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      .catch(() => {
+        if (!cancelled) setUpcomingEarnings({});
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [earningsKey]);
 
   // Sync rename draft when watchlist changes or settings opens
@@ -129,13 +184,16 @@ export function WatchList({
     const stock = stockMap.get(item.ticker);
     const currentPrice = stock?.last_price ?? null;
     const watchPrice = item.watch_price;
-    if (watchPrice == null || currentPrice == null || watchPrice <= 0) return null;
+    if (watchPrice == null || currentPrice == null || watchPrice <= 0)
+      return null;
     return ((currentPrice - watchPrice) / watchPrice) * 100;
   }
 
   function liveRank(item: WatchlistItem): number {
     const stock = stockMap.get(item.ticker);
-    return stock?.daily_change_pct ?? sinceAddedPct(item) ?? Number.NEGATIVE_INFINITY;
+    return (
+      stock?.daily_change_pct ?? sinceAddedPct(item) ?? Number.NEGATIVE_INFINITY
+    );
   }
 
   const rankedItems = [...items].sort((a, b) => {
@@ -153,7 +211,11 @@ export function WatchList({
   }
 
   async function openTickerPage(ticker: string) {
-    await openUrl(`https://finance.yahoo.com/quote/${ticker}`, linkOpenMode, `${ticker} - Yahoo Finance`);
+    await openUrl(
+      `https://finance.yahoo.com/quote/${ticker}`,
+      linkOpenMode,
+      `${ticker} - Yahoo Finance`,
+    );
   }
 
   // Debounced search
@@ -183,7 +245,10 @@ export function WatchList({
   // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node)
+      ) {
         setShowDropdown(false);
       }
     }
@@ -256,8 +321,9 @@ export function WatchList({
       await onDeleteWatchlist(activeWatchlistId);
       setActiveTab("list");
     } catch {
-      setDeletingWatchlist(false);
       setConfirmDeleteWatchlist(false);
+    } finally {
+      setDeletingWatchlist(false);
     }
   }
 
@@ -266,7 +332,11 @@ export function WatchList({
     setBackupStatus(null);
     try {
       const ok = await exportAllWatchlistsBackup();
-      if (ok) setBackupStatus({ kind: "success", msg: "All watchlists exported successfully." });
+      if (ok)
+        setBackupStatus({
+          kind: "success",
+          msg: "All watchlists exported successfully.",
+        });
     } catch (e) {
       setBackupStatus({ kind: "error", msg: `Export failed: ${e}` });
     } finally {
@@ -303,12 +373,15 @@ export function WatchList({
           <button
             key={wl.id}
             type="button"
-            onClick={() => { onSelectWatchlist(wl.id); setActiveTab("list"); }}
+            onClick={() => {
+              onSelectWatchlist(wl.id);
+              setActiveTab("list");
+            }}
             className={cn(
               "shrink-0 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
               activeWatchlistId === wl.id && activeTab === "list"
                 ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
             {wl.name}
@@ -325,14 +398,28 @@ export function WatchList({
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") commitNewWatchlist();
-                if (e.key === "Escape") { setCreatingNew(false); setNewName(""); }
+                if (e.key === "Escape") {
+                  setCreatingNew(false);
+                  setNewName("");
+                }
               }}
               className="w-32 bg-background border border-border rounded px-2 py-1 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
             />
-            <button onClick={commitNewWatchlist} className="text-positive hover:opacity-80 shrink-0" title="Create">
+            <button
+              onClick={commitNewWatchlist}
+              className="text-positive hover:opacity-80 shrink-0"
+              title="Create"
+            >
               <Check className="w-3.5 h-3.5" />
             </button>
-            <button onClick={() => { setCreatingNew(false); setNewName(""); }} className="text-muted-foreground hover:opacity-80 shrink-0" title="Cancel">
+            <button
+              onClick={() => {
+                setCreatingNew(false);
+                setNewName("");
+              }}
+              className="text-muted-foreground hover:opacity-80 shrink-0"
+              title="Cancel"
+            >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -350,13 +437,19 @@ export function WatchList({
         {/* Settings gear — far right */}
         <button
           type="button"
-          onClick={() => setActiveTab(activeTab === "settings" ? "list" : "settings")}
-          title={activeTab === "settings" ? "Back to Watch List" : "Watchlist Settings"}
+          onClick={() =>
+            setActiveTab(activeTab === "settings" ? "list" : "settings")
+          }
+          title={
+            activeTab === "settings"
+              ? "Back to Watch List"
+              : "Watchlist Settings"
+          }
           className={cn(
             "ml-auto shrink-0 p-2 mr-1 rounded-md transition-colors",
             activeTab === "settings"
               ? "text-primary"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted",
           )}
         >
           <Settings className="w-4 h-4" />
@@ -367,7 +460,9 @@ export function WatchList({
         <div className="flex-1 overflow-y-auto p-6">
           <div className="max-w-lg flex flex-col gap-8">
             <div>
-              <h2 className="text-base font-semibold text-foreground mb-1">Watchlist Settings</h2>
+              <h2 className="text-base font-semibold text-foreground mb-1">
+                Watchlist Settings
+              </h2>
               <p className="text-xs text-muted-foreground">
                 Manage this watchlist or back up all watchlists.
               </p>
@@ -380,7 +475,9 @@ export function WatchList({
                 <input
                   value={renameDraft}
                   onChange={(e) => setRenameDraft(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleRename(); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleRename();
+                  }}
                   className="flex-1 min-w-0 bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
                   placeholder="Watchlist name…"
                 />
@@ -399,9 +496,12 @@ export function WatchList({
             {/* Backup */}
             <div className="flex flex-col gap-4 border-t border-border pt-6">
               <div>
-                <h3 className="text-sm font-semibold text-foreground mb-0.5">Backup All Watchlists</h3>
+                <h3 className="text-sm font-semibold text-foreground mb-0.5">
+                  Backup All Watchlists
+                </h3>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Export every watchlist — tickers, buy targets, and notes — to a single JSON file.
+                  Export every watchlist — tickers, buy targets, and notes — to
+                  a single JSON file.
                 </p>
                 <button
                   type="button"
@@ -415,10 +515,13 @@ export function WatchList({
               </div>
 
               <div>
-                <h3 className="text-sm font-semibold text-foreground mb-0.5">Restore from Backup</h3>
+                <h3 className="text-sm font-semibold text-foreground mb-0.5">
+                  Restore from Backup
+                </h3>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Import a previously exported backup. Existing watchlists are matched by name and merged —
-                  new tickers are added and missing targets/notes are filled in, but nothing is overwritten.
+                  Import a previously exported backup. Existing watchlists are
+                  matched by name and merged — new tickers are added and missing
+                  targets/notes are filled in, but nothing is overwritten.
                 </p>
                 <button
                   type="button"
@@ -437,14 +540,15 @@ export function WatchList({
                     "text-sm px-4 py-3 rounded-lg border flex items-center justify-between gap-3",
                     backupStatus.kind === "success"
                       ? "bg-positive/10 border-positive/30 text-positive"
-                      : "bg-negative/10 border-negative/30 text-negative"
+                      : "bg-negative/10 border-negative/30 text-negative",
                   )}
                 >
                   <div className="flex items-center gap-2">
-                    {backupStatus.kind === "success"
-                      ? <CheckCircle className="w-4 h-4 shrink-0" />
-                      : <AlertCircle className="w-4 h-4 shrink-0" />
-                    }
+                    {backupStatus.kind === "success" ? (
+                      <CheckCircle className="w-4 h-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                    )}
                     <span>{backupStatus.msg}</span>
                   </div>
                   <button
@@ -461,14 +565,22 @@ export function WatchList({
             {/* Danger zone */}
             <div className="border-t border-red-500/20 pt-6 flex flex-col gap-4">
               <div>
-                <h3 className="text-sm font-semibold text-red-600 dark:text-red-400 mb-0.5">Danger Zone</h3>
-                <p className="text-xs text-muted-foreground">These actions are permanent and cannot be undone.</p>
+                <h3 className="text-sm font-semibold text-red-600 dark:text-red-400 mb-0.5">
+                  Danger Zone
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  These actions are permanent and cannot be undone.
+                </p>
               </div>
               <div className="flex flex-col gap-2">
                 <div>
-                  <p className="text-sm font-medium text-foreground">Delete this watchlist</p>
+                  <p className="text-sm font-medium text-foreground">
+                    Delete this watchlist
+                  </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Permanently removes this watchlist and all its tickers. A new watchlist is created automatically if this is the last one.
+                    Permanently removes this watchlist and all its tickers. A
+                    new watchlist is created automatically if this is the last
+                    one.
                   </p>
                 </div>
                 {!confirmDeleteWatchlist ? (
@@ -482,7 +594,9 @@ export function WatchList({
                   </button>
                 ) : (
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm text-red-600 font-medium">Are you sure?</span>
+                    <span className="text-sm text-red-600 font-medium">
+                      Are you sure?
+                    </span>
                     <button
                       type="button"
                       onClick={handleDeleteWatchlist}
@@ -540,25 +654,46 @@ export function WatchList({
                         "w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2 transition-colors",
                         i === selectedIndex
                           ? "bg-primary text-primary-foreground"
-                          : "hover:bg-muted text-foreground"
+                          : "hover:bg-muted text-foreground",
                       )}
                     >
                       <div className="flex flex-col min-w-0">
                         <span className="font-semibold">{r.symbol}</span>
                         {r.name && (
-                          <span className={cn("text-xs truncate", i === selectedIndex ? "opacity-80" : "text-muted-foreground")}>
+                          <span
+                            className={cn(
+                              "text-xs truncate",
+                              i === selectedIndex
+                                ? "opacity-80"
+                                : "text-muted-foreground",
+                            )}
+                          >
                             {r.name}
                           </span>
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         {r.exchange && (
-                          <span className={cn("text-xs", i === selectedIndex ? "opacity-70" : "text-muted-foreground")}>
+                          <span
+                            className={cn(
+                              "text-xs",
+                              i === selectedIndex
+                                ? "opacity-70"
+                                : "text-muted-foreground",
+                            )}
+                          >
                             {r.exchange}
                           </span>
                         )}
                         {r.type_disp && (
-                          <span className={cn("text-xs px-1.5 py-0.5 rounded", i === selectedIndex ? "bg-primary-foreground/20" : "bg-muted")}>
+                          <span
+                            className={cn(
+                              "text-xs px-1.5 py-0.5 rounded",
+                              i === selectedIndex
+                                ? "bg-primary-foreground/20"
+                                : "bg-muted",
+                            )}
+                          >
                             {r.type_disp}
                           </span>
                         )}
@@ -589,16 +724,36 @@ export function WatchList({
               <table className="w-full text-sm border-collapse">
                 <thead className="sticky top-0 z-10">
                   <tr className="border-b border-border bg-muted">
-                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Ticker</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Name</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Price</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">1Y Target</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Today</th>
-                    <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">1M Trend</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Added</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Since Add %</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Target</th>
-                    <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Actions</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">
+                      Ticker
+                    </th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">
+                      Name
+                    </th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                      Price
+                    </th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                      1Y Target
+                    </th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                      Today
+                    </th>
+                    <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">
+                      1M Trend
+                    </th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                      Added
+                    </th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                      Since Add %
+                    </th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
+                      Target
+                    </th>
+                    <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -607,7 +762,9 @@ export function WatchList({
                     const currentPrice = stock?.last_price ?? null;
                     const targetMeanPrice = stock?.target_mean_price ?? null;
                     const dailyChangePct = stock?.daily_change_pct ?? null;
-                    const isStale = !stock?.last_fetched_at || now - stock.last_fetched_at > STALE_THRESHOLD;
+                    const isStale =
+                      !stock?.last_fetched_at ||
+                      now - stock.last_fetched_at > STALE_THRESHOLD;
                     const triggered = isTriggered(item.ticker, currentPrice);
                     const target = getTarget(item.ticker);
                     const note = getNote(item.ticker);
@@ -617,15 +774,21 @@ export function WatchList({
                     const sinceChangePct = sinceAddedPct(item);
 
                     const targetUpsidePct =
-                      targetMeanPrice != null && currentPrice != null && currentPrice > 0
-                        ? ((targetMeanPrice - currentPrice) / currentPrice) * 100
+                      targetMeanPrice != null &&
+                      currentPrice != null &&
+                      currentPrice > 0
+                        ? ((targetMeanPrice - currentPrice) / currentPrice) *
+                          100
                         : null;
 
                     const DailyIcon =
-                      dailyChangePct == null ? null
-                      : dailyChangePct > 0 ? TrendingUp
-                      : dailyChangePct < 0 ? TrendingDown
-                      : Minus;
+                      dailyChangePct == null
+                        ? null
+                        : dailyChangePct > 0
+                          ? TrendingUp
+                          : dailyChangePct < 0
+                            ? TrendingDown
+                            : Minus;
 
                     return (
                       <Fragment key={item.id}>
@@ -634,7 +797,7 @@ export function WatchList({
                             "border-b border-border transition-colors cursor-pointer",
                             triggered
                               ? "bg-amber-500/10 hover:bg-amber-500/15"
-                              : "hover:bg-muted/30"
+                              : "hover:bg-muted/30",
                           )}
                           onDoubleClick={() => setDetailTicker(item.ticker)}
                           title="Double-click for detailed analysis"
@@ -648,7 +811,9 @@ export function WatchList({
                                 className="group flex items-center gap-1.5 text-left transition-colors hover:text-primary"
                                 title={`Open ${item.ticker} on Yahoo Finance`}
                               >
-                                {triggered && <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                                {triggered && (
+                                  <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                )}
                                 {item.ticker}
                                 {upcomingEarnings[item.ticker] && (
                                   <span title="Upcoming earnings call">
@@ -660,22 +825,41 @@ export function WatchList({
                             </div>
                           </td>
                           <td className="px-4 py-2.5 text-foreground max-w-[220px] truncate">
-                            {stock?.name ?? <span className="text-muted-foreground">—</span>}
+                            {stock?.name ?? (
+                              <span className="text-muted-foreground">—</span>
+                            )}
                           </td>
                           <td className="px-4 py-2.5 text-right text-foreground">
-                            <span className={cn(isStale && currentPrice != null ? "opacity-50" : "")}>
-                              {currentPrice != null ? formatCurrency(currentPrice) : "—"}
+                            <span
+                              className={cn(
+                                isStale && currentPrice != null
+                                  ? "opacity-50"
+                                  : "",
+                              )}
+                            >
+                              {currentPrice != null
+                                ? formatCurrency(currentPrice)
+                                : "—"}
                             </span>
                             {isStale && currentPrice != null && (
-                              <span className="ml-1 text-xs text-amber-500">stale</span>
+                              <span className="ml-1 text-xs text-amber-500">
+                                stale
+                              </span>
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             {targetMeanPrice != null ? (
                               <div className="flex flex-col items-end leading-tight">
-                                <span className="text-foreground">{formatCurrency(targetMeanPrice)}</span>
+                                <span className="text-foreground">
+                                  {formatCurrency(targetMeanPrice)}
+                                </span>
                                 {targetUpsidePct != null && (
-                                  <span className={cn("text-xs font-medium", pnlColor(targetUpsidePct))}>
+                                  <span
+                                    className={cn(
+                                      "text-xs font-medium",
+                                      pnlColor(targetUpsidePct),
+                                    )}
+                                  >
                                     {formatPercent(targetUpsidePct)}
                                   </span>
                                 )}
@@ -686,7 +870,12 @@ export function WatchList({
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             {DailyIcon && dailyChangePct != null ? (
-                              <span className={cn("flex items-center justify-end gap-1", pnlColor(dailyChangePct))}>
+                              <span
+                                className={cn(
+                                  "flex items-center justify-end gap-1",
+                                  pnlColor(dailyChangePct),
+                                )}
+                              >
                                 <DailyIcon className="w-3.5 h-3.5" />
                                 {formatPercent(dailyChangePct)}
                               </span>
@@ -696,22 +885,36 @@ export function WatchList({
                           </td>
                           <td className="px-4 py-2.5">
                             <div className="flex justify-center">
-                              <SparkLine ticker={item.ticker} quoteType={stock?.quote_type} />
+                              <SparkLine
+                                ticker={item.ticker}
+                                quoteType={stock?.quote_type}
+                              />
                             </div>
                           </td>
                           <td className="px-4 py-2.5 text-right text-foreground">
-                            <span className="text-xs">{formatAddedDate(item.created_at)}</span>
+                            <span className="text-xs">
+                              {formatAddedDate(item.created_at)}
+                            </span>
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             {watchPrice != null && currentPrice != null ? (
                               <div className="flex flex-col items-end leading-tight">
-                                <span className="text-xs text-muted-foreground">{formatCurrency(watchPrice)}</span>
-                                <span className={cn("font-medium", pnlColor(sinceChangePct))}>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatCurrency(watchPrice)}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "font-medium",
+                                    pnlColor(sinceChangePct),
+                                  )}
+                                >
                                   {formatPercent(sinceChangePct)}
                                 </span>
                               </div>
                             ) : (
-                              <span className="text-xs text-muted-foreground">Tracking from next quote</span>
+                              <span className="text-xs text-muted-foreground">
+                                Tracking from next quote
+                              </span>
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-right">
@@ -725,12 +928,17 @@ export function WatchList({
                                 onChange={(e) => setTargetDraft(e.target.value)}
                                 onBlur={() => {
                                   const val = parseFloat(targetDraft);
-                                  setTarget(item.ticker, isNaN(val) || val <= 0 ? null : val);
+                                  setTarget(
+                                    item.ticker,
+                                    isNaN(val) || val <= 0 ? null : val,
+                                  );
                                   setEditingTarget(null);
                                 }}
                                 onKeyDown={(e) => {
-                                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                                  if (e.key === "Escape") setEditingTarget(null);
+                                  if (e.key === "Enter")
+                                    (e.target as HTMLInputElement).blur();
+                                  if (e.key === "Escape")
+                                    setEditingTarget(null);
                                 }}
                                 className="w-24 text-right rounded border border-primary bg-background px-2 py-0.5 text-sm outline-none"
                               />
@@ -738,7 +946,9 @@ export function WatchList({
                               <button
                                 onClick={() => {
                                   setEditingTarget(item.ticker);
-                                  setTargetDraft(target != null ? String(target) : "");
+                                  setTargetDraft(
+                                    target != null ? String(target) : "",
+                                  );
                                 }}
                                 className={cn(
                                   "text-sm rounded px-1.5 py-0.5 transition-colors",
@@ -746,35 +956,43 @@ export function WatchList({
                                     ? triggered
                                       ? "text-amber-500 font-semibold"
                                       : "text-primary"
-                                    : "text-muted-foreground hover:text-foreground"
+                                    : "text-muted-foreground hover:text-foreground",
                                 )}
                                 title="Click to set buy target"
                               >
-                                {target != null ? formatCurrency(target) : "Set target"}
+                                {target != null
+                                  ? formatCurrency(target)
+                                  : "Set target"}
                               </button>
                             )}
                           </td>
                           <td className="px-4 py-2.5">
                             <div className="flex items-center justify-center gap-1">
                               <button
-                                onClick={() => setOpenNotes((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(item.ticker)) next.delete(item.ticker);
-                                  else next.add(item.ticker);
-                                  return next;
-                                })}
+                                onClick={() =>
+                                  setOpenNotes((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(item.ticker))
+                                      next.delete(item.ticker);
+                                    else next.add(item.ticker);
+                                    return next;
+                                  })
+                                }
                                 className={cn(
                                   "p-1.5 rounded transition-colors",
                                   hasNote(item.ticker)
                                     ? "text-primary hover:bg-primary/10"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                                    : "text-muted-foreground hover:text-foreground hover:bg-muted",
                                 )}
-                                title={noteOpen ? "Hide notes" : "Add / view notes"}
-                              >
-                                {hasNote(item.ticker)
-                                  ? <MessageSquare className="w-3.5 h-3.5" />
-                                  : <MessageSquareDiff className="w-3.5 h-3.5" />
+                                title={
+                                  noteOpen ? "Hide notes" : "Add / view notes"
                                 }
+                              >
+                                {hasNote(item.ticker) ? (
+                                  <MessageSquare className="w-3.5 h-3.5" />
+                                ) : (
+                                  <MessageSquareDiff className="w-3.5 h-3.5" />
+                                )}
                               </button>
                               <button
                                 onClick={() => setPurchaseTicker(item.ticker)}
@@ -795,13 +1013,18 @@ export function WatchList({
                         </tr>
 
                         {noteOpen && (
-                          <tr key={`${item.id}-note`} className="border-b border-border bg-muted/20">
+                          <tr
+                            key={`${item.id}-note`}
+                            className="border-b border-border bg-muted/20"
+                          >
                             <td colSpan={10} className="px-6 py-2">
                               <textarea
                                 autoFocus
                                 rows={2}
                                 value={note}
-                                onChange={(e) => setNote(item.ticker, e.target.value)}
+                                onChange={(e) =>
+                                  setNote(item.ticker, e.target.value)
+                                }
                                 placeholder="Add your investment thesis, price targets, catalysts to watch…"
                                 className="w-full resize-none rounded border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
                               />
@@ -821,7 +1044,10 @@ export function WatchList({
             <StockDetailModal
               ticker={detailTicker}
               stock={stockMap.get(detailTicker)}
-              watchPrice={items.find((i) => i.ticker === detailTicker)?.watch_price ?? null}
+              watchPrice={
+                items.find((i) => i.ticker === detailTicker)?.watch_price ??
+                null
+              }
               linkOpenMode={linkOpenMode}
               onClose={() => setDetailTicker(null)}
               onBuy={(ticker) => {
@@ -850,7 +1076,10 @@ export function WatchList({
                   Remove this ticker from your watchlist?
                 </p>
                 <div className="flex justify-end gap-2">
-                  <button onClick={() => setConfirmDelete(null)} className="btn-secondary">
+                  <button
+                    onClick={() => setConfirmDelete(null)}
+                    className="btn-secondary"
+                  >
                     Cancel
                   </button>
                   <button
