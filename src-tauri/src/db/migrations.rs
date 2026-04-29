@@ -94,3 +94,11 @@ INSERT INTO favorites (id, ticker, sort_order, portfolio_id)
 
 DROP TABLE favorites_old;
 "#;
+
+pub const MIGRATION_V10: &str = r#"
+ALTER TABLE stocks ADD COLUMN post_market_price REAL;
+ALTER TABLE stocks ADD COLUMN post_market_change_pct REAL;
+ALTER TABLE stocks ADD COLUMN pre_market_price REAL;
+ALTER TABLE stocks ADD COLUMN pre_market_change_pct REAL;
+ALTER TABLE stocks ADD COLUMN market_state TEXT;
+"#;

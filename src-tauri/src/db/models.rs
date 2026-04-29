@@ -14,6 +14,11 @@ pub struct Stock {
     pub quote_type: Option<String>,
     pub daily_change_pct: Option<f64>,
     pub target_mean_price: Option<f64>,
+    pub post_market_price: Option<f64>,
+    pub post_market_change_pct: Option<f64>,
+    pub pre_market_price: Option<f64>,
+    pub pre_market_change_pct: Option<f64>,
+    pub market_state: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

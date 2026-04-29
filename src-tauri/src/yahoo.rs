@@ -38,6 +38,16 @@ struct QuoteResult {
     regular_market_change_percent: Option<f64>,
     #[serde(rename = "targetMeanPrice")]
     target_mean_price: Option<Value>,
+    #[serde(rename = "postMarketPrice")]
+    post_market_price: Option<f64>,
+    #[serde(rename = "postMarketChangePercent")]
+    post_market_change_pct: Option<f64>,
+    #[serde(rename = "preMarketPrice")]
+    pre_market_price: Option<f64>,
+    #[serde(rename = "preMarketChangePercent")]
+    pre_market_change_pct: Option<f64>,
+    #[serde(rename = "marketState")]
+    market_state: Option<String>,
     #[serde(rename = "earningsTimestamp")]
     earnings_timestamp: Option<Value>,
     #[serde(rename = "earningsTimestampStart")]
@@ -199,6 +209,11 @@ pub struct QuoteData {
     pub quote_type: Option<String>,
     pub daily_change_pct: Option<f64>,
     pub target_mean_price: Option<f64>,
+    pub post_market_price: Option<f64>,
+    pub post_market_change_pct: Option<f64>,
+    pub pre_market_price: Option<f64>,
+    pub pre_market_change_pct: Option<f64>,
+    pub market_state: Option<String>,
 }
 
 async fn fetch_target_mean_price(
@@ -257,7 +272,7 @@ pub async fn fetch_quotes(
             .collect::<Vec<_>>()
             .join(",");
         let url = format!(
-            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent,targetMeanPrice",
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent,targetMeanPrice,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent,marketState",
             symbols,
             urlencoding::encode(&crumb)
         );
@@ -297,6 +312,11 @@ pub async fn fetch_quotes(
                         quote_type: q.quote_type,
                         daily_change_pct: q.regular_market_change_percent,
                         target_mean_price,
+                        post_market_price: q.post_market_price,
+                        post_market_change_pct: q.post_market_change_pct,
+                        pre_market_price: q.pre_market_price,
+                        pre_market_change_pct: q.pre_market_change_pct,
+                        market_state: q.market_state,
                     });
                 }
             }

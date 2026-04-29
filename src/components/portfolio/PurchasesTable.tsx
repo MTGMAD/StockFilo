@@ -1,18 +1,36 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import type { Purchase, Stock } from "../../types";
-import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
+import {
+  formatCurrency,
+  formatPercent,
+  formatShares,
+  pnlColor,
+  cn,
+} from "../../lib/utils";
 import { PurchaseDialog } from "./PurchaseDialog";
 import { Pencil, Trash2, Plus, ExternalLink } from "lucide-react";
 import { TickerLogo } from "../shared/TickerLogo";
+import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 
 // ── Table types ───────────────────────────────────────────────────────────────
 
 interface PurchasesTableProps {
   purchases: Purchase[];
   stocks: Stock[];
-  onAdd: (ticker: string, shares: number, price: number, date: string) => Promise<void>;
-  onUpdate: (id: number, ticker: string, shares: number, price: number, date: string) => Promise<void>;
+  onAdd: (
+    ticker: string,
+    shares: number,
+    price: number,
+    date: string,
+  ) => Promise<void>;
+  onUpdate: (
+    id: number,
+    ticker: string,
+    shares: number,
+    price: number,
+    date: string,
+  ) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
 }
 
@@ -39,7 +57,10 @@ export function PurchasesTable({
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-end px-6 py-3 border-b border-border gap-2">
         <button
-          onClick={() => { setEditing(null); setDialogOpen(true); }}
+          onClick={() => {
+            setEditing(null);
+            setDialogOpen(true);
+          }}
           className="btn-primary flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
@@ -51,7 +72,13 @@ export function PurchasesTable({
         {purchases.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
             <p className="text-sm">No purchases yet.</p>
-            <button onClick={() => { setEditing(null); setDialogOpen(true); }} className="btn-primary text-sm">
+            <button
+              onClick={() => {
+                setEditing(null);
+                setDialogOpen(true);
+              }}
+              className="btn-primary text-sm"
+            >
               Add your first purchase
             </button>
           </div>
@@ -76,14 +103,21 @@ export function PurchasesTable({
                 const stock = stockMap.get(p.ticker);
                 const totalCost = p.shares * p.price_per_share;
                 const currentPrice = stock?.last_price ?? null;
-                const marketValue = currentPrice != null ? p.shares * currentPrice : null;
-                const pnl = marketValue != null ? marketValue - totalCost : null;
-                const pnlPct = pnl != null && totalCost > 0 ? (pnl / totalCost) * 100 : null;
+                const marketValue =
+                  currentPrice != null ? p.shares * currentPrice : null;
+                const pnl =
+                  marketValue != null ? marketValue - totalCost : null;
+                const pnlPct =
+                  pnl != null && totalCost > 0 ? (pnl / totalCost) * 100 : null;
                 const isStale =
-                  !stock?.last_fetched_at || now - stock.last_fetched_at > STALE_THRESHOLD;
+                  !stock?.last_fetched_at ||
+                  now - stock.last_fetched_at > STALE_THRESHOLD;
 
                 return (
-                  <tr key={p.id} className="border-b border-border hover:bg-muted/30 transition-colors">
+                  <tr
+                    key={p.id}
+                    className="border-b border-border hover:bg-muted/30 transition-colors"
+                  >
                     <Td>{p.purchased_at}</Td>
                     <Td>
                       <div className="flex items-center gap-2">
@@ -101,24 +135,46 @@ export function PurchasesTable({
                     <Td align="right">{formatCurrency(p.price_per_share)}</Td>
                     <Td align="right">{formatCurrency(totalCost)}</Td>
                     <Td align="right">
-                      <span className={cn(isStale && currentPrice != null ? "opacity-50" : "")}>
-                        {currentPrice != null ? formatCurrency(currentPrice) : "—"}
-                      </span>
-                      {isStale && currentPrice != null && (
-                        <span className="ml-1 text-xs text-amber-500">stale</span>
-                      )}
+                      <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={cn(
+                              isStale && currentPrice != null
+                                ? "opacity-50"
+                                : "",
+                            )}
+                          >
+                            {currentPrice != null
+                              ? formatCurrency(currentPrice)
+                              : "—"}
+                          </span>
+                          {isStale && currentPrice != null && (
+                            <span className="ml-1 text-xs text-amber-500">
+                              stale
+                            </span>
+                          )}
+                        </div>
+                        <ExtendedHoursTag stock={stock} />
+                      </div>
                     </Td>
                     <Td align="right">{formatCurrency(marketValue)}</Td>
                     <Td align="right">
-                      <span className={pnlColor(pnl)}>{formatCurrency(pnl)}</span>
+                      <span className={pnlColor(pnl)}>
+                        {formatCurrency(pnl)}
+                      </span>
                     </Td>
                     <Td align="right">
-                      <span className={pnlColor(pnlPct)}>{formatPercent(pnlPct)}</span>
+                      <span className={pnlColor(pnlPct)}>
+                        {formatPercent(pnlPct)}
+                      </span>
                     </Td>
                     <Td align="center">
                       <div className="flex items-center justify-center gap-1">
                         <button
-                          onClick={() => { setEditing(p); setDialogOpen(true); }}
+                          onClick={() => {
+                            setEditing(p);
+                            setDialogOpen(true);
+                          }}
                           className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
                         >
                           <Pencil className="w-3.5 h-3.5" />
@@ -155,9 +211,16 @@ export function PurchasesTable({
       {confirmDelete != null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-background border border-border rounded-lg shadow-xl p-6 w-80">
-            <p className="text-sm text-foreground mb-4">Delete this purchase? This cannot be undone.</p>
+            <p className="text-sm text-foreground mb-4">
+              Delete this purchase? This cannot be undone.
+            </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmDelete(null)} className="btn-secondary">Cancel</button>
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
               <button
                 onClick={async () => {
                   await onDelete(confirmDelete);
@@ -175,25 +238,44 @@ export function PurchasesTable({
   );
 }
 
-function Th({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" | "center" }) {
+function Th({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right" | "center";
+}) {
   return (
-    <th className={cn("px-4 py-2.5 font-medium text-muted-foreground whitespace-nowrap", {
-      "text-left": align === "left",
-      "text-right": align === "right",
-      "text-center": align === "center",
-    })}>
+    <th
+      className={cn(
+        "px-4 py-2.5 font-medium text-muted-foreground whitespace-nowrap",
+        {
+          "text-left": align === "left",
+          "text-right": align === "right",
+          "text-center": align === "center",
+        },
+      )}
+    >
       {children}
     </th>
   );
 }
 
-function Td({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" | "center" }) {
+function Td({
+  children,
+  align = "left",
+}: {
+  children: React.ReactNode;
+  align?: "left" | "right" | "center";
+}) {
   return (
-    <td className={cn("px-4 py-2.5 text-foreground whitespace-nowrap", {
-      "text-left": align === "left",
-      "text-right": align === "right",
-      "text-center": align === "center",
-    })}>
+    <td
+      className={cn("px-4 py-2.5 text-foreground whitespace-nowrap", {
+        "text-left": align === "left",
+        "text-right": align === "right",
+        "text-center": align === "center",
+      })}
+    >
       {children}
     </td>
   );

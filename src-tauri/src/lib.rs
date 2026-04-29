@@ -69,6 +69,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V9,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 10,
+                            description: "add_extended_hours_to_stocks",
+                            sql: db::migrations::MIGRATION_V10,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

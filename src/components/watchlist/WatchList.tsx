@@ -18,6 +18,7 @@ import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
 import { TickerLogo } from "../shared/TickerLogo";
 import { StockDetailModal } from "./StockDetailModal";
+import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
 import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
 import {
@@ -830,22 +831,27 @@ export function WatchList({
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-right text-foreground">
-                            <span
-                              className={cn(
-                                isStale && currentPrice != null
-                                  ? "opacity-50"
-                                  : "",
-                              )}
-                            >
-                              {currentPrice != null
-                                ? formatCurrency(currentPrice)
-                                : "—"}
-                            </span>
-                            {isStale && currentPrice != null && (
-                              <span className="ml-1 text-xs text-amber-500">
-                                stale
-                              </span>
-                            )}
+                            <div className="flex items-center justify-end gap-2">
+                              <div className="flex items-center gap-1">
+                                <span
+                                  className={cn(
+                                    isStale && currentPrice != null
+                                      ? "opacity-50"
+                                      : "",
+                                  )}
+                                >
+                                  {currentPrice != null
+                                    ? formatCurrency(currentPrice)
+                                    : "—"}
+                                </span>
+                                {isStale && currentPrice != null && (
+                                  <span className="ml-1 text-xs text-amber-500">
+                                    stale
+                                  </span>
+                                )}
+                              </div>
+                              <ExtendedHoursTag stock={stock} />
+                            </div>
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             {targetMeanPrice != null ? (

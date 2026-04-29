@@ -1,7 +1,12 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile, writeFile, readFile } from "@tauri-apps/plugin-fs";
+import {
+  writeTextFile,
+  readTextFile,
+  writeFile,
+  readFile,
+} from "@tauri-apps/plugin-fs";
 import * as XLSX from "xlsx";
 import type {
   Purchase,
@@ -32,7 +37,7 @@ async function getDb() {
 export async function listPortfolios(): Promise<Portfolio[]> {
   const db = await getDb();
   return db.select<Portfolio[]>(
-    "SELECT id, name, sort_order, is_starred, created_at FROM portfolios ORDER BY sort_order ASC, created_at ASC"
+    "SELECT id, name, sort_order, is_starred, created_at FROM portfolios ORDER BY sort_order ASC, created_at ASC",
   );
 }
 
@@ -40,14 +45,16 @@ export async function createPortfolio(name: string): Promise<number> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   const rows = await db.select<{ max_order: number | null }[]>(
-    "SELECT MAX(sort_order) as max_order FROM portfolios"
+    "SELECT MAX(sort_order) as max_order FROM portfolios",
   );
   const nextOrder = (rows[0]?.max_order ?? -1) + 1;
   await db.execute(
     "INSERT INTO portfolios (name, sort_order, is_starred, created_at) VALUES (?, ?, 0, ?)",
-    [name, nextOrder, now]
+    [name, nextOrder, now],
   );
-  const result = await db.select<{ id: number }[]>("SELECT last_insert_rowid() as id");
+  const result = await db.select<{ id: number }[]>(
+    "SELECT last_insert_rowid() as id",
+  );
   return result[0].id;
 }
 
@@ -64,7 +71,7 @@ export async function deletePortfolio(id: number): Promise<void> {
   // Clean up orphaned stocks not referenced anywhere
   await db.execute(
     "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
-    []
+    [],
   );
 }
 
@@ -77,7 +84,10 @@ export async function starPortfolio(id: number): Promise<void> {
 export async function reorderPortfolios(ids: number[]): Promise<void> {
   const db = await getDb();
   for (let i = 0; i < ids.length; i++) {
-    await db.execute("UPDATE portfolios SET sort_order = ? WHERE id = ?", [i, ids[i]]);
+    await db.execute("UPDATE portfolios SET sort_order = ? WHERE id = ?", [
+      i,
+      ids[i],
+    ]);
   }
 }
 
@@ -87,7 +97,7 @@ export async function listPurchases(portfolioId: number): Promise<Purchase[]> {
   const db = await getDb();
   return db.select<Purchase[]>(
     "SELECT id, ticker, shares, price_per_share, purchased_at, created_at, portfolio_id FROM purchases WHERE portfolio_id = ? ORDER BY purchased_at DESC, created_at DESC",
-    [portfolioId]
+    [portfolioId],
   );
 }
 
@@ -96,14 +106,14 @@ export async function addPurchase(
   ticker: string,
   shares: number,
   pricePerShare: number,
-  purchasedAt: string
+  purchasedAt: string,
 ): Promise<void> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   const t = ticker.toUpperCase();
   await db.execute(
     "INSERT INTO purchases (portfolio_id, ticker, shares, price_per_share, purchased_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    [portfolioId, t, shares, pricePerShare, purchasedAt, now]
+    [portfolioId, t, shares, pricePerShare, purchasedAt, now],
   );
   await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
 }
@@ -113,12 +123,12 @@ export async function updatePurchase(
   ticker: string,
   shares: number,
   pricePerShare: number,
-  purchasedAt: string
+  purchasedAt: string,
 ): Promise<void> {
   const db = await getDb();
   await db.execute(
     "UPDATE purchases SET ticker = ?, shares = ?, price_per_share = ?, purchased_at = ? WHERE id = ?",
-    [ticker.toUpperCase(), shares, pricePerShare, purchasedAt, id]
+    [ticker.toUpperCase(), shares, pricePerShare, purchasedAt, id],
   );
 }
 
@@ -127,11 +137,14 @@ export async function deletePurchase(id: number): Promise<void> {
   await db.execute("DELETE FROM purchases WHERE id = ?", [id]);
 }
 
-export async function hintStockQuoteType(ticker: string, quoteType: string): Promise<void> {
+export async function hintStockQuoteType(
+  ticker: string,
+  quoteType: string,
+): Promise<void> {
   const db = await getDb();
   await db.execute(
     "UPDATE stocks SET quote_type = ? WHERE ticker = ? AND quote_type IS NULL",
-    [quoteType, ticker]
+    [quoteType, ticker],
   );
 }
 
@@ -139,7 +152,10 @@ export async function clearAllPurchases(): Promise<void> {
   const db = await getDb();
   await db.execute("DELETE FROM purchases", []);
   await db.execute("DELETE FROM favorites", []);
-  await db.execute("DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist)", []);
+  await db.execute(
+    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist)",
+    [],
+  );
 }
 
 export async function clearPortfolioPurchases(id: number): Promise<void> {
@@ -148,7 +164,7 @@ export async function clearPortfolioPurchases(id: number): Promise<void> {
   await db.execute("DELETE FROM favorites WHERE portfolio_id = ?", [id]);
   await db.execute(
     "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
-    []
+    [],
   );
 }
 
@@ -157,7 +173,7 @@ export async function clearPortfolioPurchases(id: number): Promise<void> {
 export async function getCachedStocks(): Promise<Stock[]> {
   const db = await getDb();
   return db.select<Stock[]>(
-    "SELECT ticker, name, last_price, last_fetched_at, quote_type, daily_change_pct, target_mean_price FROM stocks ORDER BY ticker ASC"
+    "SELECT ticker, name, last_price, last_fetched_at, quote_type, daily_change_pct, target_mean_price, post_market_price, post_market_change_pct, pre_market_price, pre_market_change_pct, market_state FROM stocks ORDER BY ticker ASC",
   );
 }
 
@@ -167,29 +183,69 @@ export async function upsertStock(
   price: number | null,
   quoteType: string | null = null,
   dailyChangePct: number | null = null,
-  targetMeanPrice: number | null = null
+  targetMeanPrice: number | null = null,
+  postMarketPrice: number | null = null,
+  postMarketChangePct: number | null = null,
+  preMarketPrice: number | null = null,
+  preMarketChangePct: number | null = null,
+  marketState: string | null = null,
 ): Promise<void> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   await db.execute(
-    `INSERT INTO stocks (ticker, name, last_price, last_fetched_at, quote_type, daily_change_pct, target_mean_price)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO stocks (ticker, name, last_price, last_fetched_at, quote_type, daily_change_pct, target_mean_price,
+                    post_market_price, post_market_change_pct, pre_market_price, pre_market_change_pct, market_state)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(ticker) DO UPDATE SET
        name = excluded.name,
        last_price = excluded.last_price,
        last_fetched_at = excluded.last_fetched_at,
        quote_type = COALESCE(excluded.quote_type, stocks.quote_type),
        daily_change_pct = excluded.daily_change_pct,
-       target_mean_price = excluded.target_mean_price`,
-    [ticker, name, price, now, quoteType, dailyChangePct, targetMeanPrice]
+       target_mean_price = excluded.target_mean_price,
+       post_market_price = excluded.post_market_price,
+       post_market_change_pct = excluded.post_market_change_pct,
+       pre_market_price = excluded.pre_market_price,
+       pre_market_change_pct = excluded.pre_market_change_pct,
+       market_state = excluded.market_state`,
+    [
+      ticker,
+      name,
+      price,
+      now,
+      quoteType,
+      dailyChangePct,
+      targetMeanPrice,
+      postMarketPrice,
+      postMarketChangePct,
+      preMarketPrice,
+      preMarketChangePct,
+      marketState,
+    ],
   );
 }
 
-export async function fetchAndCachePrices(tickers: string[]): Promise<QuoteResult[]> {
+export async function fetchAndCachePrices(
+  tickers: string[],
+): Promise<QuoteResult[]> {
   if (tickers.length === 0) return [];
-  const results = await invoke<QuoteResult[]>("fetch_quotes_command", { tickers });
+  const results = await invoke<QuoteResult[]>("fetch_quotes_command", {
+    tickers,
+  });
   for (const r of results) {
-    await upsertStock(r.ticker, r.name, r.price, r.quote_type, r.daily_change_pct, r.target_mean_price);
+    await upsertStock(
+      r.ticker,
+      r.name,
+      r.price,
+      r.quote_type,
+      r.daily_change_pct,
+      r.target_mean_price,
+      r.post_market_price,
+      r.post_market_change_pct,
+      r.pre_market_price,
+      r.pre_market_change_pct,
+      r.market_state,
+    );
   }
   return results;
 }
@@ -199,7 +255,7 @@ export async function fetchAndCachePrices(tickers: string[]): Promise<QuoteResul
 export async function listWatchlists(): Promise<Watchlist[]> {
   const db = await getDb();
   return db.select<Watchlist[]>(
-    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC, id ASC"
+    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC, id ASC",
   );
 }
 
@@ -207,16 +263,16 @@ export async function createWatchlist(name: string): Promise<number> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   const rows = await db.select<{ max_order: number | null }[]>(
-    "SELECT MAX(sort_order) as max_order FROM watchlists"
+    "SELECT MAX(sort_order) as max_order FROM watchlists",
   );
   const nextOrder = (rows[0]?.max_order ?? -1) + 1;
   await db.execute(
     "INSERT INTO watchlists (name, sort_order, created_at) VALUES (?, ?, ?)",
-    [name, nextOrder, now]
+    [name, nextOrder, now],
   );
   const result = await db.select<{ id: number }[]>(
     "SELECT id FROM watchlists WHERE created_at = ? AND name = ? ORDER BY id DESC LIMIT 1",
-    [now, name]
+    [now, name],
   );
   return result[0].id;
 }
@@ -232,27 +288,33 @@ export async function deleteWatchlist(id: number): Promise<void> {
   await db.execute("DELETE FROM watchlists WHERE id = ?", [id]);
   await db.execute(
     "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
-    []
+    [],
   );
 }
 
 // ── Watchlist items ────────────────────────────────────────────────────────
 
-export async function listWatchlist(watchlistId: number): Promise<WatchlistItem[]> {
+export async function listWatchlist(
+  watchlistId: number,
+): Promise<WatchlistItem[]> {
   const db = await getDb();
   return db.select<WatchlistItem[]>(
     "SELECT id, ticker, watch_price, created_at FROM watchlist WHERE watchlist_id = ? ORDER BY created_at DESC",
-    [watchlistId]
+    [watchlistId],
   );
 }
 
-export async function addToWatchlist(ticker: string, watchlistId: number, watchPrice: number | null = null): Promise<void> {
+export async function addToWatchlist(
+  ticker: string,
+  watchlistId: number,
+  watchPrice: number | null = null,
+): Promise<void> {
   const db = await getDb();
   const now = Math.floor(Date.now() / 1000);
   const t = ticker.toUpperCase();
   await db.execute(
     "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?)",
-    [t, watchPrice, now, watchlistId]
+    [t, watchPrice, now, watchlistId],
   );
   await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
 }
@@ -262,11 +324,14 @@ export async function removeFromWatchlist(id: number): Promise<void> {
   await db.execute("DELETE FROM watchlist WHERE id = ?", [id]);
 }
 
-export async function setWatchlistWatchPrice(id: number, watchPrice: number): Promise<void> {
+export async function setWatchlistWatchPrice(
+  id: number,
+  watchPrice: number,
+): Promise<void> {
   const db = await getDb();
   await db.execute(
     "UPDATE watchlist SET watch_price = ? WHERE id = ? AND (watch_price IS NULL OR watch_price <= 0)",
-    [watchPrice, id]
+    [watchPrice, id],
   );
 }
 
@@ -298,10 +363,12 @@ function readLocalJson<T>(key: string, fallback: T): T {
 export async function exportAllWatchlistsBackup(): Promise<boolean> {
   const db = await getDb();
   const watchlists = await db.select<Watchlist[]>(
-    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC"
+    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC",
   );
-  const allItems = await db.select<(WatchlistItem & { watchlist_id: number })[]>(
-    "SELECT id, ticker, watch_price, created_at, watchlist_id FROM watchlist ORDER BY created_at DESC"
+  const allItems = await db.select<
+    (WatchlistItem & { watchlist_id: number })[]
+  >(
+    "SELECT id, ticker, watch_price, created_at, watchlist_id FROM watchlist ORDER BY created_at DESC",
   );
 
   const entries: WatchlistBackupEntry[] = watchlists.map((wl) => ({
@@ -309,9 +376,19 @@ export async function exportAllWatchlistsBackup(): Promise<boolean> {
     sort_order: wl.sort_order,
     items: allItems
       .filter((i) => i.watchlist_id === wl.id)
-      .map(({ ticker, watch_price, created_at }) => ({ ticker, watch_price, created_at })),
-    targets: readLocalJson<Record<string, number>>(`stockfolio-watchlist-targets-${wl.id}`, {}),
-    notes: readLocalJson<Record<string, string>>(`stockfolio-watchlist-notes-${wl.id}`, {}),
+      .map(({ ticker, watch_price, created_at }) => ({
+        ticker,
+        watch_price,
+        created_at,
+      })),
+    targets: readLocalJson<Record<string, number>>(
+      `stockfolio-watchlist-targets-${wl.id}`,
+      {},
+    ),
+    notes: readLocalJson<Record<string, string>>(
+      `stockfolio-watchlist-notes-${wl.id}`,
+      {},
+    ),
   }));
 
   const path = await save({
@@ -342,7 +419,9 @@ export async function importAllWatchlistsBackup(): Promise<{
   try {
     backup = JSON.parse(text);
   } catch {
-    throw new Error("Could not parse backup file — make sure it is a valid Stockfolio watchlist backup.");
+    throw new Error(
+      "Could not parse backup file — make sure it is a valid Stockfolio watchlist backup.",
+    );
   }
   if (!Array.isArray(backup.watchlists)) {
     throw new Error("Invalid backup file: missing watchlists array.");
@@ -357,23 +436,23 @@ export async function importAllWatchlistsBackup(): Promise<{
     // Find or create the watchlist by name
     const existing = await db.select<{ id: number }[]>(
       "SELECT id FROM watchlists WHERE name = ? LIMIT 1",
-      [entry.name]
+      [entry.name],
     );
     let watchlistId: number;
     if (existing.length > 0) {
       watchlistId = existing[0].id;
     } else {
       const rows = await db.select<{ max_order: number | null }[]>(
-        "SELECT MAX(sort_order) as max_order FROM watchlists"
+        "SELECT MAX(sort_order) as max_order FROM watchlists",
       );
       const nextOrder = (rows[0]?.max_order ?? -1) + 1;
       await db.execute(
         "INSERT INTO watchlists (name, sort_order, created_at) VALUES (?, ?, ?)",
-        [entry.name, entry.sort_order ?? nextOrder, now]
+        [entry.name, entry.sort_order ?? nextOrder, now],
       );
       const created = await db.select<{ id: number }[]>(
         "SELECT id FROM watchlists WHERE name = ? ORDER BY id DESC LIMIT 1",
-        [entry.name]
+        [entry.name],
       );
       watchlistId = created[0].id;
       watchlistsImported++;
@@ -384,15 +463,25 @@ export async function importAllWatchlistsBackup(): Promise<{
       if (!item.ticker) continue;
       const result = await db.execute(
         "INSERT INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?) ON CONFLICT(ticker) DO UPDATE SET watch_price = excluded.watch_price, watchlist_id = excluded.watchlist_id",
-        [item.ticker.toUpperCase(), item.watch_price ?? null, item.created_at ?? now, watchlistId]
+        [
+          item.ticker.toUpperCase(),
+          item.watch_price ?? null,
+          item.created_at ?? now,
+          watchlistId,
+        ],
       );
-      await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [item.ticker.toUpperCase()]);
+      await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [
+        item.ticker.toUpperCase(),
+      ]);
       if (result.rowsAffected > 0) tickersImported++;
     }
 
     // Merge targets (existing values win)
     const targetsKey = `stockfolio-watchlist-targets-${watchlistId}`;
-    const existingTargets = readLocalJson<Record<string, number>>(targetsKey, {});
+    const existingTargets = readLocalJson<Record<string, number>>(
+      targetsKey,
+      {},
+    );
     const mergedTargets = { ...entry.targets, ...existingTargets };
     localStorage.setItem(targetsKey, JSON.stringify(mergedTargets));
 
@@ -412,57 +501,74 @@ export async function listFavorites(portfolioId: number): Promise<Favorite[]> {
   const db = await getDb();
   return db.select<Favorite[]>(
     "SELECT id, ticker, sort_order, portfolio_id FROM favorites WHERE portfolio_id = ? ORDER BY sort_order ASC",
-    [portfolioId]
+    [portfolioId],
   );
 }
 
-export async function addFavorite(ticker: string, portfolioId: number): Promise<void> {
+export async function addFavorite(
+  ticker: string,
+  portfolioId: number,
+): Promise<void> {
   const db = await getDb();
   const t = ticker.toUpperCase();
   const rows = await db.select<{ max_order: number | null }[]>(
     "SELECT MAX(sort_order) as max_order FROM favorites WHERE portfolio_id = ?",
-    [portfolioId]
+    [portfolioId],
   );
   const nextOrder = (rows[0]?.max_order ?? -1) + 1;
   await db.execute(
     "INSERT OR IGNORE INTO favorites (ticker, sort_order, portfolio_id) VALUES (?, ?, ?)",
-    [t, nextOrder, portfolioId]
+    [t, nextOrder, portfolioId],
   );
 }
 
-export async function removeFavorite(ticker: string, portfolioId: number): Promise<void> {
+export async function removeFavorite(
+  ticker: string,
+  portfolioId: number,
+): Promise<void> {
   const db = await getDb();
   await db.execute(
     "DELETE FROM favorites WHERE ticker = ? AND portfolio_id = ?",
-    [ticker.toUpperCase(), portfolioId]
+    [ticker.toUpperCase(), portfolioId],
   );
 }
 
-export async function reorderFavorites(tickers: string[], portfolioId: number): Promise<void> {
+export async function reorderFavorites(
+  tickers: string[],
+  portfolioId: number,
+): Promise<void> {
   const db = await getDb();
   for (let i = 0; i < tickers.length; i++) {
     await db.execute(
       "UPDATE favorites SET sort_order = ? WHERE ticker = ? AND portfolio_id = ?",
-      [i, tickers[i].toUpperCase(), portfolioId]
+      [i, tickers[i].toUpperCase(), portfolioId],
     );
   }
 }
 
 // ── Ticker Search ─────────────────────────────────────────────────────────
 
-export async function searchTickers(query: string): Promise<TickerSearchResult[]> {
+export async function searchTickers(
+  query: string,
+): Promise<TickerSearchResult[]> {
   return invoke<TickerSearchResult[]>("search_tickers_command", { query });
 }
 
 // ── News ──────────────────────────────────────────────────────────────────
 
-export async function fetchNews(ticker: string, count = 10): Promise<NewsArticle[]> {
-  return invoke<NewsArticle[]>("fetch_news_command", { ticker: ticker.toUpperCase(), count });
+export async function fetchNews(
+  ticker: string,
+  count = 10,
+): Promise<NewsArticle[]> {
+  return invoke<NewsArticle[]>("fetch_news_command", {
+    ticker: ticker.toUpperCase(),
+    count,
+  });
 }
 
 export async function fetchUpcomingEarnings(
   tickers: string[],
-  withinDays = 30
+  withinDays = 30,
 ): Promise<UpcomingEarningsEvent[]> {
   if (tickers.length === 0) return [];
   const upper = Array.from(new Set(tickers.map((t) => t.toUpperCase())));
@@ -472,7 +578,10 @@ export async function fetchUpcomingEarnings(
   });
 }
 
-export async function addEarningsCallToCalendar(ticker: string, eventAt: number): Promise<void> {
+export async function addEarningsCallToCalendar(
+  ticker: string,
+  eventAt: number,
+): Promise<void> {
   await invoke("open_earnings_call_in_calendar", {
     ticker: ticker.toUpperCase(),
     eventAt,
@@ -488,17 +597,20 @@ function escCsv(value: string): string {
   return value;
 }
 
-export async function exportPurchasesCsv(portfolioId: number): Promise<boolean> {
+export async function exportPurchasesCsv(
+  portfolioId: number,
+): Promise<boolean> {
   const purchases = await listPurchases(portfolioId);
   const header = "ticker,shares,price_per_share,purchased_at";
   const rows = purchases.map(
-    (p) => `${escCsv(p.ticker)},${p.shares},${p.price_per_share},${escCsv(p.purchased_at)}`
+    (p) =>
+      `${escCsv(p.ticker)},${p.shares},${p.price_per_share},${escCsv(p.purchased_at)}`,
   );
   const csv = [header, ...rows].join("\n");
 
   const path = await save({
     title: "Export Purchases",
-      defaultPath: "stockfolio-purchases.csv",
+    defaultPath: "stockfolio-purchases.csv",
     filters: [{ name: "CSV", extensions: ["csv"] }],
   });
   if (!path) return false;
@@ -545,7 +657,7 @@ export async function importPurchasesCsv(portfolioId: number): Promise<number> {
   if (imported === 0 && dataLines > 0) {
     throw new Error(
       `No rows could be imported. Expected format: ticker,shares,price_per_share,purchased_at (YYYY-MM-DD). ` +
-      `Found ${dataLines} data row${dataLines === 1 ? "" : "s"} but none matched the required format.`
+        `Found ${dataLines} data row${dataLines === 1 ? "" : "s"} but none matched the required format.`,
     );
   }
 
@@ -585,12 +697,19 @@ function parseCsvLine(line: string): string[] {
 
 // ── XLSX Export / Import ──────────────────────────────────────────────────
 
-export async function exportPurchasesXlsx(portfolioId: number): Promise<boolean> {
+export async function exportPurchasesXlsx(
+  portfolioId: number,
+): Promise<boolean> {
   const purchases = await listPurchases(portfolioId);
 
   const wsData = [
     ["ticker", "shares", "price_per_share", "purchased_at"],
-    ...purchases.map((p) => [p.ticker, p.shares, p.price_per_share, p.purchased_at]),
+    ...purchases.map((p) => [
+      p.ticker,
+      p.shares,
+      p.price_per_share,
+      p.purchased_at,
+    ]),
   ];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
   const wb = XLSX.utils.book_new();
@@ -608,7 +727,9 @@ export async function exportPurchasesXlsx(portfolioId: number): Promise<boolean>
   return true;
 }
 
-export async function importPurchasesXlsx(portfolioId: number): Promise<number> {
+export async function importPurchasesXlsx(
+  portfolioId: number,
+): Promise<number> {
   const path = await openDialog({
     title: "Import Purchases",
     multiple: false,
@@ -622,19 +743,25 @@ export async function importPurchasesXlsx(portfolioId: number): Promise<number> 
   const wsName = wb.SheetNames[0];
   if (!wsName) return 0;
 
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wsName], { header: 1 });
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wsName], {
+    header: 1,
+  });
   if (rows.length === 0) return 0;
 
   // Detect and skip header row
   const firstRow = rows[0] as unknown[];
-  const startIdx = firstRow.some((c) => String(c).toLowerCase() === "ticker") ? 1 : 0;
+  const startIdx = firstRow.some((c) => String(c).toLowerCase() === "ticker")
+    ? 1
+    : 0;
 
   let imported = 0;
   for (let i = startIdx; i < rows.length; i++) {
     const cols = rows[i] as unknown[];
     if (cols.length < 4) continue;
 
-    const ticker = String(cols[0] ?? "").trim().toUpperCase();
+    const ticker = String(cols[0] ?? "")
+      .trim()
+      .toUpperCase();
     const shares = Number(cols[1]);
     const price = Number(cols[2]);
     const rawDate = cols[3];
@@ -663,7 +790,9 @@ export async function importPurchasesXlsx(portfolioId: number): Promise<number> 
 // Imports BUY transactions and dividend/capital-gain reinvestments (all of
 // which represent real share acquisitions).
 
-export async function importAmeripriseCSV(portfolioId: number): Promise<number> {
+export async function importAmeripriseCSV(
+  portfolioId: number,
+): Promise<number> {
   const path = await openDialog({
     title: "Import from Ameriprise",
     multiple: false,
@@ -684,8 +813,8 @@ export async function importAmeripriseCSV(portfolioId: number): Promise<number> 
   }
   if (headerIdx === -1) {
     throw new Error(
-      "Could not find a header row containing \"Transaction Date\". " +
-      "Make sure this is an Ameriprise account activity CSV."
+      'Could not find a header row containing "Transaction Date". ' +
+        "Make sure this is an Ameriprise account activity CSV.",
     );
   }
 
@@ -699,17 +828,17 @@ export async function importAmeripriseCSV(portfolioId: number): Promise<number> 
 
     // Columns: 0=Transaction Date, 1=Account, 2=Description, 3=Amount,
     //          4=Quantity, 5=Price, 6=Symbol
-    const rawDate     = cols[0].trim();   // MM/DD/YYYY
+    const rawDate = cols[0].trim(); // MM/DD/YYYY
     const description = cols[2].trim();
-    const rawAmount   = cols[3].trim();
-    const rawQty      = cols[4].trim();
-    const rawPrice    = cols[5].trim();
-    const symbol      = cols[6].trim().toUpperCase();
+    const rawAmount = cols[3].trim();
+    const rawQty = cols[4].trim();
+    const rawPrice = cols[5].trim();
+    const symbol = cols[6].trim().toUpperCase();
 
     // Skip rows with no usable symbol (money market, fees, blank, etc.)
     if (!symbol || symbol === "9999840") continue;
 
-    const isBuy      = /^BUY\s+-\s+/i.test(description);
+    const isBuy = /^BUY\s+-\s+/i.test(description);
     const isReinvest = /REINVEST AT ([\d.]+)/i.test(description);
 
     if (!isBuy && !isReinvest) continue;
@@ -755,7 +884,7 @@ export async function importAmeripriseCSV(portfolioId: number): Promise<number> 
 
   if (imported === 0) {
     throw new Error(
-      "No importable transactions found. Expected BUY or DIVIDEND REINVEST rows with a ticker symbol."
+      "No importable transactions found. Expected BUY or DIVIDEND REINVEST rows with a ticker symbol.",
     );
   }
 

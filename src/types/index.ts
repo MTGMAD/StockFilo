@@ -4,7 +4,7 @@ export interface Purchase {
   shares: number;
   price_per_share: number;
   purchased_at: string; // ISO date string YYYY-MM-DD
-  created_at: number;   // unix timestamp
+  created_at: number; // unix timestamp
   portfolio_id: number;
 }
 
@@ -16,6 +16,11 @@ export interface Stock {
   quote_type: string | null;
   daily_change_pct: number | null;
   target_mean_price: number | null;
+  post_market_price: number | null;
+  post_market_change_pct: number | null;
+  pre_market_price: number | null;
+  pre_market_change_pct: number | null;
+  market_state: string | null;
 }
 
 export interface QuoteResult {
@@ -25,6 +30,11 @@ export interface QuoteResult {
   quote_type: string | null;
   daily_change_pct: number | null;
   target_mean_price: number | null;
+  post_market_price: number | null;
+  post_market_change_pct: number | null;
+  pre_market_price: number | null;
+  pre_market_change_pct: number | null;
+  market_state: string | null;
 }
 
 export interface TickerSummary {
@@ -79,10 +89,10 @@ export interface Watchlist {
   created_at: number;
 }
 
-export type View = 'dashboard' | 'portfolio' | 'watchlist' | 'settings';
-export type Theme = 'system' | 'light' | 'dark' | 'warm';
-export type InvestorMode = 'novice' | 'advanced';
-export type LinkOpenMode = 'browser' | 'inapp';
+export type View = "dashboard" | "portfolio" | "watchlist" | "settings";
+export type Theme = "system" | "light" | "dark" | "warm";
+export type InvestorMode = "novice" | "advanced";
+export type LinkOpenMode = "browser" | "inapp";
 
 export interface ChartPoint {
   timestamp: number;
@@ -95,7 +105,15 @@ export interface ChartData {
   current_price: number | null;
 }
 
-export type ChartRange = '1d' | '5d' | '1mo' | '6mo' | 'ytd' | '1y' | '5y' | 'max';
+export type ChartRange =
+  | "1d"
+  | "5d"
+  | "1mo"
+  | "6mo"
+  | "ytd"
+  | "1y"
+  | "5y"
+  | "max";
 
 export interface NewsArticle {
   title: string;

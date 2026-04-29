@@ -9,6 +9,11 @@ pub struct QuoteResult {
     pub quote_type: Option<String>,
     pub daily_change_pct: Option<f64>,
     pub target_mean_price: Option<f64>,
+    pub post_market_price: Option<f64>,
+    pub post_market_change_pct: Option<f64>,
+    pub pre_market_price: Option<f64>,
+    pub pre_market_change_pct: Option<f64>,
+    pub market_state: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,9 +52,14 @@ pub async fn fetch_quotes_command(tickers: Vec<String>) -> Result<Vec<QuoteResul
                     quote_type: qd.quote_type.clone(),
                     daily_change_pct: qd.daily_change_pct,
                     target_mean_price: qd.target_mean_price,
+                    post_market_price: qd.post_market_price,
+                    post_market_change_pct: qd.post_market_change_pct,
+                    pre_market_price: qd.pre_market_price,
+                    pre_market_change_pct: qd.pre_market_change_pct,
+                    market_state: qd.market_state.clone(),
                 }
             } else {
-                QuoteResult { ticker, price: None, name: None, quote_type: None, daily_change_pct: None, target_mean_price: None }
+                QuoteResult { ticker, price: None, name: None, quote_type: None, daily_change_pct: None, target_mean_price: None, post_market_price: None, post_market_change_pct: None, pre_market_price: None, pre_market_change_pct: None, market_state: None }
             }
         })
         .collect();
