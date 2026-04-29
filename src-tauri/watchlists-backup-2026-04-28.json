@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "exported_at": 1777410547,
+  "watchlists": [
+    {
+      "name": "My Watchlist",
+      "sort_order": 0,
+      "items": [
+        {
+          "ticker": "TSLA",
+          "watch_price": 376.02,
+          "created_at": 1777410503
+        },
+        {
+          "ticker": "GM",
+          "watch_price": 78.95,
+          "created_at": 1777410492
+        },
+        {
+          "ticker": "F",
+          "watch_price": 12.4,
+          "created_at": 1777410487
+        },
+        {
+          "ticker": "MCD",
+          "watch_price": 292.39,
+          "created_at": 1777410484
+        },
+        {
+          "ticker": "AAPL",
+          "watch_price": 270.71,
+          "created_at": 1777410479
+        }
+      ],
+      "targets": {},
+      "notes": {}
+    },
+    {
+      "name": "Penny Stocks",
+      "sort_order": 1,
+      "items": [
+        {
+          "ticker": "TLS",
+          "watch_price": 4.46,
+          "created_at": 1777410531
+        },
+        {
+          "ticker": "MQ",
+          "watch_price": 4.35,
+          "created_at": 1777410525
+        }
+      ],
+      "targets": {},
+      "notes": {}
+    }
+  ]
+}
