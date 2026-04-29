@@ -379,11 +379,11 @@ export async function importAllWatchlistsBackup(): Promise<{
       watchlistsImported++;
     }
 
-    // Import items
+    // Import items — UPSERT so existing tickers have their data updated from the backup
     for (const item of entry.items ?? []) {
       if (!item.ticker) continue;
       const result = await db.execute(
-        "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?)",
+        "INSERT INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?) ON CONFLICT(ticker) DO UPDATE SET watch_price = excluded.watch_price, watchlist_id = excluded.watchlist_id",
         [item.ticker.toUpperCase(), item.watch_price ?? null, item.created_at ?? now, watchlistId]
       );
       await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [item.ticker.toUpperCase()]);

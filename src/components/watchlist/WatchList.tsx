@@ -286,7 +286,7 @@ export function WatchList({
       refreshNotes();
       setBackupStatus({
         kind: "success",
-        msg: `Restored ${result.watchlistsImported} watchlist${result.watchlistsImported === 1 ? "" : "s"}, ${result.tickersImported} new ticker${result.tickersImported === 1 ? "" : "s"}.`,
+        msg: `Restored ${result.watchlistsImported} watchlist${result.watchlistsImported === 1 ? "" : "s"}, ${result.tickersImported} ticker${result.tickersImported === 1 ? "" : "s"} imported.`,
       });
     } catch (e) {
       setBackupStatus({ kind: "error", msg: `Import failed: ${e}` });
