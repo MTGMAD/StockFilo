@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { View } from "./types";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
@@ -29,41 +29,90 @@ export default function App() {
   const { linkOpenMode, setLinkOpenMode } = useLinkOpenMode();
   const { showInfoTooltips, setShowInfoTooltips } = useInfoTooltips();
 
-  const { portfolios, loading: portfoliosLoading, starredPortfolio, create, rename, remove, star, reorder } = usePortfolios();
+  const {
+    portfolios,
+    loading: portfoliosLoading,
+    starredPortfolio,
+    create,
+    rename,
+    remove,
+    star,
+    reorder,
+  } = usePortfolios();
 
-  const [activePortfolioId, setActivePortfolioId] = useState<number | null>(null);
+  const [activePortfolioId, setActivePortfolioId] = useState<number | null>(
+    null,
+  );
   const [newPortfolioTrigger, setNewPortfolioTrigger] = useState(0);
 
   // Once portfolios are loaded, default to the starred one
   useEffect(() => {
-    if (!portfoliosLoading && activePortfolioId == null && starredPortfolio != null) {
+    if (
+      !portfoliosLoading &&
+      activePortfolioId == null &&
+      starredPortfolio != null
+    ) {
       setActivePortfolioId(starredPortfolio.id);
     }
   }, [portfoliosLoading, activePortfolioId, starredPortfolio]);
 
   const resolvedPortfolioId = activePortfolioId ?? starredPortfolio?.id ?? null;
-  const activePortfolio = portfolios.find((p) => p.id === resolvedPortfolioId) ?? null;
+  const activePortfolio =
+    portfolios.find((p) => p.id === resolvedPortfolioId) ?? null;
 
-  const { purchases, stocks, summaries, loading, refreshing, error, refresh, reload, add, update, remove: deletePurchase } =
-    usePortfolio(resolvedPortfolioId);
+  const {
+    purchases,
+    stocks,
+    summaries,
+    loading,
+    refreshing,
+    error,
+    refresh,
+    reload,
+    add,
+    update,
+    remove: deletePurchase,
+  } = usePortfolio(resolvedPortfolioId);
 
-  const { watchlists, loading: watchlistsLoading, create: createWatchlist, rename: renameWatchlist, remove: removeWatchlist, reload: reloadWatchlists } = useWatchlists();
-  const [activeWatchlistId, setActiveWatchlistId] = useState<number | null>(null);
+  const {
+    watchlists,
+    loading: watchlistsLoading,
+    create: createWatchlist,
+    rename: renameWatchlist,
+    remove: removeWatchlist,
+    reload: reloadWatchlists,
+  } = useWatchlists();
+  const [activeWatchlistId, setActiveWatchlistId] = useState<number | null>(
+    null,
+  );
 
   useEffect(() => {
-    if (!watchlistsLoading && activeWatchlistId == null && watchlists.length > 0) {
+    if (
+      !watchlistsLoading &&
+      activeWatchlistId == null &&
+      watchlists.length > 0
+    ) {
       setActiveWatchlistId(watchlists[0].id);
     }
   }, [watchlistsLoading, watchlists, activeWatchlistId]);
 
   const watchlist = useWatchlist(activeWatchlistId);
 
+  const lastRefreshedAt = useMemo(() => {
+    if (stocks.length === 0) return null;
+    const max = stocks.reduce(
+      (acc, s) => Math.max(acc, s.last_fetched_at ?? 0),
+      0,
+    );
+    return max > 0 ? new Date(max * 1000) : null;
+  }, [stocks]);
+
   const showRefresh = view === "portfolio" || view === "dashboard";
 
   const headerTitle =
     view === "portfolio" && activePortfolio
       ? activePortfolio.name
-      : VIEW_TITLES[view] ?? "";
+      : (VIEW_TITLES[view] ?? "");
 
   async function handleSelectPortfolio(id: number) {
     setActivePortfolioId(id);
@@ -110,6 +159,7 @@ export default function App() {
           title={headerTitle}
           onRefresh={showRefresh ? refresh : undefined}
           refreshing={refreshing}
+          lastRefreshedAt={showRefresh ? lastRefreshedAt : undefined}
         />
         {error && (
           <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-sm text-red-600">
@@ -206,4 +256,3 @@ export default function App() {
     </div>
   );
 }
-
