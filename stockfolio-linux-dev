@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+
+flatpak-spawn --host bash -lc 'export PATH="$HOME/.local/node-v22.15.0-linux-x64/bin:$HOME/.cargo/bin:$PATH" && export GDK_BACKEND=x11 && cd "$1" && npm run tauri dev' _ "$script_dir"
