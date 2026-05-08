@@ -126,3 +126,31 @@ export interface UpcomingEarningsEvent {
   ticker: string;
   event_at: number;
 }
+
+export interface ComparisonStats {
+  ticker: string;
+  price: number | null;
+  name: string | null;
+  daily_change_pct: number | null;
+  target_mean_price: number | null;
+  post_market_price: number | null;
+  post_market_change_pct: number | null;
+  pre_market_price: number | null;
+  pre_market_change_pct: number | null;
+  market_state: string | null;
+  market_cap: number | null;
+  trailing_pe: number | null;
+  forward_pe: number | null;
+  price_to_book: number | null;
+  beta: number | null;
+  fifty_two_week_high: number | null;
+  fifty_two_week_low: number | null;
+  dividend_yield: number | null;
+  eps_trailing: number | null;
+  recommendation_key: string | null;
+  number_of_analyst_opinions: number | null;
+  gross_margins: number | null;
+  operating_margins: number | null;
+  profit_margins: number | null;
+  revenue_growth: number | null;
+}

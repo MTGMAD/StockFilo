@@ -18,6 +18,7 @@ import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
 import { TickerLogo } from "../shared/TickerLogo";
 import { StockDetailModal } from "./StockDetailModal";
+import { StockCompareModal } from "./StockCompareModal";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
 import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
@@ -43,6 +44,8 @@ import {
   X,
   Pencil,
   CalendarDays,
+  BarChart2,
+  GitCompareArrows,
 } from "lucide-react";
 
 type WatchListTab = "list" | "settings";
@@ -120,6 +123,28 @@ export function WatchList({
   } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  // Compare mode — cross-watchlist selection persists while compareMode is true
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareSelection, setCompareSelection] = useState<string[]>([]);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+
+  function toggleCompareMode() {
+    if (compareMode) {
+      setCompareMode(false);
+      setCompareSelection([]);
+    } else {
+      setCompareMode(true);
+    }
+  }
+
+  function toggleCompareStock(ticker: string) {
+    setCompareSelection((prev) => {
+      if (prev.includes(ticker)) return prev.filter((t) => t !== ticker);
+      if (prev.length >= 4) return prev;
+      return [...prev, ticker];
+    });
+  }
 
   const {
     getTarget,
@@ -438,6 +463,19 @@ export function WatchList({
         {/* Settings gear — far right */}
         <button
           type="button"
+          onClick={toggleCompareMode}
+          title={compareMode ? "Exit Compare Mode" : "Compare Stocks (select up to 4)"}
+          className={cn(
+            "ml-auto shrink-0 p-2 rounded-md transition-colors",
+            compareMode
+              ? "text-primary bg-primary/10"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted",
+          )}
+        >
+          <BarChart2 className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
           onClick={() =>
             setActiveTab(activeTab === "settings" ? "list" : "settings")
           }
@@ -447,7 +485,7 @@ export function WatchList({
               : "Watchlist Settings"
           }
           className={cn(
-            "ml-auto shrink-0 p-2 mr-1 rounded-md transition-colors",
+            "shrink-0 p-2 mr-1 rounded-md transition-colors",
             activeTab === "settings"
               ? "text-primary"
               : "text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -724,6 +762,33 @@ export function WatchList({
             ) : (
               <table className="w-full text-sm border-collapse">
                 <thead className="sticky top-0 z-10">
+                  {compareMode && (
+                    <tr className="border-b border-primary/30 bg-primary/5">
+                      <th
+                        colSpan={10}
+                        className="px-4 py-2 text-left"
+                      >
+                        <div className="flex items-center gap-2 text-xs font-medium text-primary">
+                          <BarChart2 className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            Compare mode — click any stock row to select it
+                            {compareSelection.length > 0 && (
+                              <span className="text-primary/70 ml-1">
+                                ({compareSelection.length}/4 selected{compareSelection.length >= 2 ? " — scroll down for the Compare button" : ""})
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={toggleCompareMode}
+                            className="ml-auto text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+                          >
+                            Exit
+                          </button>
+                        </div>
+                      </th>
+                    </tr>
+                  )}
                   <tr className="border-b border-border bg-muted">
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">
                       Ticker
@@ -791,32 +856,87 @@ export function WatchList({
                             ? TrendingDown
                             : Minus;
 
+                    const compareIdx = compareSelection.indexOf(item.ticker);
+                    const isSelected = compareIdx !== -1;
+                    const isMaxedOut = compareSelection.length >= 4 && !isSelected;
+
+                    const COMPARE_COLORS = [
+                      "border-l-4 border-l-blue-500 bg-blue-500/5",
+                      "border-l-4 border-l-emerald-500 bg-emerald-500/5",
+                      "border-l-4 border-l-amber-500 bg-amber-500/5",
+                      "border-l-4 border-l-purple-500 bg-purple-500/5",
+                    ];
+                    const COMPARE_BADGE_COLORS = [
+                      "bg-blue-500 text-white",
+                      "bg-emerald-500 text-white",
+                      "bg-amber-500 text-white",
+                      "bg-purple-500 text-white",
+                    ];
+
                     return (
                       <Fragment key={item.id}>
                         <tr
                           className={cn(
                             "border-b border-border transition-colors cursor-pointer",
-                            triggered
-                              ? "bg-amber-500/10 hover:bg-amber-500/15"
-                              : "hover:bg-muted/30",
+                            compareMode
+                              ? isSelected
+                                ? COMPARE_COLORS[compareIdx]
+                                : isMaxedOut
+                                  ? "opacity-40"
+                                  : "hover:bg-primary/5"
+                              : triggered
+                                ? "bg-amber-500/10 hover:bg-amber-500/15"
+                                : "hover:bg-muted/30",
                           )}
-                          onDoubleClick={() => setDetailTicker(item.ticker)}
-                          title="Double-click for detailed analysis"
+                          onClick={
+                            compareMode
+                              ? () => toggleCompareStock(item.ticker)
+                              : undefined
+                          }
+                          onDoubleClick={
+                            compareMode
+                              ? undefined
+                              : () => setDetailTicker(item.ticker)
+                          }
+                          title={
+                            compareMode
+                              ? isSelected
+                                ? "Click to deselect"
+                                : isMaxedOut
+                                  ? "Maximum 4 stocks selected"
+                                  : "Click to add to comparison"
+                              : "Double-click for detailed analysis"
+                          }
                         >
                           <td className="px-4 py-2.5 font-semibold text-foreground">
                             <div className="flex items-center gap-2">
-                              <TickerLogo ticker={item.ticker} />
+                              {compareMode ? (
+                                <div
+                                  className={cn(
+                                    "w-5 h-5 rounded flex items-center justify-center text-xs font-bold shrink-0 border-2 transition-all",
+                                    isSelected
+                                      ? cn(COMPARE_BADGE_COLORS[compareIdx], "border-transparent")
+                                      : isMaxedOut
+                                        ? "border-border/30 text-muted-foreground/30"
+                                        : "border-primary/50 text-primary/50 hover:border-primary hover:text-primary",
+                                  )}
+                                >
+                                  {isSelected ? compareIdx + 1 : ""}
+                                </div>
+                              ) : (
+                                <TickerLogo ticker={item.ticker} />
+                              )}
                               <button
                                 type="button"
-                                onClick={() => openTickerPage(item.ticker)}
+                                onClick={compareMode ? (e) => { e.stopPropagation(); openTickerPage(item.ticker); } : () => openTickerPage(item.ticker)}
                                 className="group flex items-center gap-1.5 text-left transition-colors hover:text-primary"
                                 title={`Open ${item.ticker} on Yahoo Finance`}
                               >
-                                {triggered && (
+                                {triggered && !compareMode && (
                                   <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                                 )}
                                 {item.ticker}
-                                {upcomingEarnings[item.ticker] && (
+                                {upcomingEarnings[item.ticker] && !compareMode && (
                                   <span title="Upcoming earnings call">
                                     <CalendarDays className="w-3.5 h-3.5 text-primary shrink-0" />
                                   </span>
@@ -1073,6 +1193,78 @@ export function WatchList({
             }}
             defaultTicker={purchaseTicker ?? undefined}
           />
+
+          {/* Floating compare bar */}
+          {compareMode && compareSelection.length >= 2 && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-3 rounded-2xl border border-border bg-background/95 backdrop-blur-md shadow-2xl">
+              <div className="flex items-center gap-2">
+                {compareSelection.map((ticker, idx) => {
+                  const CHIP_COLORS = [
+                    "ring-2 ring-blue-500",
+                    "ring-2 ring-emerald-500",
+                    "ring-2 ring-amber-500",
+                    "ring-2 ring-purple-500",
+                  ];
+                  return (
+                    <div key={ticker} className={cn("rounded-full overflow-hidden", CHIP_COLORS[idx])}>
+                      <TickerLogo ticker={ticker} size="sm" />
+                    </div>
+                  );
+                })}
+              </div>
+              <span className="text-sm font-medium text-foreground">
+                {compareSelection.length} stock{compareSelection.length > 1 ? "s" : ""} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowCompareModal(true)}
+                className="btn-primary flex items-center gap-1.5 text-sm"
+              >
+                <GitCompareArrows className="w-4 h-4" />
+                Compare
+              </button>
+              <button
+                type="button"
+                onClick={() => setCompareSelection([])}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+
+          {/* Compare banner when compare mode is on but not enough stocks */}
+          {compareMode && compareSelection.length < 2 && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-3 rounded-2xl border border-primary/30 bg-primary/5 backdrop-blur-md shadow-xl">
+              <BarChart2 className="w-4 h-4 text-primary" />
+              <span className="text-sm text-primary font-medium">
+                {compareSelection.length === 0
+                  ? "Click stocks to compare (select 2–4)"
+                  : "Select at least one more stock to compare"}
+              </span>
+              <button
+                type="button"
+                onClick={toggleCompareMode}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Compare modal */}
+          {showCompareModal && compareSelection.length >= 2 && (
+            <StockCompareModal
+              tickers={compareSelection}
+              stocks={stocks}
+              linkOpenMode={linkOpenMode}
+              onClose={() => setShowCompareModal(false)}
+              onBuy={(ticker) => {
+                setShowCompareModal(false);
+                setPurchaseTicker(ticker);
+              }}
+            />
+          )}
 
           {/* Delete item confirmation */}
           {confirmDelete != null && (

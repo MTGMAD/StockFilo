@@ -116,3 +116,94 @@ pub async fn fetch_upcoming_earnings_command(
         .map(|(ticker, event_at)| UpcomingEarningsEvent { ticker, event_at })
         .collect())
 }
+
+#[derive(Debug, Serialize)]
+pub struct ComparisonStatsResult {
+    pub ticker: String,
+    pub price: Option<f64>,
+    pub name: Option<String>,
+    pub daily_change_pct: Option<f64>,
+    pub target_mean_price: Option<f64>,
+    pub post_market_price: Option<f64>,
+    pub post_market_change_pct: Option<f64>,
+    pub pre_market_price: Option<f64>,
+    pub pre_market_change_pct: Option<f64>,
+    pub market_state: Option<String>,
+    pub market_cap: Option<f64>,
+    pub trailing_pe: Option<f64>,
+    pub forward_pe: Option<f64>,
+    pub price_to_book: Option<f64>,
+    pub beta: Option<f64>,
+    pub fifty_two_week_high: Option<f64>,
+    pub fifty_two_week_low: Option<f64>,
+    pub dividend_yield: Option<f64>,
+    pub eps_trailing: Option<f64>,
+    pub recommendation_key: Option<String>,
+    pub number_of_analyst_opinions: Option<i64>,
+    pub gross_margins: Option<f64>,
+    pub operating_margins: Option<f64>,
+    pub profit_margins: Option<f64>,
+    pub revenue_growth: Option<f64>,
+}
+
+/// Fetch extended comparison stats for up to 4 tickers (live, not cached).
+#[tauri::command]
+pub async fn fetch_comparison_stats_command(
+    tickers: Vec<String>,
+) -> Result<Vec<ComparisonStatsResult>, String> {
+    if tickers.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let upper: Vec<String> = tickers.iter().map(|t| t.to_uppercase()).collect();
+    let stats_map = yahoo::fetch_comparison_stats(&upper).await?;
+
+    let results = upper
+        .into_iter()
+        .map(|ticker| {
+            if let Some(s) = stats_map.get(&ticker) {
+                ComparisonStatsResult {
+                    ticker,
+                    price: s.price,
+                    name: s.name.clone(),
+                    daily_change_pct: s.daily_change_pct,
+                    target_mean_price: s.target_mean_price,
+                    post_market_price: s.post_market_price,
+                    post_market_change_pct: s.post_market_change_pct,
+                    pre_market_price: s.pre_market_price,
+                    pre_market_change_pct: s.pre_market_change_pct,
+                    market_state: s.market_state.clone(),
+                    market_cap: s.market_cap,
+                    trailing_pe: s.trailing_pe,
+                    forward_pe: s.forward_pe,
+                    price_to_book: s.price_to_book,
+                    beta: s.beta,
+                    fifty_two_week_high: s.fifty_two_week_high,
+                    fifty_two_week_low: s.fifty_two_week_low,
+                    dividend_yield: s.dividend_yield,
+                    eps_trailing: s.eps_trailing,
+                    recommendation_key: s.recommendation_key.clone(),
+                    number_of_analyst_opinions: s.number_of_analyst_opinions,
+                    gross_margins: s.gross_margins,
+                    operating_margins: s.operating_margins,
+                    profit_margins: s.profit_margins,
+                    revenue_growth: s.revenue_growth,
+                }
+            } else {
+                ComparisonStatsResult {
+                    ticker,
+                    price: None, name: None, daily_change_pct: None, target_mean_price: None,
+                    post_market_price: None, post_market_change_pct: None,
+                    pre_market_price: None, pre_market_change_pct: None, market_state: None,
+                    market_cap: None, trailing_pe: None, forward_pe: None, price_to_book: None,
+                    beta: None, fifty_two_week_high: None, fifty_two_week_low: None,
+                    dividend_yield: None, eps_trailing: None, recommendation_key: None,
+                    number_of_analyst_opinions: None, gross_margins: None,
+                    operating_margins: None, profit_margins: None, revenue_growth: None,
+                }
+            }
+        })
+        .collect();
+
+    Ok(results)
+}

@@ -54,6 +54,29 @@ struct QuoteResult {
     earnings_timestamp_start: Option<Value>,
     #[serde(rename = "earningsTimestampEnd")]
     earnings_timestamp_end: Option<Value>,
+    // Extended fields used for comparison
+    #[serde(rename = "marketCap")]
+    market_cap: Option<f64>,
+    #[serde(rename = "trailingPE")]
+    trailing_pe: Option<f64>,
+    #[serde(rename = "forwardPE")]
+    forward_pe: Option<f64>,
+    #[serde(rename = "priceToBook")]
+    price_to_book: Option<f64>,
+    #[serde(rename = "beta")]
+    beta: Option<f64>,
+    #[serde(rename = "fiftyTwoWeekHigh")]
+    fifty_two_week_high: Option<f64>,
+    #[serde(rename = "fiftyTwoWeekLow")]
+    fifty_two_week_low: Option<f64>,
+    #[serde(rename = "dividendYield")]
+    dividend_yield: Option<f64>,
+    #[serde(rename = "epsTrailingTwelveMonths")]
+    eps_trailing: Option<f64>,
+    #[serde(rename = "recommendationKey")]
+    recommendation_key: Option<String>,
+    #[serde(rename = "numberOfAnalystOpinions")]
+    number_of_analyst_opinions: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +100,65 @@ struct QuoteSummaryResult {
 struct FinancialData {
     #[serde(rename = "targetMeanPrice")]
     target_mean_price: Option<Value>,
+}
+
+// ── Comparison-specific quoteSummary structs ───────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ComparisonYahooQuoteSummaryResponse {
+    #[serde(rename = "quoteSummary")]
+    quote_summary: ComparisonQuoteSummaryOuter,
+}
+
+#[derive(Debug, Deserialize)]
+struct ComparisonQuoteSummaryOuter {
+    result: Option<Vec<ComparisonQuoteSummaryResult>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ComparisonQuoteSummaryResult {
+    #[serde(rename = "financialData")]
+    financial_data: Option<ComparisonFinancialData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ComparisonFinancialData {
+    #[serde(rename = "grossMargins")]
+    gross_margins: Option<Value>,
+    #[serde(rename = "operatingMargins")]
+    operating_margins: Option<Value>,
+    #[serde(rename = "profitMargins")]
+    profit_margins: Option<Value>,
+    #[serde(rename = "revenueGrowth")]
+    revenue_growth: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ComparisonStats {
+    pub price: Option<f64>,
+    pub name: Option<String>,
+    pub daily_change_pct: Option<f64>,
+    pub target_mean_price: Option<f64>,
+    pub post_market_price: Option<f64>,
+    pub post_market_change_pct: Option<f64>,
+    pub pre_market_price: Option<f64>,
+    pub pre_market_change_pct: Option<f64>,
+    pub market_state: Option<String>,
+    pub market_cap: Option<f64>,
+    pub trailing_pe: Option<f64>,
+    pub forward_pe: Option<f64>,
+    pub price_to_book: Option<f64>,
+    pub beta: Option<f64>,
+    pub fifty_two_week_high: Option<f64>,
+    pub fifty_two_week_low: Option<f64>,
+    pub dividend_yield: Option<f64>,
+    pub eps_trailing: Option<f64>,
+    pub recommendation_key: Option<String>,
+    pub number_of_analyst_opinions: Option<i64>,
+    pub gross_margins: Option<f64>,
+    pub operating_margins: Option<f64>,
+    pub profit_margins: Option<f64>,
+    pub revenue_growth: Option<f64>,
 }
 
 fn value_to_i64(v: &Value) -> Option<i64> {
@@ -326,6 +408,124 @@ pub async fn fetch_quotes(
         if tickers.len() > 10 {
             sleep(Duration::from_millis(300)).await;
         }
+    }
+
+    Ok(results)
+}
+
+/// Fetch extended comparison stats for up to 4 tickers (live, not cached).
+pub async fn fetch_comparison_stats(
+    tickers: &[String],
+) -> Result<HashMap<String, ComparisonStats>, String> {
+    if tickers.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let (client, crumb) = get_authenticated_client().await?;
+    let mut results: HashMap<String, ComparisonStats> = HashMap::new();
+
+    // Single batch call — comparison is at most 4 tickers
+    let symbols = tickers
+        .iter()
+        .map(|s| urlencoding::encode(s).into_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    let url = format!(
+        "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent,targetMeanPrice,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent,marketState,marketCap,trailingPE,forwardPE,priceToBook,beta,fiftyTwoWeekHigh,fiftyTwoWeekLow,dividendYield,epsTrailingTwelveMonths,recommendationKey,numberOfAnalystOpinions",
+        symbols,
+        urlencoding::encode(&crumb)
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Comparison quote request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Yahoo Finance returned HTTP {status} for comparison: {body}"));
+    }
+
+    let data: YahooQuoteResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse comparison quote response: {e}"))?;
+
+    if let Some(quote_results) = data.quote_response.result {
+        for q in quote_results {
+            let price = q.regular_market_price;
+            let target_mean_price = match q.target_mean_price.as_ref().and_then(value_to_f64) {
+                Some(p) => Some(p),
+                None => fetch_target_mean_price(&client, &q.symbol, &crumb).await.unwrap_or(None),
+            };
+            let name = q.long_name.or(q.short_name);
+            let number_of_analyst_opinions = q.number_of_analyst_opinions.as_ref().and_then(value_to_i64);
+            results.insert(q.symbol, ComparisonStats {
+                price,
+                name,
+                daily_change_pct: q.regular_market_change_percent,
+                target_mean_price,
+                post_market_price: q.post_market_price,
+                post_market_change_pct: q.post_market_change_pct,
+                pre_market_price: q.pre_market_price,
+                pre_market_change_pct: q.pre_market_change_pct,
+                market_state: q.market_state,
+                market_cap: q.market_cap,
+                trailing_pe: q.trailing_pe,
+                forward_pe: q.forward_pe,
+                price_to_book: q.price_to_book,
+                beta: q.beta,
+                fifty_two_week_high: q.fifty_two_week_high,
+                fifty_two_week_low: q.fifty_two_week_low,
+                dividend_yield: q.dividend_yield,
+                eps_trailing: q.eps_trailing,
+                recommendation_key: q.recommendation_key,
+                number_of_analyst_opinions,
+                gross_margins: None,
+                operating_margins: None,
+                profit_margins: None,
+                revenue_growth: None,
+            });
+        }
+    }
+
+    // Fetch financial data (margins) for each ticker via quoteSummary
+    for ticker in tickers {
+        if !results.contains_key(ticker) {
+            continue;
+        }
+        let url = format!(
+            "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{}?modules=financialData&crumb={}",
+            urlencoding::encode(ticker),
+            urlencoding::encode(&crumb),
+        );
+        let resp = match client.get(&url).send().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let data: ComparisonYahooQuoteSummaryResponse = match resp.json().await {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        if let Some(fd) = data
+            .quote_summary
+            .result
+            .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+            .and_then(|r| r.financial_data)
+        {
+            if let Some(entry) = results.get_mut(ticker) {
+                entry.gross_margins = fd.gross_margins.as_ref().and_then(value_to_f64);
+                entry.operating_margins = fd.operating_margins.as_ref().and_then(value_to_f64);
+                entry.profit_margins = fd.profit_margins.as_ref().and_then(value_to_f64);
+                entry.revenue_growth = fd.revenue_growth.as_ref().and_then(value_to_f64);
+            }
+        }
+        sleep(Duration::from_millis(150)).await;
     }
 
     Ok(results)

@@ -85,6 +85,7 @@ pub fn run() {
             commands::stocks::search_tickers_command,
             commands::stocks::fetch_news_command,
             commands::stocks::fetch_upcoming_earnings_command,
+            commands::stocks::fetch_comparison_stats_command,
             commands::browser::open_browser_window,
             commands::browser::open_earnings_call_in_calendar,
         ])

@@ -48,7 +48,7 @@ A blazing-fast, privacy-first desktop app for tracking personal investments — 
 Organize your investments into as many named portfolios as you like:
 
 - Create, rename, star, and delete portfolios
-- Drag-to-reorder the portfolio list in the sidebar
+- Reorder the portfolio list in the sidebar
 - Each portfolio maintains its own holdings, purchases, and settings independently
 
 ### 📊 Dual-Mode Dashboard
