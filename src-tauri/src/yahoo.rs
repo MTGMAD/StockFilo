@@ -537,32 +537,6 @@ pub async fn fetch_chart(
 
 // ── Ticker news ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
-struct YahooNewsSearchResponse {
-    news: Option<Vec<YahooNewsArticle>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct YahooNewsArticle {
-    title: Option<String>,
-    link: Option<String>,
-    publisher: Option<String>,
-    thumbnail: Option<YahooNewsThumbnail>,
-    #[serde(rename = "relatedTickers", default)]
-    related_tickers: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct YahooNewsThumbnail {
-    resolutions: Option<Vec<YahooThumbnailRes>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct YahooThumbnailRes {
-    url: Option<String>,
-    tag: Option<String>,
-}
-
 #[derive(Debug, Serialize, Clone)]
 pub struct NewsArticle {
     pub title: String,
@@ -571,8 +545,8 @@ pub struct NewsArticle {
     pub image_url: Option<String>,
 }
 
-/// Fetch recent news articles strictly about a specific ticker using Yahoo Finance's search endpoint.
-/// Only returns articles where this ticker is the primary subject (first in relatedTickers).
+/// Fetch recent news for a specific ticker from Yahoo Finance's RSS headline feed.
+/// The feed is pre-filtered to the ticker and sorted newest-first by Yahoo.
 pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, String> {
     let client = Client::builder()
         .user_agent(USER_AGENT)
@@ -580,12 +554,9 @@ pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, St
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-    // Request many more articles so we have enough after strict filtering
-    let fetch_count = count * 5;
     let url = format!(
-        "https://query2.finance.yahoo.com/v1/finance/search?q={}&quotesCount=0&newsCount={}&listsCount=0",
+        "https://feeds.finance.yahoo.com/rss/2.0/headline?s={}&region=US&lang=en-US",
         urlencoding::encode(ticker),
-        fetch_count,
     );
 
     let resp = client
@@ -597,45 +568,34 @@ pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, St
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Yahoo news API returned HTTP {status}: {body}"));
+        return Err(format!("Yahoo news RSS returned HTTP {status}: {body}"));
     }
 
-    let data: YahooNewsSearchResponse = resp
-        .json()
+    let body = resp
+        .text()
         .await
-        .map_err(|e| format!("Failed to parse news response: {e}"))?;
+        .map_err(|e| format!("Failed to read news response body: {e}"))?;
 
-    let upper_ticker = ticker.to_uppercase();
-    let articles = data
-        .news
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|a| {
-            // Only include articles where this ticker is the PRIMARY subject —
-            // i.e. it appears first in relatedTickers.
-            a.related_tickers
-                .first()
-                .map(|t| t.eq_ignore_ascii_case(&upper_ticker))
-                .unwrap_or(false)
-        })
-        .filter_map(|a| {
-            let image_url = a
-                .thumbnail
-                .and_then(|t| t.resolutions)
-                .and_then(|rr| {
-                    rr.into_iter()
-                        .find(|r| r.tag.as_deref() == Some("original"))
-                })
-                .and_then(|r| r.url);
+    let channel = rss::Channel::read_from(body.as_bytes())
+        .map_err(|e| format!("Failed to parse RSS feed: {e}"))?;
 
-            Some(NewsArticle {
-                title: a.title?,
-                url: a.link?,
-                publisher: a.publisher,
-                image_url,
-            })
-        })
+    let articles = channel
+        .items()
+        .iter()
         .take(count as usize)
+        .filter_map(|item| {
+            let title = item.title()?.to_string();
+            let url = item.link()?.to_string();
+            let publisher = item.source().and_then(|s| s.title().map(|t| t.to_string()));
+            let image_url = item
+                .extensions()
+                .get("media")
+                .and_then(|m| m.get("content"))
+                .and_then(|v| v.first())
+                .and_then(|e| e.attrs().get("url"))
+                .cloned();
+            Some(NewsArticle { title, url, publisher, image_url })
+        })
         .collect();
 
     Ok(articles)
