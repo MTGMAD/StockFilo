@@ -2,10 +2,11 @@ import type { Stock } from "../../types";
 import { formatCurrency, formatPercent, pnlColor } from "../../lib/utils";
 
 interface ExtendedHoursTagProps {
-  stock: Stock;
+  stock?: Stock;
 }
 
 export function ExtendedHoursTag({ stock }: ExtendedHoursTagProps) {
+  if (!stock) return null;
   const { market_state, pre_market_price, pre_market_change_pct, post_market_price, post_market_change_pct } = stock;
 
   const isPre = market_state === "PRE" && pre_market_price != null;
