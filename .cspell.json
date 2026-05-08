@@ -19,6 +19,9 @@
     "urlencoding",
     "thiserror",
     "sqlx",
-    "autofetch"
+    "autofetch",
+    "watchlists",
+    "sparkline",
+    "sparklines"
   ]
 }

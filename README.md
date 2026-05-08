@@ -43,6 +43,14 @@ A blazing-fast, privacy-first desktop app for tracking personal investments — 
 
 ## ✨ Features at a Glance
 
+### 📁 Multiple Portfolios
+
+Organize your investments into as many named portfolios as you like:
+
+- Create, rename, star, and delete portfolios
+- Drag-to-reorder the portfolio list in the sidebar
+- Each portfolio maintains its own holdings, purchases, and settings independently
+
 ### 📊 Dual-Mode Dashboard
 
 Switch between **Novice** and **Advanced** modes to match your experience level — no clutter, no confusion.
@@ -59,18 +67,25 @@ Switch between **Novice** and **Advanced** modes to match your experience level 
 Click any ticker for a full per-position breakdown:
 
 - **Mountain chart** with 8 time ranges — `1D · 5D · 1M · 6M · YTD · 1Y · 5Y · MAX`
-- **Live news feed** — latest articles pulled for each ticker
-- **Cost basis overlay** — visualize where your average entry price sits against the price curve
+- **Cost basis overlay** — visualize your average entry price against the price curve
+- **Live news feed** — latest articles pulled via Yahoo Finance RSS for each ticker
+- **Upcoming earnings** — detects earnings dates and generates a one-click calendar invite (`.ics`)
 - **Drag-to-reorder favorites** — pin your most important holdings to the top
-- **Yahoo Finance integration** — one click opens the ticker in your browser
+- **Yahoo Finance link** — one click opens the ticker in your browser or in an in-app window
 
-### 👀 Smart Watchlist
+### 👀 Smart Watchlists
 
-Never miss a move on stocks you're tracking but haven't bought yet:
+Organize pre-buy research across **multiple named watchlists**:
 
+- Create, rename, reorder, and delete watchlists
 - **Live search-as-you-type** — finds tickers by name or symbol via Yahoo Finance
 - **Keyboard navigation** — arrow keys, Enter, Escape all work in the dropdown
+- **Sparkline mini-charts** — quick at-a-glance price trend per watchlist item
+- **Target price** — shows analyst mean price estimate alongside your watch price
+- **Notes** — attach free-text notes to any watchlist item
+- **Extended hours indicators** — pre-market and post-market price tags
 - **One-click buy** — purchase directly from the watchlist when you're ready
+- **Backup & restore** — export/import entire watchlists to CSV
 
 ### 💼 Portfolio Management
 
@@ -79,16 +94,21 @@ Accurately track your positions across stocks, ETFs, mutual funds, and crypto:
 - Log purchases with shares, price per share, and purchase date
 - Automatic **unrealized P&L** calculation (dollar and percent)
 - **Daily change %** for every position
+- **Extended hours pricing** — pre-market and post-market prices with market-state indicators
 - Cost basis tracking across multiple purchases of the same ticker
 
 ### ⚙️ Settings & Data Control
 
 You own your data — completely:
 
-- **Export to CSV** — save your purchases any time
-- **Import from CSV** — restore or migrate from another tool
-- **Theme support** — System / Light / Dark, persisted automatically
+- **Export to CSV or Excel (XLSX)** — save your purchases any time
+- **Import from CSV or Excel (XLSX)** — restore or migrate from another tool
+- **Ameriprise CSV import** — dedicated import for Ameriprise account exports
+- **Watchlist backup/restore** — export and import watchlists via CSV
+- **Theme support** — System / Light / Dark / Warm, persisted automatically
 - **Dashboard mode** persisted per device
+- **Link open mode** — open Yahoo Finance links in your default browser or in a focused in-app window (no address bar)
+- **Info tooltips toggle** — show or hide contextual help labels
 
 ---
 
@@ -102,8 +122,10 @@ You own your data — completely:
 | **Components** | [Radix UI](https://www.radix-ui.com) primitives |
 | **Charts** | [Recharts 3](https://recharts.org) |
 | **Icons** | [Lucide React](https://lucide.dev) |
+| **Spreadsheet** | [SheetJS (xlsx)](https://sheetjs.com) |
 | **Database** | SQLite via `tauri-plugin-sql` (local, no server) |
 | **Market data** | Yahoo Finance (fetched natively via Rust `reqwest`) |
+| **News** | Yahoo Finance RSS (parsed via Rust `rss` crate) |
 | **Build tool** | [Vite 8](https://vitejs.dev) |
 
 ---
