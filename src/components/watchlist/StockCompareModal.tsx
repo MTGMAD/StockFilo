@@ -15,6 +15,7 @@ import {
   Trophy,
   AlertTriangle,
 } from "lucide-react";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,20 +138,31 @@ function formatEPS(v: number | null): string {
 // ── Tooltip component ─────────────────────────────────────────────────────────
 
 function Tooltip({ text }: { text: string }) {
-  const [show, setShow] = useState(false);
+  if (!text) return null;
   return (
-    <span
-      className="relative inline-flex items-center"
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-    >
-      <Info className="w-3 h-3 text-muted-foreground cursor-help ml-1" />
-      {show && (
-        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-52 text-xs leading-snug bg-popover border border-border rounded-md shadow-lg px-3 py-2 text-foreground z-50 pointer-events-none whitespace-normal">
-          {text}
-        </span>
-      )}
-    </span>
+    <RadixTooltip.Provider delayDuration={200}>
+      <RadixTooltip.Root>
+        <RadixTooltip.Trigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center"
+            aria-label="More information"
+          >
+            <Info className="w-3 h-3 text-muted-foreground cursor-help ml-1" />
+          </button>
+        </RadixTooltip.Trigger>
+        <RadixTooltip.Portal>
+          <RadixTooltip.Content
+            side="top"
+            sideOffset={8}
+            className="z-50 max-w-xs rounded-lg bg-foreground px-3 py-2.5 text-xs font-medium text-background shadow-lg border border-foreground/20 backdrop-blur-sm"
+          >
+            {text}
+            <RadixTooltip.Arrow className="fill-foreground" />
+          </RadixTooltip.Content>
+        </RadixTooltip.Portal>
+      </RadixTooltip.Root>
+    </RadixTooltip.Provider>
   );
 }
 

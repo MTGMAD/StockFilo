@@ -22,6 +22,7 @@ import { StockCompareModal } from "./StockCompareModal";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
 import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
 import {
   Plus,
   Trash2,
@@ -70,6 +71,35 @@ interface WatchListProps {
     price: number,
     date: string,
   ) => Promise<void>;
+}
+
+// ── Tooltip wrapper ────────────────────────────────────────────────────────────
+
+interface TooltipProps {
+  text: string;
+  children: React.ReactNode;
+  side?: "top" | "right" | "bottom" | "left";
+}
+
+function Tooltip({ text, children, side = "bottom" }: TooltipProps) {
+  if (!text) return <>{children}</>;
+  return (
+    <RadixTooltip.Provider delayDuration={200}>
+      <RadixTooltip.Root>
+        <RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger>
+        <RadixTooltip.Portal>
+          <RadixTooltip.Content
+            side={side}
+            sideOffset={8}
+            className="z-50 max-w-xs rounded-lg bg-foreground px-3 py-2.5 text-xs font-medium text-background shadow-lg border border-foreground/20 backdrop-blur-sm"
+          >
+            {text}
+            <RadixTooltip.Arrow className="fill-foreground" />
+          </RadixTooltip.Content>
+        </RadixTooltip.Portal>
+      </RadixTooltip.Root>
+    </RadixTooltip.Provider>
+  );
 }
 
 export function WatchList({
@@ -434,9 +464,10 @@ export function WatchList({
             <button
               onClick={commitNewWatchlist}
               className="text-positive hover:opacity-80 shrink-0"
-              title="Create"
             >
-              <Check className="w-3.5 h-3.5" />
+              <Tooltip text="Create">
+                <Check className="w-3.5 h-3.5" />
+              </Tooltip>
             </button>
             <button
               onClick={() => {
@@ -444,55 +475,59 @@ export function WatchList({
                 setNewName("");
               }}
               className="text-muted-foreground hover:opacity-80 shrink-0"
-              title="Cancel"
             >
-              <X className="w-3.5 h-3.5" />
+              <Tooltip text="Cancel">
+                <X className="w-3.5 h-3.5" />
+              </Tooltip>
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setCreatingNew(true)}
-            title="New watchlist"
-            className="shrink-0 px-3 py-3 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+          <Tooltip text="New watchlist">
+            <button
+              type="button"
+              onClick={() => setCreatingNew(true)}
+              className="shrink-0 px-3 py-3 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </Tooltip>
         )}
 
         {/* Settings gear — far right */}
-        <button
-          type="button"
-          onClick={toggleCompareMode}
-          title={compareMode ? "Exit Compare Mode" : "Compare Stocks (select up to 4)"}
-          className={cn(
-            "ml-auto shrink-0 p-2 rounded-md transition-colors",
-            compareMode
-              ? "text-primary bg-primary/10"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted",
-          )}
-        >
-          <BarChart2 className="w-4 h-4" />
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            setActiveTab(activeTab === "settings" ? "list" : "settings")
-          }
-          title={
-            activeTab === "settings"
-              ? "Back to Watch List"
-              : "Watchlist Settings"
-          }
-          className={cn(
-            "shrink-0 p-2 mr-1 rounded-md transition-colors",
-            activeTab === "settings"
-              ? "text-primary"
-              : "text-muted-foreground hover:text-foreground hover:bg-muted",
-          )}
-        >
-          <Settings className="w-4 h-4" />
-        </button>
+        <Tooltip text={compareMode ? "Exit Compare Mode" : "Compare Stocks (select up to 4)"}>
+          <button
+            type="button"
+            onClick={toggleCompareMode}
+            className={cn(
+              "ml-auto shrink-0 p-2 rounded-md transition-colors",
+              compareMode
+                ? "text-primary bg-primary/10"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+            )}
+          >
+            <BarChart2 className="w-4 h-4" />
+          </button>
+        </Tooltip>
+        <Tooltip text={
+          activeTab === "settings"
+            ? "Back to Watch List"
+            : "Watchlist Settings"
+        }>
+          <button
+            type="button"
+            onClick={() =>
+              setActiveTab(activeTab === "settings" ? "list" : "settings")
+            }
+            className={cn(
+              "shrink-0 p-2 mr-1 rounded-md transition-colors",
+              activeTab === "settings"
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+            )}
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        </Tooltip>
       </div>
 
       {activeTab === "settings" ? (
@@ -898,15 +933,6 @@ export function WatchList({
                               ? undefined
                               : () => setDetailTicker(item.ticker)
                           }
-                          title={
-                            compareMode
-                              ? isSelected
-                                ? "Click to deselect"
-                                : isMaxedOut
-                                  ? "Maximum 4 stocks selected"
-                                  : "Click to add to comparison"
-                              : "Double-click for detailed analysis"
-                          }
                         >
                           <td className="px-4 py-2.5 font-semibold text-foreground">
                             <div className="flex items-center gap-2">
@@ -926,23 +952,26 @@ export function WatchList({
                               ) : (
                                 <TickerLogo ticker={item.ticker} />
                               )}
-                              <button
-                                type="button"
-                                onClick={compareMode ? (e) => { e.stopPropagation(); openTickerPage(item.ticker); } : () => openTickerPage(item.ticker)}
-                                className="group flex items-center gap-1.5 text-left transition-colors hover:text-primary"
-                                title={`Open ${item.ticker} on Yahoo Finance`}
-                              >
-                                {triggered && !compareMode && (
-                                  <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                                )}
-                                {item.ticker}
-                                {upcomingEarnings[item.ticker] && !compareMode && (
-                                  <span title="Upcoming earnings call">
-                                    <CalendarDays className="w-3.5 h-3.5 text-primary shrink-0" />
-                                  </span>
-                                )}
-                                <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-                              </button>
+                              <Tooltip text={`Open ${item.ticker} on Yahoo Finance`}>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={compareMode ? (e) => { e.stopPropagation(); openTickerPage(item.ticker); } : () => openTickerPage(item.ticker)}
+                                    className="group flex items-center gap-1.5 text-left transition-colors hover:text-primary"
+                                  >
+                                    {triggered && !compareMode && (
+                                      <Bell className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                                    )}
+                                    {item.ticker}
+                                    <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                                  </button>
+                                  {upcomingEarnings[item.ticker] && !compareMode && (
+                                    <Tooltip text="Upcoming earnings call" side="top">
+                                      <CalendarDays className="w-3.5 h-3.5 text-primary shrink-0 cursor-help" />
+                                    </Tooltip>
+                                  )}
+                                </div>
+                              </Tooltip>
                             </div>
                           </td>
                           <td className="px-4 py-2.5 text-foreground max-w-[220px] truncate">
@@ -1069,71 +1098,73 @@ export function WatchList({
                                 className="w-24 text-right rounded border border-primary bg-background px-2 py-0.5 text-sm outline-none"
                               />
                             ) : (
-                              <button
-                                onClick={() => {
-                                  setEditingTarget(item.ticker);
-                                  setTargetDraft(
-                                    target != null ? String(target) : "",
-                                  );
-                                }}
-                                className={cn(
-                                  "text-sm rounded px-1.5 py-0.5 transition-colors",
-                                  target != null
-                                    ? triggered
-                                      ? "text-amber-500 font-semibold"
-                                      : "text-primary"
-                                    : "text-muted-foreground hover:text-foreground",
-                                )}
-                                title="Click to set buy target"
-                              >
-                                {target != null
-                                  ? formatCurrency(target)
-                                  : "Set target"}
-                              </button>
+                              <Tooltip text="Click to set buy target">
+                                <button
+                                  onClick={() => {
+                                    setEditingTarget(item.ticker);
+                                    setTargetDraft(
+                                      target != null ? String(target) : "",
+                                    );
+                                  }}
+                                  className={cn(
+                                    "text-sm rounded px-1.5 py-0.5 transition-colors",
+                                    target != null
+                                      ? triggered
+                                        ? "text-amber-500 font-semibold"
+                                        : "text-primary"
+                                      : "text-muted-foreground hover:text-foreground",
+                                  )}
+                                >
+                                  {target != null
+                                    ? formatCurrency(target)
+                                    : "Set target"}
+                                </button>
+                              </Tooltip>
                             )}
                           </td>
                           <td className="px-4 py-2.5">
                             <div className="flex items-center justify-center gap-1">
-                              <button
-                                onClick={() =>
-                                  setOpenNotes((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(item.ticker))
-                                      next.delete(item.ticker);
-                                    else next.add(item.ticker);
-                                    return next;
-                                  })
-                                }
-                                className={cn(
-                                  "p-1.5 rounded transition-colors",
-                                  hasNote(item.ticker)
-                                    ? "text-primary hover:bg-primary/10"
-                                    : "text-muted-foreground hover:text-foreground hover:bg-muted",
-                                )}
-                                title={
-                                  noteOpen ? "Hide notes" : "Add / view notes"
-                                }
-                              >
-                                {hasNote(item.ticker) ? (
-                                  <MessageSquare className="w-3.5 h-3.5" />
-                                ) : (
-                                  <MessageSquareDiff className="w-3.5 h-3.5" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => setPurchaseTicker(item.ticker)}
-                                className="p-1.5 rounded hover:bg-green-500/10 text-muted-foreground hover:text-green-500 transition-colors"
-                                title="Buy — add to portfolio"
-                              >
-                                <ShoppingCart className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setConfirmDelete(item.id)}
-                                className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
-                                title="Remove from Watchlist"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              <Tooltip text={noteOpen ? "Hide notes" : "Add / view notes"}>
+                                <button
+                                  onClick={() =>
+                                    setOpenNotes((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(item.ticker))
+                                        next.delete(item.ticker);
+                                      else next.add(item.ticker);
+                                      return next;
+                                    })
+                                  }
+                                  className={cn(
+                                    "p-1.5 rounded transition-colors",
+                                    hasNote(item.ticker)
+                                      ? "text-primary hover:bg-primary/10"
+                                      : "text-muted-foreground hover:text-foreground hover:bg-muted",
+                                  )}
+                                >
+                                  {hasNote(item.ticker) ? (
+                                    <MessageSquare className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <MessageSquareDiff className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </Tooltip>
+                              <Tooltip text="Buy — add to portfolio">
+                                <button
+                                  onClick={() => setPurchaseTicker(item.ticker)}
+                                  className="p-1.5 rounded hover:bg-green-500/10 text-muted-foreground hover:text-green-500 transition-colors"
+                                >
+                                  <ShoppingCart className="w-3.5 h-3.5" />
+                                </button>
+                              </Tooltip>
+                              <Tooltip text="Remove from Watchlist">
+                                <button
+                                  onClick={() => setConfirmDelete(item.id)}
+                                  className="p-1.5 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </Tooltip>
                             </div>
                           </td>
                         </tr>
