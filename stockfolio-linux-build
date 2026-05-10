@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+
+export PATH="$HOME/.cargo/bin:$PATH"
+export APPIMAGE_EXTRACT_AND_RUN=1
+export NO_STRIP=1
+cd "$script_dir"
+npm run tauri build

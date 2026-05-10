@@ -7,9 +7,49 @@ on:
       - 'v*'
 
 jobs:
+  # ── Create the draft release ───────────────────────────────────────────────
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create draft GitHub release
+        id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Stockfolio ${tag}`,
+              body: `## Stockfolio ${tag}\n\n` +
+                `### Windows\n` +
+                `- **Stockfolio_${tag.replace('v','')}_x64-setup.exe** — NSIS installer (recommended)\n` +
+                `- **Stockfolio_${tag.replace('v','')}_x64_en-US.msi** — MSI installer\n\n` +
+                `### macOS (unsigned)\n` +
+                `- **Stockfolio_${tag.replace('v','')}_universal.dmg** — Universal disk image (Apple Silicon + Intel)\n\n` +
+                `> **First launch:** Right-click the app → **Open**, then click **Open** in the dialog.\n` +
+                `> Or run in Terminal: \`xattr -cr /Applications/Stockfolio.app\`\n\n` +
+                `### Linux\n` +
+                `- **stockfolio_${tag.replace('v','')}_amd64.deb** — Debian/Ubuntu package\n` +
+                `- **stockfolio-${tag.replace('v','')}-1.x86_64.rpm** — Red Hat/Fedora package\n` +
+                `- **stockfolio_${tag.replace('v','')}_amd64.AppImage** — Portable app (any distro)\n\n` +
+                `> See the full changelog in [CHANGELOG.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md).`,
+              draft: true,
+              prerelease: false
+            });
+            return data.id;
+          result-encoding: string
+
   # ── Windows build ──────────────────────────────────────────────────────────
   build-windows:
     name: Windows
+    needs: create-release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,18 +76,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Stockfolio ${{ github.ref_name }}
-          releaseBody: |
-            ## Stockfolio ${{ github.ref_name }}
-
-            ### Windows
-            - **Stockfolio_x.x.x_x64-setup.exe** — NSIS installer (recommended)
-            - **Stockfolio_x.x.x_x64_en-US.msi** — MSI installer
-
-            > See the full changelog in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: false
 
   # ── macOS build (unsigned) ─────────────────────────────────────────────────
@@ -55,6 +84,7 @@ jobs:
   # or run: xattr -cr /Applications/Stockfolio.app
   build-macos:
     name: macOS
+    needs: create-release
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,26 +114,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SKIP_DEVSERVER_CHECK: true
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Stockfolio ${{ github.ref_name }}
-          releaseBody: |
-            ## Stockfolio ${{ github.ref_name }}
-
-            ### macOS (unsigned)
-            - **Stockfolio_x.x.x_universal.dmg** — Universal disk image (Apple Silicon + Intel)
-
-            > **First launch:** Right-click the app → **Open**, then click **Open** in the dialog.
-            > Or run in Terminal: `xattr -cr /Applications/Stockfolio.app`
-
-            > See the full changelog in [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: false
           args: --target universal-apple-darwin
 
   # ── Linux build ────────────────────────────────────────────────────────────
   build-linux:
     name: Linux
+    needs: create-release
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -138,9 +156,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          NO_STRIP: 1
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Stockfolio ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: false
