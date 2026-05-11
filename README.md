@@ -4,7 +4,7 @@
 
 # Stockfolio
 
-**Your portfolio. Your machine. No cloud, no nonsense.**
+**Your portfolio. Your machine. Sync on your terms.**
 
 A blazing-fast, privacy-first desktop app for tracking personal investments — built with Tauri 2 & React 19.
 
@@ -97,6 +97,27 @@ Accurately track your positions across stocks, ETFs, mutual funds, and crypto:
 - **Extended hours pricing** — pre-market and post-market prices with market-state indicators
 - Cost basis tracking across multiple purchases of the same ticker
 
+### 📊 Performance Ranking
+
+See your entire portfolio sorted by what matters most:
+
+- Rank all positions by **unrealized gain/loss** — dollar or percent
+- Instantly spot your best and worst performers across every holding
+- Color-coded gain/loss bars for fast visual scanning
+
+### 🔄 Storage & Sync
+
+Keep your database wherever you want and sync across devices — entirely on your own infrastructure:
+
+- **Custom database location** — move the SQLite file to any local folder, mapped drive, or cloud-synced folder (OneDrive, Google Drive, Dropbox, etc.)
+- **Local / network path sync** — copy the database to a NAS, SMB share, or any folder on your network
+- **WebDAV / cloud sync** — sync directly to Nextcloud, ownCloud, or any WebDAV server using app passwords
+- **Auto-sync on a schedule** — every 5, 15, 30, or 60 minutes while the app is open
+- **Manual sync button** — trigger a sync any time from the header, with inline last-synced timestamp
+- **Conflict resolution** — newer database always wins; remote is backed up before overwrite
+- **Lock file protection** — prevents two devices from writing simultaneously
+- No third-party accounts, no proprietary cloud service, no subscription
+
 ### ⚙️ Settings & Data Control
 
 You own your data — completely:
@@ -123,7 +144,8 @@ You own your data — completely:
 | **Charts** | [Recharts 3](https://recharts.org) |
 | **Icons** | [Lucide React](https://lucide.dev) |
 | **Spreadsheet** | [SheetJS (xlsx)](https://sheetjs.com) |
-| **Database** | SQLite via `tauri-plugin-sql` (local, no server) |
+| **Database** | SQLite via `rusqlite` (Rust-native, bundled, no server) |
+| **Sync transport** | `reqwest` — HTTP WebDAV PUT/GET + local file copy |
 | **Market data** | Yahoo Finance (fetched natively via Rust `reqwest`) |
 | **News** | Yahoo Finance RSS (parsed via Rust `rss` crate) |
 | **Build tool** | [Vite 8](https://vitejs.dev) |
@@ -132,7 +154,9 @@ You own your data — completely:
 
 ## 🔒 Privacy First
 
-Stockfolio makes **zero network requests from your browser**. All market data fetching happens in the Rust backend process and is stored in a local SQLite database on your machine. No accounts. No telemetry. No cloud sync. Your portfolio data never leaves your device.
+Stockfolio makes **zero network requests from your browser**. All market data fetching happens in the Rust backend process and is stored in a local SQLite database on your machine. No accounts. No telemetry.
+
+**Sync is entirely optional and self-hosted.** If you enable it, your database is copied directly between devices via a path or WebDAV server you control — no Stockfolio servers are ever involved. The sync feature works with your own NAS, Nextcloud instance, or any WebDAV-compatible service.
 
 ---
 
