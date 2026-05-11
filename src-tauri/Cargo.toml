@@ -21,6 +21,10 @@ urlencoding = "2"
 rss = "2"
 tauri-plugin-dialog = "2.7.0"
 tauri-plugin-fs = "2.5.0"
+rusqlite = { version = "0.32", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+aes-gcm = "0.10"
+base64 = "0.22"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

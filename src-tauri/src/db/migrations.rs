@@ -120,3 +120,27 @@ DROP TABLE watchlist;
 
 ALTER TABLE watchlist_new RENAME TO watchlist;
 "#;
+
+/// V12: sync change-log table.  Uses CREATE IF NOT EXISTS so it is
+/// safe to call on an already-migrated database.
+const MIGRATION_V12: &str = r#"
+CREATE TABLE IF NOT EXISTS changes_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name   TEXT    NOT NULL,
+    row_id       INTEGER NOT NULL,
+    operation    TEXT    NOT NULL CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+    payload      TEXT,
+    changed_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_changes_log_changed_at ON changes_log(changed_at);
+
+CREATE TABLE IF NOT EXISTS _sf_config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"#;
+
+/// Apply V12 migration (idempotent — safe to call every startup).
+pub fn run_v12(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(MIGRATION_V12)
+}

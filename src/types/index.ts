@@ -154,3 +154,36 @@ export interface ComparisonStats {
   profit_margins: number | null;
   revenue_growth: number | null;
 }
+
+// ── Sync / Config types ────────────────────────────────────────────────────
+
+/** Flat struct mirroring Rust's SyncTarget — avoids the serde flatten+internally-tagged-enum bug. */
+export interface SyncTarget {
+  id: string;
+  label: string;
+  /** Discriminant: "path" or "webdav" */
+  kind: "path" | "webdav";
+  // path target fields
+  path?: string | null;
+  // webdav target fields
+  url?: string | null;
+  username?: string | null;
+  password_enc?: string | null;
+  last_synced_at?: number | null;
+  last_sync_status?: string | null;
+}
+
+export interface AppConfig {
+  device_id: string;
+  db_path?: string | null;
+  sync_targets: SyncTarget[];
+  auto_sync_minutes?: number | null;
+}
+
+export interface SyncResult {
+  success: boolean;
+  message: string;
+  synced_at: number;
+}
+
+export type SyncStatus = "idle" | "syncing" | "success" | "error";

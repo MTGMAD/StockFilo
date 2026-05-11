@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info } from "lucide-react";
+import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database } from "lucide-react";
 import { clearAllPurchases } from "../../lib/db";
+import { StorageSettings } from "./StorageSettings";
 
 interface SettingsPanelProps {
   theme: Theme;
@@ -14,6 +15,8 @@ interface SettingsPanelProps {
   onLinkOpenModeChange: (m: LinkOpenMode) => void;
   showInfoTooltips: boolean;
   onShowInfoTooltipsChange: (v: boolean) => void;
+  syncTick?: number;
+  onConfigSaved?: () => void;
 }
 
 const linkOpenModes: { id: LinkOpenMode; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
@@ -33,7 +36,7 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "warm", label: "Warm", Icon: Leaf },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange, syncTick, onConfigSaved }: SettingsPanelProps) {
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -224,6 +227,20 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
                 {message.text}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Storage & Sync */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48 pt-0.5">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">Storage &amp; Sync</h2>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5 pl-6">Database location and sync targets.</p>
+          </div>
+          <div className="flex-1">
+            <StorageSettings syncTick={syncTick} onConfigSaved={onConfigSaved} />
           </div>
         </div>
 

@@ -1,4 +1,9 @@
-import Database from "@tauri-apps/plugin-sql";
+/**
+ * db.ts — All database operations.
+ *
+ * SQL is now executed in Rust via invoke().  This file keeps the same
+ * exported function signatures so the rest of the frontend is unchanged.
+ */
 import { invoke } from "@tauri-apps/api/core";
 import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -21,84 +26,36 @@ import type {
   Watchlist,
 } from "../types";
 
-const DB_URL = "sqlite:stockfolio.db";
-
-let _db: Awaited<ReturnType<typeof Database.load>> | null = null;
-
-async function getDb() {
-  if (!_db) {
-    _db = await Database.load(DB_URL);
-  }
-  return _db;
-}
-
 // ── Portfolios ─────────────────────────────────────────────────────────────
 
 export async function listPortfolios(): Promise<Portfolio[]> {
-  const db = await getDb();
-  return db.select<Portfolio[]>(
-    "SELECT id, name, sort_order, is_starred, created_at FROM portfolios ORDER BY sort_order ASC, created_at ASC",
-  );
+  return invoke<Portfolio[]>("db_list_portfolios");
 }
 
 export async function createPortfolio(name: string): Promise<number> {
-  const db = await getDb();
-  const now = Math.floor(Date.now() / 1000);
-  const rows = await db.select<{ max_order: number | null }[]>(
-    "SELECT MAX(sort_order) as max_order FROM portfolios",
-  );
-  const nextOrder = (rows[0]?.max_order ?? -1) + 1;
-  await db.execute(
-    "INSERT INTO portfolios (name, sort_order, is_starred, created_at) VALUES (?, ?, 0, ?)",
-    [name, nextOrder, now],
-  );
-  const result = await db.select<{ id: number }[]>(
-    "SELECT last_insert_rowid() as id",
-  );
-  return result[0].id;
+  return invoke<number>("db_create_portfolio", { name });
 }
 
 export async function renamePortfolio(id: number, name: string): Promise<void> {
-  const db = await getDb();
-  await db.execute("UPDATE portfolios SET name = ? WHERE id = ?", [name, id]);
+  return invoke("db_rename_portfolio", { id, name });
 }
 
 export async function deletePortfolio(id: number): Promise<void> {
-  const db = await getDb();
-  await db.execute("DELETE FROM purchases WHERE portfolio_id = ?", [id]);
-  await db.execute("DELETE FROM favorites WHERE portfolio_id = ?", [id]);
-  await db.execute("DELETE FROM portfolios WHERE id = ?", [id]);
-  // Clean up orphaned stocks not referenced anywhere
-  await db.execute(
-    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
-    [],
-  );
+  return invoke("db_delete_portfolio", { id });
 }
 
 export async function starPortfolio(id: number): Promise<void> {
-  const db = await getDb();
-  await db.execute("UPDATE portfolios SET is_starred = 0", []);
-  await db.execute("UPDATE portfolios SET is_starred = 1 WHERE id = ?", [id]);
+  return invoke("db_star_portfolio", { id });
 }
 
 export async function reorderPortfolios(ids: number[]): Promise<void> {
-  const db = await getDb();
-  for (let i = 0; i < ids.length; i++) {
-    await db.execute("UPDATE portfolios SET sort_order = ? WHERE id = ?", [
-      i,
-      ids[i],
-    ]);
-  }
+  return invoke("db_reorder_portfolios", { ids });
 }
 
 // ── Purchases ──────────────────────────────────────────────────────────────
 
 export async function listPurchases(portfolioId: number): Promise<Purchase[]> {
-  const db = await getDb();
-  return db.select<Purchase[]>(
-    "SELECT id, ticker, shares, price_per_share, purchased_at, created_at, portfolio_id FROM purchases WHERE portfolio_id = ? ORDER BY purchased_at DESC, created_at DESC",
-    [portfolioId],
-  );
+  return invoke<Purchase[]>("db_list_purchases", { portfolioId });
 }
 
 export async function addPurchase(
@@ -108,14 +65,13 @@ export async function addPurchase(
   pricePerShare: number,
   purchasedAt: string,
 ): Promise<void> {
-  const db = await getDb();
-  const now = Math.floor(Date.now() / 1000);
-  const t = ticker.toUpperCase();
-  await db.execute(
-    "INSERT INTO purchases (portfolio_id, ticker, shares, price_per_share, purchased_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-    [portfolioId, t, shares, pricePerShare, purchasedAt, now],
-  );
-  await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
+  return invoke("db_add_purchase", {
+    portfolioId,
+    ticker,
+    shares,
+    pricePerShare,
+    purchasedAt,
+  });
 }
 
 export async function updatePurchase(
@@ -125,62 +81,44 @@ export async function updatePurchase(
   pricePerShare: number,
   purchasedAt: string,
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    "UPDATE purchases SET ticker = ?, shares = ?, price_per_share = ?, purchased_at = ? WHERE id = ?",
-    [ticker.toUpperCase(), shares, pricePerShare, purchasedAt, id],
-  );
+  return invoke("db_update_purchase", {
+    id,
+    ticker,
+    shares,
+    pricePerShare,
+    purchasedAt,
+  });
 }
 
 export async function deletePurchase(id: number): Promise<void> {
-  const db = await getDb();
-  await db.execute("DELETE FROM purchases WHERE id = ?", [id]);
+  return invoke("db_delete_purchase", { id });
 }
 
 export async function hintStockQuoteType(
   ticker: string,
   quoteType: string,
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    "UPDATE stocks SET quote_type = ? WHERE ticker = ? AND quote_type IS NULL",
-    [quoteType, ticker],
-  );
+  return invoke("db_hint_stock_quote_type", { ticker, quoteType });
 }
 
 export async function clearAllPurchases(): Promise<void> {
-  const db = await getDb();
-  await db.execute("DELETE FROM purchases", []);
-  await db.execute("DELETE FROM favorites", []);
-  await db.execute(
-    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist)",
-    [],
-  );
+  return invoke("db_clear_all_purchases");
 }
 
 export async function clearPortfolioPurchases(id: number): Promise<void> {
-  const db = await getDb();
-  await db.execute("DELETE FROM purchases WHERE portfolio_id = ?", [id]);
-  await db.execute("DELETE FROM favorites WHERE portfolio_id = ?", [id]);
-  await db.execute(
-    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
-    [],
-  );
+  return invoke("db_clear_portfolio_purchases", { portfolioId: id });
 }
 
 // ── Stocks / Prices ────────────────────────────────────────────────────────
 
 export async function getCachedStocks(): Promise<Stock[]> {
-  const db = await getDb();
-  return db.select<Stock[]>(
-    "SELECT ticker, name, last_price, last_fetched_at, quote_type, daily_change_pct, target_mean_price, post_market_price, post_market_change_pct, pre_market_price, pre_market_change_pct, market_state FROM stocks ORDER BY ticker ASC",
-  );
+  return invoke<Stock[]>("db_get_cached_stocks");
 }
 
 export async function upsertStock(
   ticker: string,
   name: string | null,
-  price: number | null,
+  lastPrice: number | null,
   quoteType: string | null = null,
   dailyChangePct: number | null = null,
   targetMeanPrice: number | null = null,
@@ -190,39 +128,19 @@ export async function upsertStock(
   preMarketChangePct: number | null = null,
   marketState: string | null = null,
 ): Promise<void> {
-  const db = await getDb();
-  const now = Math.floor(Date.now() / 1000);
-  await db.execute(
-    `INSERT INTO stocks (ticker, name, last_price, last_fetched_at, quote_type, daily_change_pct, target_mean_price,
-                    post_market_price, post_market_change_pct, pre_market_price, pre_market_change_pct, market_state)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(ticker) DO UPDATE SET
-       name = excluded.name,
-       last_price = excluded.last_price,
-       last_fetched_at = excluded.last_fetched_at,
-       quote_type = COALESCE(excluded.quote_type, stocks.quote_type),
-       daily_change_pct = excluded.daily_change_pct,
-       target_mean_price = excluded.target_mean_price,
-       post_market_price = excluded.post_market_price,
-       post_market_change_pct = excluded.post_market_change_pct,
-       pre_market_price = excluded.pre_market_price,
-       pre_market_change_pct = excluded.pre_market_change_pct,
-       market_state = excluded.market_state`,
-    [
-      ticker,
-      name,
-      price,
-      now,
-      quoteType,
-      dailyChangePct,
-      targetMeanPrice,
-      postMarketPrice,
-      postMarketChangePct,
-      preMarketPrice,
-      preMarketChangePct,
-      marketState,
-    ],
-  );
+  return invoke("db_upsert_stock", {
+    ticker,
+    name,
+    lastPrice,
+    quoteType,
+    dailyChangePct,
+    targetMeanPrice,
+    postMarketPrice,
+    postMarketChangePct,
+    preMarketPrice,
+    preMarketChangePct,
+    marketState,
+  });
 }
 
 export async function fetchAndCachePrices(
@@ -253,43 +171,19 @@ export async function fetchAndCachePrices(
 // ── Watchlists ────────────────────────────────────────────────────────────
 
 export async function listWatchlists(): Promise<Watchlist[]> {
-  const db = await getDb();
-  return db.select<Watchlist[]>(
-    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC, id ASC",
-  );
+  return invoke<Watchlist[]>("db_list_watchlists");
 }
 
 export async function createWatchlist(name: string): Promise<number> {
-  const db = await getDb();
-  const now = Math.floor(Date.now() / 1000);
-  const rows = await db.select<{ max_order: number | null }[]>(
-    "SELECT MAX(sort_order) as max_order FROM watchlists",
-  );
-  const nextOrder = (rows[0]?.max_order ?? -1) + 1;
-  await db.execute(
-    "INSERT INTO watchlists (name, sort_order, created_at) VALUES (?, ?, ?)",
-    [name, nextOrder, now],
-  );
-  const result = await db.select<{ id: number }[]>(
-    "SELECT id FROM watchlists WHERE created_at = ? AND name = ? ORDER BY id DESC LIMIT 1",
-    [now, name],
-  );
-  return result[0].id;
+  return invoke<number>("db_create_watchlist", { name });
 }
 
 export async function renameWatchlist(id: number, name: string): Promise<void> {
-  const db = await getDb();
-  await db.execute("UPDATE watchlists SET name = ? WHERE id = ?", [name, id]);
+  return invoke("db_rename_watchlist", { id, name });
 }
 
 export async function deleteWatchlist(id: number): Promise<void> {
-  const db = await getDb();
-  await db.execute("DELETE FROM watchlist WHERE watchlist_id = ?", [id]);
-  await db.execute("DELETE FROM watchlists WHERE id = ?", [id]);
-  await db.execute(
-    "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) AND ticker NOT IN (SELECT ticker FROM watchlist)",
-    [],
-  );
+  return invoke("db_delete_watchlist", { id });
 }
 
 // ── Watchlist items ────────────────────────────────────────────────────────
@@ -297,11 +191,7 @@ export async function deleteWatchlist(id: number): Promise<void> {
 export async function listWatchlist(
   watchlistId: number,
 ): Promise<WatchlistItem[]> {
-  const db = await getDb();
-  return db.select<WatchlistItem[]>(
-    "SELECT id, ticker, watch_price, created_at FROM watchlist WHERE watchlist_id = ? ORDER BY created_at DESC",
-    [watchlistId],
-  );
+  return invoke<WatchlistItem[]>("db_list_watchlist_items", { watchlistId });
 }
 
 export async function addToWatchlist(
@@ -309,33 +199,28 @@ export async function addToWatchlist(
   watchlistId: number,
   watchPrice: number | null = null,
 ): Promise<void> {
-  const db = await getDb();
-  const now = Math.floor(Date.now() / 1000);
-  const t = ticker.toUpperCase();
-  await db.execute(
-    "INSERT OR IGNORE INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?)",
-    [t, watchPrice, now, watchlistId],
-  );
-  await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [t]);
+  return invoke("db_add_to_watchlist", { ticker, watchlistId, watchPrice });
 }
 
 export async function removeFromWatchlist(id: number): Promise<void> {
-  const db = await getDb();
-  await db.execute("DELETE FROM watchlist WHERE id = ?", [id]);
+  return invoke("db_remove_from_watchlist", { id });
 }
 
 export async function setWatchlistWatchPrice(
   id: number,
   watchPrice: number,
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    "UPDATE watchlist SET watch_price = ? WHERE id = ? AND (watch_price IS NULL OR watch_price <= 0)",
-    [watchPrice, id],
-  );
+  return invoke("db_set_watch_price", { id, watchPrice });
 }
-
 // ── Watchlist backup (all watchlists) ─────────────────────────────────────
+
+interface WatchlistItemFull {
+  id: number;
+  ticker: string;
+  watch_price: number | null;
+  created_at: number;
+  watchlist_id: number;
+}
 
 interface WatchlistBackupEntry {
   name: string;
@@ -361,14 +246,9 @@ function readLocalJson<T>(key: string, fallback: T): T {
 }
 
 export async function exportAllWatchlistsBackup(): Promise<boolean> {
-  const db = await getDb();
-  const watchlists = await db.select<Watchlist[]>(
-    "SELECT id, name, sort_order, created_at FROM watchlists ORDER BY sort_order ASC",
-  );
-  const allItems = await db.select<
-    (WatchlistItem & { watchlist_id: number })[]
-  >(
-    "SELECT id, ticker, watch_price, created_at, watchlist_id FROM watchlist ORDER BY created_at DESC",
+  const watchlists = await listWatchlists();
+  const allItems = await invoke<WatchlistItemFull[]>(
+    "db_list_all_watchlist_items",
   );
 
   const entries: WatchlistBackupEntry[] = watchlists.map((wl) => ({
@@ -427,53 +307,26 @@ export async function importAllWatchlistsBackup(): Promise<{
     throw new Error("Invalid backup file: missing watchlists array.");
   }
 
-  const db = await getDb();
-  const now = Math.floor(Date.now() / 1000);
   let watchlistsImported = 0;
   let tickersImported = 0;
 
   for (const entry of backup.watchlists) {
     // Find or create the watchlist by name
-    const existing = await db.select<{ id: number }[]>(
-      "SELECT id FROM watchlists WHERE name = ? LIMIT 1",
-      [entry.name],
+    const existing = (await listWatchlists()).find(
+      (w) => w.name === entry.name,
     );
     let watchlistId: number;
-    if (existing.length > 0) {
-      watchlistId = existing[0].id;
+    if (existing) {
+      watchlistId = existing.id;
     } else {
-      const rows = await db.select<{ max_order: number | null }[]>(
-        "SELECT MAX(sort_order) as max_order FROM watchlists",
-      );
-      const nextOrder = (rows[0]?.max_order ?? -1) + 1;
-      await db.execute(
-        "INSERT INTO watchlists (name, sort_order, created_at) VALUES (?, ?, ?)",
-        [entry.name, entry.sort_order ?? nextOrder, now],
-      );
-      const created = await db.select<{ id: number }[]>(
-        "SELECT id FROM watchlists WHERE name = ? ORDER BY id DESC LIMIT 1",
-        [entry.name],
-      );
-      watchlistId = created[0].id;
+      watchlistId = await createWatchlist(entry.name);
       watchlistsImported++;
     }
 
-    // Import items — UPSERT so existing tickers have their data updated from the backup
     for (const item of entry.items ?? []) {
       if (!item.ticker) continue;
-      const result = await db.execute(
-        "INSERT INTO watchlist (ticker, watch_price, created_at, watchlist_id) VALUES (?, ?, ?, ?) ON CONFLICT(ticker) DO UPDATE SET watch_price = excluded.watch_price, watchlist_id = excluded.watchlist_id",
-        [
-          item.ticker.toUpperCase(),
-          item.watch_price ?? null,
-          item.created_at ?? now,
-          watchlistId,
-        ],
-      );
-      await db.execute("INSERT OR IGNORE INTO stocks (ticker) VALUES (?)", [
-        item.ticker.toUpperCase(),
-      ]);
-      if (result.rowsAffected > 0) tickersImported++;
+      await addToWatchlist(item.ticker, watchlistId, item.watch_price ?? null);
+      tickersImported++;
     }
 
     // Merge targets (existing values win)
@@ -498,52 +351,28 @@ export async function importAllWatchlistsBackup(): Promise<{
 // ── Favorites ─────────────────────────────────────────────────────────────
 
 export async function listFavorites(portfolioId: number): Promise<Favorite[]> {
-  const db = await getDb();
-  return db.select<Favorite[]>(
-    "SELECT id, ticker, sort_order, portfolio_id FROM favorites WHERE portfolio_id = ? ORDER BY sort_order ASC",
-    [portfolioId],
-  );
+  return invoke<Favorite[]>("db_list_favorites", { portfolioId });
 }
 
 export async function addFavorite(
   ticker: string,
   portfolioId: number,
 ): Promise<void> {
-  const db = await getDb();
-  const t = ticker.toUpperCase();
-  const rows = await db.select<{ max_order: number | null }[]>(
-    "SELECT MAX(sort_order) as max_order FROM favorites WHERE portfolio_id = ?",
-    [portfolioId],
-  );
-  const nextOrder = (rows[0]?.max_order ?? -1) + 1;
-  await db.execute(
-    "INSERT OR IGNORE INTO favorites (ticker, sort_order, portfolio_id) VALUES (?, ?, ?)",
-    [t, nextOrder, portfolioId],
-  );
+  return invoke("db_add_favorite", { ticker, portfolioId });
 }
 
 export async function removeFavorite(
   ticker: string,
   portfolioId: number,
 ): Promise<void> {
-  const db = await getDb();
-  await db.execute(
-    "DELETE FROM favorites WHERE ticker = ? AND portfolio_id = ?",
-    [ticker.toUpperCase(), portfolioId],
-  );
+  return invoke("db_remove_favorite", { ticker, portfolioId });
 }
 
 export async function reorderFavorites(
   tickers: string[],
   portfolioId: number,
 ): Promise<void> {
-  const db = await getDb();
-  for (let i = 0; i < tickers.length; i++) {
-    await db.execute(
-      "UPDATE favorites SET sort_order = ? WHERE ticker = ? AND portfolio_id = ?",
-      [i, tickers[i].toUpperCase(), portfolioId],
-    );
-  }
+  return invoke("db_reorder_favorites", { tickers, portfolioId });
 }
 
 // ── Ticker Search ─────────────────────────────────────────────────────────

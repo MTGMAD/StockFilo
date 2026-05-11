@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
-import type { View } from "./types";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { View, AppConfig, SyncResult, SyncStatus } from "./types";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
 import { PortfolioView } from "./components/portfolio/PortfolioView";
@@ -28,6 +29,73 @@ export default function App() {
   const { investorMode, setInvestorMode } = useInvestorMode();
   const { linkOpenMode, setLinkOpenMode } = useLinkOpenMode();
   const { showInfoTooltips, setShowInfoTooltips } = useInfoTooltips();
+
+  // ── Sync state ────────────────────────────────────────────────────────────
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
+  const [syncTick, setSyncTick] = useState(0);
+  const [configVersion, setConfigVersion] = useState(0);
+  const [hasSyncTargets, setHasSyncTargets] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const runAutoSync = useCallback(async () => {
+    let config: AppConfig;
+    try {
+      config = await invoke<AppConfig>("get_config");
+    } catch {
+      return;
+    }
+    if (!config.sync_targets || config.sync_targets.length === 0) return;
+
+    setSyncStatus("syncing");
+    let anyFailed = false;
+    for (const target of config.sync_targets) {
+      try {
+        const result = await invoke<SyncResult>("sync_now", {
+          targetId: target.id,
+        });
+        if (!result.success) anyFailed = true;
+      } catch {
+        anyFailed = true;
+      }
+    }
+    setSyncStatus(anyFailed ? "error" : "success");
+    const now = new Date();
+    setLastSyncedAt(now);
+    // Notify StorageSettings to refresh its config so last_synced_at updates
+    setSyncTick((n) => n + 1);
+    // Reset back to idle after 8 seconds
+    setTimeout(() => setSyncStatus((s) => (s !== "syncing" ? "idle" : s)), 8000);
+  }, []);
+
+  // Re-set up the auto-sync interval whenever the user saves sync config
+  useEffect(() => {
+    async function setupTimer() {
+      let config: AppConfig;
+      try {
+        config = await invoke<AppConfig>("get_config");
+      } catch {
+        return;
+      }
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+      setHasSyncTargets((config.sync_targets?.length ?? 0) > 0);
+      // Seed last-synced time from the most-recent target timestamp on disk
+      const latestTs = config.sync_targets
+        ?.map((t) => t.last_synced_at ?? 0)
+        .reduce((a, b) => Math.max(a, b), 0);
+      if (latestTs > 0) setLastSyncedAt(new Date(latestTs * 1000));
+      const mins = config.auto_sync_minutes;
+      if (mins && mins > 0) {
+        syncTimerRef.current = setInterval(runAutoSync, mins * 60 * 1000);
+      }
+    }
+    setupTimer();
+    return () => {
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+    };
+  // configVersion changes whenever the user saves sync settings, forcing timer restart
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runAutoSync, configVersion]);
 
   const {
     portfolios,
@@ -160,6 +228,10 @@ export default function App() {
           onRefresh={showRefresh ? refresh : undefined}
           refreshing={refreshing}
           lastRefreshedAt={showRefresh ? lastRefreshedAt : undefined}
+          syncStatus={syncStatus}
+          onSyncNow={runAutoSync}
+          hasSyncTargets={hasSyncTargets}
+          lastSyncedAt={lastSyncedAt}
         />
         {error && (
           <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-sm text-red-600">
@@ -249,6 +321,8 @@ export default function App() {
               onLinkOpenModeChange={setLinkOpenMode}
               showInfoTooltips={showInfoTooltips}
               onShowInfoTooltipsChange={setShowInfoTooltips}
+              syncTick={syncTick}
+              onConfigSaved={() => setConfigVersion((v) => v + 1)}
             />
           )}
         </main>

@@ -86,6 +86,7 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            // ── Existing market-data / browser commands ────────────────────
             commands::stocks::fetch_quotes_command,
             commands::stocks::fetch_chart_command,
             commands::stocks::search_tickers_command,
@@ -94,8 +95,57 @@ pub fn run() {
             commands::stocks::fetch_comparison_stats_command,
             commands::browser::open_browser_window,
             commands::browser::open_earnings_call_in_calendar,
+            // ── Portfolio DB commands ──────────────────────────────────────
+            commands::db_portfolios::db_list_portfolios,
+            commands::db_portfolios::db_create_portfolio,
+            commands::db_portfolios::db_rename_portfolio,
+            commands::db_portfolios::db_delete_portfolio,
+            commands::db_portfolios::db_star_portfolio,
+            commands::db_portfolios::db_reorder_portfolios,
+            // ── Purchases DB commands ──────────────────────────────────────
+            commands::db_purchases::db_list_purchases,
+            commands::db_purchases::db_add_purchase,
+            commands::db_purchases::db_update_purchase,
+            commands::db_purchases::db_delete_purchase,
+            commands::db_purchases::db_hint_stock_quote_type,
+            commands::db_purchases::db_clear_all_purchases,
+            commands::db_purchases::db_clear_portfolio_purchases,
+            // ── Stocks DB commands ─────────────────────────────────────────
+            commands::db_stocks::db_get_cached_stocks,
+            commands::db_stocks::db_upsert_stock,
+            // ── Watchlist DB commands ──────────────────────────────────────
+            commands::db_watchlists::db_list_watchlists,
+            commands::db_watchlists::db_create_watchlist,
+            commands::db_watchlists::db_rename_watchlist,
+            commands::db_watchlists::db_delete_watchlist,
+            commands::db_watchlists::db_list_watchlist_items,
+            commands::db_watchlists::db_list_all_watchlist_items,
+            commands::db_watchlists::db_add_to_watchlist,
+            commands::db_watchlists::db_remove_from_watchlist,
+            commands::db_watchlists::db_set_watch_price,
+            commands::db_watchlists::db_list_favorites,
+            commands::db_watchlists::db_add_favorite,
+            commands::db_watchlists::db_remove_favorite,
+            commands::db_watchlists::db_reorder_favorites,
+            // ── Config / Sync commands ─────────────────────────────────────
+            commands::config::get_config,
+            commands::config::save_config,
+            commands::config::move_database,
+            commands::sync::sync_now,
+            commands::sync::test_sync_connection,
+            commands::sync::encrypt_sync_password,
         ])
         .setup(|app| {
+            // Load config and resolve DB path
+            let cfg = commands::config::load_config(app.handle());
+            let db_path = commands::config::resolve_db_path(app.handle(), &cfg)
+                .expect("Failed to resolve database path");
+
+            // Open rusqlite connection (runs V12 migration)
+            let db_manager = db::manager::DbManager::open(&db_path)
+                .expect("Failed to open database");
+            app.manage(db_manager);
+
             #[cfg(debug_assertions)]
             {
                 let window = app.get_webview_window("main").unwrap();
