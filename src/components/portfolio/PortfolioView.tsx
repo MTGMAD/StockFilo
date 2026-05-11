@@ -24,7 +24,9 @@ import {
   Download,
   Upload,
   Landmark,
+  Trophy,
 } from "lucide-react";
+import { PortfolioRankView } from "./PortfolioRankView";
 import { MountainChart } from "../analysis/MountainChart";
 import { TickerNews } from "../analysis/TickerNews";
 import { PurchasesTable } from "./PurchasesTable";
@@ -42,7 +44,7 @@ import {
   clearPortfolioPurchases,
 } from "../../lib/db";
 
-type PortfolioTab = "analysis" | "purchases" | "settings";
+type PortfolioTab = "analysis" | "performance" | "purchases" | "settings";
 
 interface PortfolioViewProps {
   portfolioId: number | null;
@@ -452,6 +454,19 @@ export function PortfolioView({
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("performance")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+              activeTab === "performance"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Trophy className="w-4 h-4" />
+            Performance
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("purchases")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
@@ -479,7 +494,22 @@ export function PortfolioView({
         </div>
 
         {/* Tab content */}
-        {activeTab === "settings" ? (
+        {activeTab === "performance" ? (
+          isEmpty ? (
+            <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">
+              <p className="text-sm">No purchases yet.</p>
+              <button
+                type="button"
+                onClick={() => setActiveTab("purchases")}
+                className="btn-primary text-sm"
+              >
+                Go to Purchases tab
+              </button>
+            </div>
+          ) : (
+            <PortfolioRankView summaries={summaries} />
+          )
+        ) : activeTab === "settings" ? (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-lg flex flex-col gap-8">
               {/* Portfolio info */}
