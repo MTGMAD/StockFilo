@@ -75,6 +75,12 @@ pub fn run() {
                             sql: db::migrations::MIGRATION_V10,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
+                        tauri_plugin_sql::Migration {
+                            version: 11,
+                            description: "fix_watchlist_unique_constraint",
+                            sql: db::migrations::MIGRATION_V11,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
                     ],
                 )
                 .build(),

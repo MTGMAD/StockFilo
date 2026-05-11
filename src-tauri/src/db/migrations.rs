@@ -102,3 +102,21 @@ ALTER TABLE stocks ADD COLUMN pre_market_price REAL;
 ALTER TABLE stocks ADD COLUMN pre_market_change_pct REAL;
 ALTER TABLE stocks ADD COLUMN market_state TEXT;
 "#;
+
+pub const MIGRATION_V11: &str = r#"
+CREATE TABLE watchlist_new (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker       TEXT NOT NULL,
+    watch_price  REAL,
+    created_at   INTEGER NOT NULL,
+    watchlist_id INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(ticker, watchlist_id)
+);
+
+INSERT OR IGNORE INTO watchlist_new (id, ticker, watch_price, created_at, watchlist_id)
+    SELECT id, ticker, watch_price, created_at, watchlist_id FROM watchlist;
+
+DROP TABLE watchlist;
+
+ALTER TABLE watchlist_new RENAME TO watchlist;
+"#;
