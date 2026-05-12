@@ -15,6 +15,7 @@ type SortBy = "pnlPct" | "pnlDollar" | "dailyPct" | "invested";
 
 interface PortfolioRankViewProps {
   summaries: TickerSummary[];
+  onSelectTicker?: (ticker: string) => void;
 }
 
 function isMutualFund(qt: string | null): boolean {
@@ -27,7 +28,7 @@ function isMutualFund(qt: string | null): boolean {
   );
 }
 
-export function PortfolioRankView({ summaries }: PortfolioRankViewProps) {
+export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankViewProps) {
   const [activeType, setActiveType] = useState<AssetType>("stocks");
   const [sortBy, setSortBy] = useState<SortBy>("pnlPct");
 
@@ -234,6 +235,7 @@ export function PortfolioRankView({ summaries }: PortfolioRankViewProps) {
                 summary={s}
                 barWidth={barWidth(s)}
                 sortBy={sortBy}
+                onSelect={onSelectTicker}
               />
             ))}
           </div>
@@ -273,11 +275,13 @@ function RankedRow({
   summary: s,
   barWidth,
   sortBy,
+  onSelect,
 }: {
   rank: number;
   summary: TickerSummary;
   barWidth: number;
   sortBy: SortBy;
+  onSelect?: (ticker: string) => void;
 }) {
   const hasPrice = s.currentPrice != null;
   const isGain = (s.pnlDollar ?? 0) > 0;
@@ -293,7 +297,14 @@ function RankedRow({
         : "bg-muted text-muted-foreground";
 
   return (
-    <div className="px-5 py-3.5 hover:bg-muted/30 transition-colors">
+    <div
+      className={cn(
+        "px-5 py-3.5 hover:bg-muted/30 transition-colors",
+        onSelect && "cursor-pointer",
+      )}
+      onClick={() => onSelect?.(s.ticker)}
+      title={onSelect ? `Open ${s.ticker} in Analysis` : undefined}
+    >
       <div className="flex items-start gap-3">
         {/* Rank badge */}
         <div

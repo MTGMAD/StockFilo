@@ -91,6 +91,12 @@ export function PortfolioView({
     setActiveTab("analysis");
   }, [portfolioId]);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+
+  function selectTicker(ticker: string) {
+    setSelectedTicker(ticker);
+    setActiveTab("analysis");
+  }
+
   const {
     favoriteTickers,
     loaded: favoritesLoaded,
@@ -378,7 +384,7 @@ export function PortfolioView({
                 isFav
                 favIdx={favIdx}
                 favCount={favoriteTickers.length}
-                onSelect={setSelectedTicker}
+                onSelect={selectTicker}
                 onToggleFav={toggle}
                 onMoveFav={moveFavorite}
               />
@@ -394,7 +400,7 @@ export function PortfolioView({
                 isFav={false}
                 favIdx={-1}
                 favCount={0}
-                onSelect={setSelectedTicker}
+                onSelect={selectTicker}
                 onToggleFav={toggle}
                 onMoveFav={moveFavorite}
               />
@@ -410,7 +416,7 @@ export function PortfolioView({
                 isFav={false}
                 favIdx={-1}
                 favCount={0}
-                onSelect={setSelectedTicker}
+                onSelect={selectTicker}
                 onToggleFav={toggle}
                 onMoveFav={moveFavorite}
               />
@@ -426,7 +432,7 @@ export function PortfolioView({
                 isFav={false}
                 favIdx={-1}
                 favCount={0}
-                onSelect={setSelectedTicker}
+                onSelect={selectTicker}
                 onToggleFav={toggle}
                 onMoveFav={moveFavorite}
               />
@@ -507,7 +513,13 @@ export function PortfolioView({
               </button>
             </div>
           ) : (
-            <PortfolioRankView summaries={summaries} />
+            <PortfolioRankView
+              summaries={summaries}
+              onSelectTicker={(ticker) => {
+                setSelectedTicker(ticker);
+                setActiveTab("analysis");
+              }}
+            />
           )
         ) : activeTab === "settings" ? (
           <div className="flex-1 overflow-y-auto p-6">
