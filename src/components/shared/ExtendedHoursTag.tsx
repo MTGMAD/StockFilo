@@ -40,7 +40,7 @@ export function ExtendedHoursTag({ stock }: ExtendedHoursTagProps) {
   }
 
   return (
-    <div className="flex items-center gap-1 text-xs">
+    <div className="flex items-baseline gap-1 text-base">
       <span className="text-muted-foreground">{label}:</span>
       <span>{formatCurrency(price)}</span>
       {changePct != null && (
