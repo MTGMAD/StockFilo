@@ -1237,9 +1237,18 @@ export function WatchList({
                     "ring-2 ring-purple-500",
                   ];
                   return (
-                    <div key={ticker} className={cn("rounded-full overflow-hidden", CHIP_COLORS[idx])}>
-                      <TickerLogo ticker={ticker} size="sm" />
-                    </div>
+                    <Tooltip key={ticker} text={`Remove ${ticker}`} side="top">
+                      <button
+                        type="button"
+                        onClick={() => toggleCompareStock(ticker)}
+                        className={cn("relative group rounded-full overflow-hidden cursor-pointer", CHIP_COLORS[idx])}
+                      >
+                        <TickerLogo ticker={ticker} size="sm" />
+                        <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <X className="w-3 h-3 text-white" />
+                        </span>
+                      </button>
+                    </Tooltip>
                   );
                 })}
               </div>

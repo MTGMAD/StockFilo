@@ -23,10 +23,17 @@ export function ExtendedHoursTag({ stock }: ExtendedHoursTagProps) {
   let price: number;
   let changePct: number | null | undefined;
 
+  // Only show extended-hours data outside of regular market hours
+  if (market_state === "REGULAR") return null;
+
   if (market_state === "PRE" && pre_market_price != null) {
     label = "Pre";
     price = pre_market_price;
     changePct = pre_market_change_pct;
+  } else if (market_state === "POST" && post_market_price != null) {
+    label = "Post";
+    price = post_market_price;
+    changePct = post_market_change_pct;
   } else if (post_market_price != null) {
     label = "Post";
     price = post_market_price;
@@ -40,8 +47,8 @@ export function ExtendedHoursTag({ stock }: ExtendedHoursTagProps) {
   }
 
   return (
-    <div className="flex items-baseline gap-1 text-base">
-      <span className="text-muted-foreground">{label}:</span>
+    <div className="flex items-baseline gap-1 text-xs text-muted-foreground">
+      <span>{label}:</span>
       <span>{formatCurrency(price)}</span>
       {changePct != null && (
         <span className={pnlColor(changePct)}>{formatPercent(changePct)}</span>
