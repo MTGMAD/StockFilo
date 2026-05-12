@@ -51,6 +51,11 @@ export interface TickerSummary {
   lastFetchedAt: number | null;
   quoteType: string | null;
   dailyChangePct: number | null;
+  market_state: string | null;
+  pre_market_price: number | null;
+  pre_market_change_pct: number | null;
+  post_market_price: number | null;
+  post_market_change_pct: number | null;
 }
 
 export interface WatchlistItem {

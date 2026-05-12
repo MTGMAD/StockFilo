@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import type React from "react";
 import type { TickerSummary, Purchase, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
 import { ExternalLink, Star, ChevronUp, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, CalendarDays } from "lucide-react";
 import { MountainChart } from "./MountainChart";
 import { TickerNews } from "./TickerNews";
+import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useFavorites } from "../../hooks/useFavorites";
 import { openUrl } from "../../lib/openUrl";
 import { addEarningsCallToCalendar, fetchUpcomingEarnings } from "../../lib/db";
@@ -246,6 +248,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
             <StatCard
               label="Current Price"
               value={summary.currentPrice != null ? formatCurrency(summary.currentPrice) : "—"}
+              sub={<ExtendedHoursTag stock={summary} />}
             />
             <StatCard
               label="Market Value"
@@ -302,15 +305,20 @@ function StatCard({
   label,
   value,
   valueClass,
+  sub,
 }: {
   label: string;
   value: string;
   valueClass?: string;
+  sub?: React.ReactNode;
 }) {
   return (
     <div className="bg-muted/30 border border-border rounded-lg px-4 py-3">
       <div className="text-xs text-muted-foreground mb-1">{label}</div>
-      <div className={cn("text-base font-semibold text-foreground", valueClass)}>{value}</div>
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className={cn("text-base font-semibold text-foreground", valueClass)}>{value}</span>
+        {sub}
+      </div>
     </div>
   );
 }

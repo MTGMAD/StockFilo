@@ -164,6 +164,11 @@ export function usePortfolio(portfolioId: number | null) {
         lastFetchedAt,
         quoteType: stock?.quote_type ?? null,
         dailyChangePct: stock?.daily_change_pct ?? null,
+        market_state: stock?.market_state ?? null,
+        pre_market_price: stock?.pre_market_price ?? null,
+        pre_market_change_pct: stock?.pre_market_change_pct ?? null,
+        post_market_price: stock?.post_market_price ?? null,
+        post_market_change_pct: stock?.post_market_change_pct ?? null,
       };
     }
   );

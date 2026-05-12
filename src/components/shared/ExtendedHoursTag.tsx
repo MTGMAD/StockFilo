@@ -1,22 +1,43 @@
-import type { Stock } from "../../types";
 import { formatCurrency, formatPercent, pnlColor } from "../../lib/utils";
 
+type ExtendedHoursData = {
+  market_state: string | null;
+  pre_market_price: number | null;
+  pre_market_change_pct: number | null;
+  post_market_price: number | null;
+  post_market_change_pct: number | null;
+};
+
 interface ExtendedHoursTagProps {
-  stock?: Stock;
+  stock?: ExtendedHoursData;
 }
 
 export function ExtendedHoursTag({ stock }: ExtendedHoursTagProps) {
   if (!stock) return null;
   const { market_state, pre_market_price, pre_market_change_pct, post_market_price, post_market_change_pct } = stock;
 
-  const isPre = market_state === "PRE" && pre_market_price != null;
-  const isPost = market_state === "POST" && post_market_price != null;
+  // During PRE hours show pre-market; during POST or any other state prefer
+  // post-market if available, then fall back to pre-market so the last known
+  // extended-hours price is always visible.
+  let label: string;
+  let price: number;
+  let changePct: number | null | undefined;
 
-  if (!isPre && !isPost) return null;
-
-  const label = isPre ? "Pre" : "Post";
-  const price = isPre ? pre_market_price! : post_market_price!;
-  const changePct = isPre ? pre_market_change_pct : post_market_change_pct;
+  if (market_state === "PRE" && pre_market_price != null) {
+    label = "Pre";
+    price = pre_market_price;
+    changePct = pre_market_change_pct;
+  } else if (post_market_price != null) {
+    label = "Post";
+    price = post_market_price;
+    changePct = post_market_change_pct;
+  } else if (pre_market_price != null) {
+    label = "Pre";
+    price = pre_market_price;
+    changePct = pre_market_change_pct;
+  } else {
+    return null;
+  }
 
   return (
     <div className="flex items-center gap-1 text-xs">
