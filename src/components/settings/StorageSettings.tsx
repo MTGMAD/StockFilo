@@ -262,6 +262,9 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
   const [showAddForm, setShowAddForm] = useState(false);
   const [autoSyncVal, setAutoSyncVal] = useState<string>("0");
   const [savingAutoSync, setSavingAutoSync] = useState(false);
+  const [importPrompt, setImportPrompt] = useState<{ targetId: string; label: string } | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   function fetchConfig() {
     invoke<AppConfig>("get_config")
@@ -311,6 +314,11 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
         [targetId]: { ok: result.success, msg: result.message },
       }));
       if (result.success) {
+        if (result.downloaded) {
+          // Remote was newer — reload the whole app so all data refreshes
+          window.location.reload();
+          return;
+        }
         const updated = await invoke<AppConfig>("get_config");
         setConfig(updated);
       }
@@ -361,8 +369,33 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
       setConfig(updated);
       setShowAddForm(false);
       onConfigSaved?.();
+
+      // Check if a remote database already exists at this target
+      try {
+        const exists = await invoke<boolean>("check_remote_db_exists", { targetId: target.id });
+        if (exists) {
+          setImportPrompt({ targetId: target.id, label: target.label });
+          setImportError(null);
+        }
+      } catch {
+        // If check fails, silently skip — the user can sync manually
+      }
     } catch (e) {
       alert(`Failed to save config: ${e}`);
+    }
+  }
+
+  async function handleImportRemoteDb() {
+    if (!importPrompt) return;
+    setImporting(true);
+    setImportError(null);
+    try {
+      await invoke("import_remote_db", { targetId: importPrompt.targetId });
+      // Reload the app so all hooks re-fetch from the imported database
+      window.location.reload();
+    } catch (e) {
+      setImportError(String(e));
+      setImporting(false);
     }
   }
 
@@ -561,6 +594,47 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
               <Plus className="w-4 h-4" />
               Add Sync Target
             </button>
+          )}
+
+          {/* Import prompt — shown after adding a target when a remote DB exists */}
+          {importPrompt && (
+            <div className="rounded-lg border border-primary/40 bg-primary/5 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Database found at "{importPrompt.label}"
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    An existing Stockfolio database was found at this sync location.
+                    Would you like to import it now? This will replace your current local data.
+                  </p>
+                </div>
+              </div>
+              {importError && (
+                <div className="flex items-center gap-2 text-xs text-red-500">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  {importError}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleImportRemoteDb}
+                  disabled={importing}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", importing && "animate-spin")} />
+                  {importing ? "Importing…" : "Import Remote Database"}
+                </button>
+                <button
+                  onClick={() => setImportPrompt(null)}
+                  disabled={importing}
+                  className="px-3 py-1.5 rounded-md border border-border text-sm font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
+                >
+                  Keep Local Data
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </StorageRow>

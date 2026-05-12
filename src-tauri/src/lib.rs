@@ -134,6 +134,8 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::test_sync_connection,
             commands::sync::encrypt_sync_password,
+            commands::sync::check_remote_db_exists,
+            commands::sync::import_remote_db,
         ])
         .setup(|app| {
             // Load config and resolve DB path

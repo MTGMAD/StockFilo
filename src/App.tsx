@@ -49,12 +49,14 @@ export default function App() {
 
     setSyncStatus("syncing");
     let anyFailed = false;
+    let anyDownloaded = false;
     for (const target of config.sync_targets) {
       try {
         const result = await invoke<SyncResult>("sync_now", {
           targetId: target.id,
         });
         if (!result.success) anyFailed = true;
+        if (result.downloaded) anyDownloaded = true;
       } catch {
         anyFailed = true;
       }
@@ -64,6 +66,12 @@ export default function App() {
     setLastSyncedAt(now);
     // Notify StorageSettings to refresh its config so last_synced_at updates
     setSyncTick((n) => n + 1);
+    // If any target downloaded a newer DB, reload the whole app so all hooks
+    // re-fetch from the newly replaced database.
+    if (anyDownloaded) {
+      window.location.reload();
+      return;
+    }
     // Reset back to idle after 8 seconds
     setTimeout(() => setSyncStatus((s) => (s !== "syncing" ? "idle" : s)), 8000);
   }, []);

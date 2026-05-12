@@ -18,7 +18,7 @@ impl DbManager {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| e.to_string())?;
 
-        migrations::run_v12(&conn).map_err(|e| e.to_string())?;
+        migrations::run_all(&conn).map_err(|e| e.to_string())?;
 
         Ok(DbManager {
             conn: Mutex::new(conn),

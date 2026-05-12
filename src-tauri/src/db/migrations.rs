@@ -140,7 +140,59 @@ CREATE TABLE IF NOT EXISTS _sf_config (
 );
 "#;
 
-/// Apply V12 migration (idempotent — safe to call every startup).
-pub fn run_v12(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(MIGRATION_V12)
+/// Apply all migrations in order, using PRAGMA user_version to track progress.
+/// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
+/// database), we read the max version from it and skip those migrations.
+pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let migrations: &[(i64, &str)] = &[
+        (1, MIGRATION_V1),
+        (2, MIGRATION_V2),
+        (3, MIGRATION_V3),
+        (4, MIGRATION_V4),
+        (5, MIGRATION_V5),
+        (6, MIGRATION_V6),
+        (7, MIGRATION_V7),
+        (8, MIGRATION_V8),
+        (9, MIGRATION_V9),
+        (10, MIGRATION_V10),
+        (11, MIGRATION_V11),
+        (12, MIGRATION_V12),
+    ];
+
+    let user_version: i64 =
+        conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+
+    // If user_version is 0, check for an old tauri-plugin-sql database so we
+    // don't re-run migrations that already applied.
+    let applied_up_to: i64 = if user_version == 0 {
+        let has_sqlx: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+            > 0;
+        if has_sqlx {
+            conn.query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+        } else {
+            0
+        }
+    } else {
+        user_version
+    };
+
+    for &(version, sql) in migrations {
+        if version > applied_up_to {
+            conn.execute_batch(sql)?;
+            conn.pragma_update(None, "user_version", &version)?;
+        }
+    }
+
+    Ok(())
 }

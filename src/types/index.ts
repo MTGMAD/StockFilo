@@ -184,6 +184,7 @@ export interface SyncResult {
   success: boolean;
   message: string;
   synced_at: number;
+  downloaded: boolean;
 }
 
 export type SyncStatus = "idle" | "syncing" | "success" | "error";

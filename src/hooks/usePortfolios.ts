@@ -14,9 +14,14 @@ export function usePortfolios() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    const p = await listPortfolios();
-    setPortfolios(p);
-    setLoading(false);
+    try {
+      const p = await listPortfolios();
+      setPortfolios(p);
+    } catch (e) {
+      console.error("Failed to load portfolios:", e);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {

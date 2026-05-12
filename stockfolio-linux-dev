@@ -9,4 +9,5 @@ export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export WEBKIT_DISABLE_GPU_PROCTYPES=1
 export LIBGL_ALWAYS_INDIRECT=1
 cd "$script_dir"
+rm -rf node_modules/.vite
 npm run tauri dev
