@@ -131,6 +131,10 @@ struct ComparisonFinancialData {
     profit_margins: Option<Value>,
     #[serde(rename = "revenueGrowth")]
     revenue_growth: Option<Value>,
+    #[serde(rename = "recommendationKey")]
+    recommendation_key: Option<Value>,
+    #[serde(rename = "numberOfAnalystOpinions")]
+    number_of_analyst_opinions: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -523,6 +527,19 @@ pub async fn fetch_comparison_stats(
                 entry.operating_margins = fd.operating_margins.as_ref().and_then(value_to_f64);
                 entry.profit_margins = fd.profit_margins.as_ref().and_then(value_to_f64);
                 entry.revenue_growth = fd.revenue_growth.as_ref().and_then(value_to_f64);
+                // Use financialData as the authoritative source for analyst data;
+                // the v7 quote endpoint doesn't always populate these fields.
+                if let Some(rec) = fd.recommendation_key.as_ref() {
+                    if let Value::String(s) = rec {
+                        if !s.is_empty() {
+                            entry.recommendation_key = Some(s.clone());
+                        }
+                    }
+                }
+                if entry.number_of_analyst_opinions.is_none() {
+                    entry.number_of_analyst_opinions =
+                        fd.number_of_analyst_opinions.as_ref().and_then(value_to_i64);
+                }
             }
         }
         sleep(Duration::from_millis(150)).await;

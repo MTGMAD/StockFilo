@@ -10,6 +10,7 @@ import {
   Target, BarChart2, Info, CalendarDays,
 } from "lucide-react";
 import { openUrl } from "../../lib/openUrl";
+import { invoke } from "@tauri-apps/api/core";
 
 interface StockDetailModalProps {
   ticker: string;
@@ -31,6 +32,9 @@ export function StockDetailModal({
   const [earningsAt, setEarningsAt] = useState<number | null>(null);
   const [addingToCalendar, setAddingToCalendar] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [analystRec, setAnalystRec] = useState<
+    { key: string | null; count: number | null } | undefined
+  >(undefined);
 
   // Close on Escape
   useEffect(() => {
@@ -40,6 +44,28 @@ export function StockDetailModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Fetch analyst recommendation for this ticker
+  useEffect(() => {
+    let cancelled = false;
+    invoke<Array<{ ticker: string; recommendation_key: string | null; number_of_analyst_opinions: number | null }>>(
+      "fetch_comparison_stats_command",
+      { tickers: [ticker] },
+    )
+      .then((results) => {
+        if (cancelled) return;
+        const s = results.find((r) => r.ticker === ticker);
+        setAnalystRec(
+          s
+            ? { key: s.recommendation_key, count: s.number_of_analyst_opinions }
+            : { key: null, count: null },
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAnalystRec({ key: null, count: null });
+      });
+    return () => { cancelled = true; };
+  }, [ticker]);
 
   // Fetch upcoming earnings for this ticker
   useEffect(() => {
@@ -239,10 +265,9 @@ export function StockDetailModal({
 
           {/* Investor primer cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 px-6 py-4 border-b border-border">
-            <PrimerCard
-              icon={<BarChart2 className="w-4 h-4 text-primary" />}
-              title="Price Chart"
-              body="The chart below shows price history. Look for an upward trend over time. Short-term dips are normal — focus on the long-term direction."
+            <AnalystRecommendationCard
+              recommendationKey={analystRec?.key}
+              analystCount={analystRec?.count}
             />
             <PrimerCard
               icon={<Target className="w-4 h-4 text-primary" />}
@@ -355,6 +380,146 @@ function BuySignal({
     <div className="flex flex-col gap-0.5">
       <span className="text-base font-bold text-red-500">Caution</span>
       <span className="text-xs text-muted-foreground">Price above analyst target</span>
+    </div>
+  );
+}
+
+// ── Analyst Recommendation Meter ───────────────────────────────────────────
+
+function AnalystRecommendationCard({
+  recommendationKey,
+  analystCount,
+}: {
+  recommendationKey: string | null | undefined;
+  analystCount: number | null | undefined;
+}) {
+  const keyMap: Record<string, { label: string; angle: number }> = {
+    strong_buy:   { label: "Strong Buy",    angle: 18  },
+    buy:          { label: "Buy",           angle: 54  },
+    hold:         { label: "Hold",          angle: 90  },
+    neutral:      { label: "Hold",          angle: 90  },
+    underperform: { label: "Underperform",  angle: 126 },
+    sell:         { label: "Sell",          angle: 126 },
+    strong_sell:  { label: "Strong Sell",   angle: 162 },
+  };
+
+  const key = recommendationKey?.toLowerCase() ?? null;
+  const info = key ? (keyMap[key] ?? null) : null;
+  const loading = recommendationKey === undefined;
+
+  // SVG layout constants
+  const cx = 100, cy = 100;
+  const outerR = 86, innerR = 58;
+  const GAP = 1.5; // degrees gap at each segment boundary
+
+  function polarToSvg(r: number, deg: number) {
+    const rad = (deg * Math.PI) / 180;
+    return { x: cx + r * Math.cos(rad), y: cy - r * Math.sin(rad) };
+  }
+
+  // Build a donut arc path from startDeg to endDeg (math convention: CCW from east)
+  function segPath(startDeg: number, endDeg: number) {
+    const s = startDeg + GAP;
+    const e = endDeg - GAP;
+    const oS = polarToSvg(outerR, s);
+    const oE = polarToSvg(outerR, e);
+    const iS = polarToSvg(innerR, s);
+    const iE = polarToSvg(innerR, e);
+    return (
+      `M ${oS.x.toFixed(2)} ${oS.y.toFixed(2)} ` +
+      `A ${outerR} ${outerR} 0 0 0 ${oE.x.toFixed(2)} ${oE.y.toFixed(2)} ` +
+      `L ${iE.x.toFixed(2)} ${iE.y.toFixed(2)} ` +
+      `A ${innerR} ${innerR} 0 0 1 ${iS.x.toFixed(2)} ${iS.y.toFixed(2)} Z`
+    );
+  }
+
+  const segments = [
+    { s: 144, e: 180, fill: "#f87171", lines: ["Strong", "Sell"],  midAngle: 162 },
+    { s: 108, e: 144, fill: "#fca5a5", lines: ["Sell"],            midAngle: 126 },
+    { s: 72,  e: 108, fill: "#fde68a", lines: ["Hold"],            midAngle: 90  },
+    { s: 36,  e: 72,  fill: "#86efac", lines: ["Buy"],             midAngle: 54  },
+    { s: 0,   e: 36,  fill: "#16a34a", lines: ["Strong", "Buy"],   midAngle: 18  },
+  ];
+
+  const labelR = outerR + 16;
+  const needleLen = outerR - 8; // tip sits just inside the outer arc
+  const needleAngle = info?.angle ?? 90;
+  const tip = polarToSvg(needleLen, needleAngle);
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 px-4 py-3 flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <BarChart2 className="w-4 h-4 text-primary" />
+        <span className="text-sm font-semibold text-foreground">Analyst Recommendation</span>
+      </div>
+
+      <div className="flex flex-col items-center">
+        {/* viewBox gives room for labels outside the arc and text below the pivot */}
+        <svg viewBox="-22 -20 244 132" className="w-full max-w-[210px]">
+          {segments.map((seg) => {
+            const lp = polarToSvg(labelR, seg.midAngle);
+            return (
+              <g key={seg.midAngle}>
+                <path
+                  d={segPath(seg.s, seg.e)}
+                  fill={seg.fill}
+                  opacity={loading ? 0.4 : 1}
+                />
+                {seg.lines.map((line, i) => (
+                  <text
+                    key={i}
+                    x={lp.x}
+                    y={lp.y + (seg.lines.length > 1 ? (i - 0.5) * 9 : 0)}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={7}
+                    fill="currentColor"
+                    opacity={0.6}
+                  >
+                    {line}
+                  </text>
+                ))}
+              </g>
+            );
+          })}
+
+          {/* Needle — only rendered when we have a valid recommendation */}
+          {(loading || info) && (
+            <>
+              <line
+                x1={cx} y1={cy}
+                x2={tip.x.toFixed(2)} y2={tip.y.toFixed(2)}
+                stroke="currentColor"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+                opacity={loading ? 0.15 : 1}
+              />
+              <circle
+                cx={cx} cy={cy} r={5}
+                fill="currentColor"
+                opacity={loading ? 0.15 : 1}
+              />
+            </>
+          )}
+        </svg>
+
+        <div className="text-center -mt-1">
+          {loading ? (
+            <span className="text-xs text-muted-foreground">Loading…</span>
+          ) : info ? (
+            <>
+              <div className="text-sm font-bold text-foreground">{info.label}</div>
+              {analystCount != null && (
+                <div className="text-xs text-muted-foreground">
+                  Based on {analystCount} analyst{analystCount !== 1 ? "s" : ""}
+                </div>
+              )}
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">No analyst data</span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
