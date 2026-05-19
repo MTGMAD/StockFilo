@@ -21,6 +21,7 @@ export interface Stock {
   pre_market_price: number | null;
   pre_market_change_pct: number | null;
   market_state: string | null;
+  dividend_yield: number | null;
 }
 
 export interface QuoteResult {
@@ -35,6 +36,7 @@ export interface QuoteResult {
   pre_market_price: number | null;
   pre_market_change_pct: number | null;
   market_state: string | null;
+  dividend_yield: number | null;
 }
 
 export interface TickerSummary {
@@ -56,6 +58,7 @@ export interface TickerSummary {
   pre_market_change_pct: number | null;
   post_market_price: number | null;
   post_market_change_pct: number | null;
+  dividendYield: number | null;
 }
 
 export interface WatchlistItem {
@@ -98,6 +101,13 @@ export type View = "dashboard" | "portfolio" | "watchlist" | "settings";
 export type Theme = "system" | "light" | "dark" | "warm";
 export type InvestorMode = "novice" | "advanced";
 export type LinkOpenMode = "browser" | "inapp";
+
+export interface DividendInfo {
+  dividend_date: number | null; // Unix timestamp of next payout/ex-dividend date
+  dividend_amount_per_share: number | null; // Most recent dividend payment amount per share
+  annual_dividend_rate: number | null; // Trailing annual dividend amount per share
+  payout_frequency: string | null; // Inferred cadence: monthly, quarterly, annual, etc.
+}
 
 export interface ChartPoint {
   timestamp: number;

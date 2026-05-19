@@ -169,6 +169,7 @@ export function usePortfolio(portfolioId: number | null) {
         pre_market_change_pct: stock?.pre_market_change_pct ?? null,
         post_market_price: stock?.post_market_price ?? null,
         post_market_change_pct: stock?.post_market_change_pct ?? null,
+        dividendYield: stock?.dividend_yield ?? null,
       };
     }
   );

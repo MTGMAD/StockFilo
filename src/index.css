@@ -18,6 +18,8 @@
   --negative: hsl(0 84% 60%);
   --warning: hsl(38 92% 50%);
   --chart-2: hsl(217 91% 60%);
+  --dividend-bg: hsl(160 84% 39% / 0.10);
+  --dividend-fg: hsl(153 75% 30%);
 }
 
 /* ── Dark theme overrides ────────────────────────────────────────────────── */
@@ -38,6 +40,8 @@
   --negative: hsl(0 72% 62%);
   --warning: hsl(38 85% 52%);
   --chart-2: hsl(217 80% 62%);
+  --dividend-bg: hsl(160 84% 39% / 0.16);
+  --dividend-fg: hsl(156 72% 67%);
 }
 
 /* ── Warm (parchment) theme ─────────────────────────────────────────────── */
@@ -60,6 +64,8 @@
   --negative: hsl(8 38% 50%);
   --warning: hsl(35 50% 46%);
   --chart-2: hsl(210 30% 52%);
+  --dividend-bg: hsl(35 50% 46% / 0.14);
+  --dividend-fg: hsl(30 38% 34%);
 }
 
 /* ── Wire CSS vars into Tailwind v4 theme ────────────────────────────────── */

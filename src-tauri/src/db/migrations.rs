@@ -140,6 +140,8 @@ CREATE TABLE IF NOT EXISTS _sf_config (
 );
 "#;
 
+const MIGRATION_V13: &str = "ALTER TABLE stocks ADD COLUMN dividend_yield REAL;";
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -157,6 +159,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (10, MIGRATION_V10),
         (11, MIGRATION_V11),
         (12, MIGRATION_V12),
+        (13, MIGRATION_V13),
     ];
 
     let user_version: i64 =

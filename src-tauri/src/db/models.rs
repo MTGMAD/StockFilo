@@ -19,6 +19,7 @@ pub struct Stock {
     pub pre_market_price: Option<f64>,
     pub pre_market_change_pct: Option<f64>,
     pub market_state: Option<String>,
+    pub dividend_yield: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

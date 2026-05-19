@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { TickerSummary, Purchase, Stock, LinkOpenMode } from "../../types";
+import type {
+  DividendInfo,
+  TickerSummary,
+  Purchase,
+  Stock,
+  LinkOpenMode,
+} from "../../types";
 import {
   formatCurrency,
   formatPercent,
@@ -18,6 +24,7 @@ import {
   TrendingDown,
   Minus,
   CalendarDays,
+  PiggyBank,
   BarChart2,
   List,
   Settings,
@@ -35,6 +42,8 @@ import { useFavorites } from "../../hooks/useFavorites";
 import { openUrl } from "../../lib/openUrl";
 import {
   addEarningsCallToCalendar,
+  addDividendToCalendar,
+  fetchDividendInfo,
   fetchUpcomingEarnings,
   exportPurchasesCsv,
   importPurchasesCsv,
@@ -107,9 +116,15 @@ export function PortfolioView({
   const [upcomingEarnings, setUpcomingEarnings] = useState<
     Record<string, number>
   >({});
+  const [dividendInfoByTicker, setDividendInfoByTicker] = useState<
+    Record<string, DividendInfo>
+  >({});
   const [addingCalendarFor, setAddingCalendarFor] = useState<string | null>(
     null,
   );
+  const [addingDividendCalendarFor, setAddingDividendCalendarFor] = useState<
+    string | null
+  >(null);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [dataOpStatus, setDataOpStatus] = useState<{
     kind: "success" | "error";
@@ -193,8 +208,44 @@ export function PortfolioView({
   const selectedEarningsAt = summary
     ? upcomingEarnings[summary.ticker]
     : undefined;
+  const selectedDividendInfo = selected
+    ? dividendInfoByTicker[selected] ?? null
+    : null;
+  const selectedDividendDate = selectedDividendInfo?.dividend_date ?? null;
+  const selectedDividendAmount =
+    selectedDividendInfo?.dividend_amount_per_share ?? null;
+  const selectedAnnualDividendRate =
+    selectedDividendInfo?.annual_dividend_rate ?? null;
+  const selectedPayoutFrequency =
+    selectedDividendInfo?.payout_frequency ?? null;
+  const selectedDividendPerShare = dividendPerShareAmount(
+    selectedDividendAmount,
+    selectedAnnualDividendRate,
+    selectedPayoutFrequency,
+  );
+  const selectedDividendPayout = summary
+    ? dividendPayoutTotal(
+        summary.totalShares,
+        selectedDividendAmount,
+        selectedAnnualDividendRate,
+        selectedPayoutFrequency,
+      )
+    : null;
+  const hasSelectedDividend =
+    !summary || isCusip(summary.ticker)
+      ? false
+      : hasTickerDividend(summary, selectedDividendInfo);
+  const dividendDetails = [
+    selectedDividendPayout != null
+      ? `${formatDividendFrequency(selectedPayoutFrequency)} payout ${formatCurrency(selectedDividendPayout)}${selectedDividendPerShare != null ? ` (${formatCurrency(selectedDividendPerShare)}/share)` : ""}`
+      : null,
+    selectedDividendDate != null
+      ? `${selectedDividendDate * 1000 >= Date.now() ? "Next" : "Last"} payout ${formatDate(selectedDividendDate)}`
+      : null,
+  ].filter(Boolean).join(" · ");
   const orderedTickers = ordered.map((s) => s.ticker);
   const earningsKey = orderedTickers.join(",");
+  const dividendKey = earningsKey;
 
   useEffect(() => {
     if (orderedTickers.length === 0) {
@@ -219,6 +270,54 @@ export function PortfolioView({
       cancelled = true;
     };
   }, [earningsKey]);
+
+  useEffect(() => {
+    if (orderedTickers.length === 0) {
+      setDividendInfoByTicker({});
+      return;
+    }
+
+    const quotableTickers = orderedTickers.filter((t) => !isCusip(t));
+    const visible = new Set(quotableTickers);
+    let cancelled = false;
+
+    setDividendInfoByTicker((current) => {
+      const next: Record<string, DividendInfo> = {};
+      for (const ticker of quotableTickers) {
+        if (current[ticker]) next[ticker] = current[ticker];
+      }
+      return next;
+    });
+
+    for (const ticker of quotableTickers) {
+      fetchDividendInfo(ticker)
+        .then((info) => {
+          if (cancelled || !visible.has(ticker)) return;
+          setDividendInfoByTicker((current) => {
+            const next = { ...current };
+            if (hasDividendInfo(info)) {
+              next[ticker] = info;
+            } else {
+              delete next[ticker];
+            }
+            return next;
+          });
+        })
+        .catch(() => {
+          if (cancelled || !visible.has(ticker)) return;
+          setDividendInfoByTicker((current) => {
+            if (!current[ticker]) return current;
+            const next = { ...current };
+            delete next[ticker];
+            return next;
+          });
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dividendKey]);
 
   async function openYahooFinance(ticker: string) {
     await openUrl(
@@ -256,6 +355,22 @@ export function PortfolioView({
     }
   }
 
+  async function handleAddDividendToCalendar(
+    ticker: string,
+    dividendDate: number,
+  ) {
+    try {
+      setAddingDividendCalendarFor(ticker);
+      setCalendarError(null);
+      await addDividendToCalendar(ticker, dividendDate);
+    } catch (e) {
+      setCalendarError(`Could not open dividend calendar for ${ticker}.`);
+      console.error("open_dividend_in_calendar failed", e);
+    } finally {
+      setAddingDividendCalendarFor(null);
+    }
+  }
+
   function formatDateTime(unixSeconds: number): string {
     return new Intl.DateTimeFormat("en-US", {
       month: "short",
@@ -263,6 +378,14 @@ export function PortfolioView({
       year: "numeric",
       hour: "numeric",
       minute: "2-digit",
+    }).format(new Date(unixSeconds * 1000));
+  }
+
+  function formatDate(unixSeconds: number): string {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
     }).format(new Date(unixSeconds * 1000));
   }
 
@@ -381,6 +504,7 @@ export function PortfolioView({
                 s={s}
                 isSelected={selected === s.ticker}
                 hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+                hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
                 isFav
                 favIdx={favIdx}
                 favCount={favoriteTickers.length}
@@ -397,6 +521,7 @@ export function PortfolioView({
                 s={s}
                 isSelected={selected === s.ticker}
                 hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+                hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
                 isFav={false}
                 favIdx={-1}
                 favCount={0}
@@ -413,6 +538,7 @@ export function PortfolioView({
                 s={s}
                 isSelected={selected === s.ticker}
                 hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+                hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
                 isFav={false}
                 favIdx={-1}
                 favCount={0}
@@ -429,6 +555,7 @@ export function PortfolioView({
                 s={s}
                 isSelected={selected === s.ticker}
                 hasUpcomingEarnings={false}
+                hasDividend={false}
                 isFav={false}
                 favIdx={-1}
                 favCount={0}
@@ -806,6 +933,38 @@ export function PortfolioView({
                         : `Add Earning Call to Calendar (${formatDateTime(selectedEarningsAt)})`}
                     </button>
                   )}
+                  {hasSelectedDividend && (
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="flex items-center gap-1 text-xs px-2 py-1 rounded-full bg-[var(--dividend-bg)] text-[var(--dividend-fg)] font-medium"
+                        title="Dividend information"
+                      >
+                        <PiggyBank className="w-3.5 h-3.5" />
+                        {dividendDetails || "Dividend"}
+                      </span>
+                      {selectedDividendDate != null && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleAddDividendToCalendar(
+                              summary.ticker,
+                              selectedDividendDate,
+                            )
+                          }
+                          disabled={
+                            addingDividendCalendarFor === summary.ticker
+                          }
+                          className="btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1.5"
+                          title="Add dividend payout date to your calendar"
+                        >
+                          <CalendarDays className="w-3.5 h-3.5" />
+                          {addingDividendCalendarFor === summary.ticker
+                            ? "Opening Calendar..."
+                            : "Add Dividend to Calendar"}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {calendarError && (
                     <span className="text-xs bg-red-500/10 text-red-600 px-2 py-0.5 rounded-full">
                       {calendarError}
@@ -1023,10 +1182,93 @@ function CollapsibleSection({
   );
 }
 
+function hasDividendInfo(info: DividendInfo | null | undefined): boolean {
+  return Boolean(
+    info &&
+      (info.dividend_date != null ||
+        info.dividend_amount_per_share != null ||
+        info.annual_dividend_rate != null),
+  );
+}
+
+function hasTickerDividend(
+  s: TickerSummary,
+  info: DividendInfo | null | undefined,
+): boolean {
+  return Boolean(
+    !isCusip(s.ticker) &&
+      ((s.dividendYield != null && s.dividendYield > 0) ||
+        hasDividendInfo(info)),
+  );
+}
+
+function paymentsPerYear(frequency: string | null | undefined): number | null {
+  switch (frequency) {
+    case "monthly":
+      return 12;
+    case "bimonthly":
+      return 6;
+    case "quarterly":
+      return 4;
+    case "semiannual":
+      return 2;
+    case "annual":
+      return 1;
+    default:
+      return null;
+  }
+}
+
+function dividendPayoutTotal(
+  shares: number,
+  amountPerShare: number | null | undefined,
+  annualRate: number | null | undefined,
+  frequency: string | null | undefined,
+): number | null {
+  const perPeriodAmount =
+    amountPerShare ??
+    (annualRate != null
+      ? annualRate / (paymentsPerYear(frequency) ?? 1)
+      : null);
+
+  return perPeriodAmount != null ? shares * perPeriodAmount : null;
+}
+
+function dividendPerShareAmount(
+  amountPerShare: number | null | undefined,
+  annualRate: number | null | undefined,
+  frequency: string | null | undefined,
+): number | null {
+  return (
+    amountPerShare ??
+    (annualRate != null
+      ? annualRate / (paymentsPerYear(frequency) ?? 1)
+      : null)
+  );
+}
+
+function formatDividendFrequency(frequency: string | null | undefined): string {
+  switch (frequency) {
+    case "monthly":
+      return "Monthly";
+    case "bimonthly":
+      return "Bimonthly";
+    case "quarterly":
+      return "Quarterly";
+    case "semiannual":
+      return "Semiannual";
+    case "annual":
+      return "Annual";
+    default:
+      return "Dividend";
+  }
+}
+
 function TickerRow({
   s,
   isSelected,
   hasUpcomingEarnings,
+  hasDividend,
   isFav,
   favIdx,
   favCount,
@@ -1037,6 +1279,7 @@ function TickerRow({
   s: TickerSummary;
   isSelected: boolean;
   hasUpcomingEarnings: boolean;
+  hasDividend: boolean;
   isFav: boolean;
   favIdx: number;
   favCount: number;
@@ -1088,6 +1331,16 @@ function TickerRow({
               className={cn(
                 "w-3.5 h-3.5 shrink-0",
                 isSelected ? "text-primary-foreground/85" : "text-primary",
+              )}
+            />
+          )}
+          {hasDividend && (
+            <PiggyBank
+              className={cn(
+                "w-3.5 h-3.5 shrink-0",
+                isSelected
+                  ? "text-primary-foreground/85"
+                  : "text-[var(--dividend-fg)]",
               )}
             />
           )}

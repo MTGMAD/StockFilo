@@ -14,6 +14,7 @@ pub struct QuoteResult {
     pub pre_market_price: Option<f64>,
     pub pre_market_change_pct: Option<f64>,
     pub market_state: Option<String>,
+    pub dividend_yield: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,9 +58,10 @@ pub async fn fetch_quotes_command(tickers: Vec<String>) -> Result<Vec<QuoteResul
                     pre_market_price: qd.pre_market_price,
                     pre_market_change_pct: qd.pre_market_change_pct,
                     market_state: qd.market_state.clone(),
+                    dividend_yield: qd.dividend_yield,
                 }
             } else {
-                QuoteResult { ticker, price: None, name: None, quote_type: None, daily_change_pct: None, target_mean_price: None, post_market_price: None, post_market_change_pct: None, pre_market_price: None, pre_market_change_pct: None, market_state: None }
+                QuoteResult { ticker, price: None, name: None, quote_type: None, daily_change_pct: None, target_mean_price: None, post_market_price: None, post_market_change_pct: None, pre_market_price: None, pre_market_change_pct: None, market_state: None, dividend_yield: None }
             }
         })
         .collect();
@@ -206,4 +208,24 @@ pub async fn fetch_comparison_stats_command(
         .collect();
 
     Ok(results)
+}
+
+#[derive(Debug, Serialize)]
+pub struct DividendInfoResult {
+    pub dividend_date: Option<i64>,
+    pub dividend_amount_per_share: Option<f64>,
+    pub annual_dividend_rate: Option<f64>,
+    pub payout_frequency: Option<String>,
+}
+
+/// Fetch the next dividend payout date for a single ticker.
+#[tauri::command]
+pub async fn fetch_dividend_info_command(ticker: String) -> Result<DividendInfoResult, String> {
+    let info = yahoo::fetch_dividend_info(&ticker.to_uppercase()).await?;
+    Ok(DividendInfoResult {
+        dividend_date: info.dividend_date,
+        dividend_amount_per_share: info.dividend_amount_per_share,
+        annual_dividend_rate: info.annual_dividend_rate,
+        payout_frequency: info.payout_frequency,
+    })
 }

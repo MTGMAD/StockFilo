@@ -24,6 +24,7 @@ import type {
   UpcomingEarningsEvent,
   Portfolio,
   Watchlist,
+  DividendInfo,
 } from "../types";
 
 // ── Portfolios ─────────────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ export async function upsertStock(
   preMarketPrice: number | null = null,
   preMarketChangePct: number | null = null,
   marketState: string | null = null,
+  dividendYield: number | null = null,
 ): Promise<void> {
   return invoke("db_upsert_stock", {
     ticker,
@@ -140,6 +142,7 @@ export async function upsertStock(
     preMarketPrice,
     preMarketChangePct,
     marketState,
+    dividendYield,
   });
 }
 
@@ -163,6 +166,7 @@ export async function fetchAndCachePrices(
       r.pre_market_price,
       r.pre_market_change_pct,
       r.market_state,
+      r.dividend_yield,
     );
   }
   return results;
@@ -414,6 +418,36 @@ export async function addEarningsCallToCalendar(
   await invoke("open_earnings_call_in_calendar", {
     ticker: ticker.toUpperCase(),
     eventAt,
+  });
+}
+
+type RawDividendInfo = Partial<DividendInfo> & {
+  dividendDate?: number | null;
+  dividendAmountPerShare?: number | null;
+  annualDividendRate?: number | null;
+  payoutFrequency?: string | null;
+};
+
+export async function fetchDividendInfo(ticker: string): Promise<DividendInfo> {
+  const info = await invoke<RawDividendInfo>("fetch_dividend_info_command", {
+    ticker: ticker.toUpperCase(),
+  });
+  return {
+    dividend_date: info.dividend_date ?? info.dividendDate ?? null,
+    dividend_amount_per_share:
+      info.dividend_amount_per_share ?? info.dividendAmountPerShare ?? null,
+    annual_dividend_rate: info.annual_dividend_rate ?? info.annualDividendRate ?? null,
+    payout_frequency: info.payout_frequency ?? info.payoutFrequency ?? null,
+  };
+}
+
+export async function addDividendToCalendar(
+  ticker: string,
+  dividendDate: number,
+): Promise<void> {
+  await invoke("open_dividend_in_calendar", {
+    ticker: ticker.toUpperCase(),
+    dividendDate,
   });
 }
 

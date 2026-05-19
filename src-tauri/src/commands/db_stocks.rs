@@ -18,6 +18,7 @@ pub struct Stock {
     pub pre_market_price: Option<f64>,
     pub pre_market_change_pct: Option<f64>,
     pub market_state: Option<String>,
+    pub dividend_yield: Option<f64>,
 }
 
 #[tauri::command]
@@ -26,7 +27,7 @@ pub fn db_get_cached_stocks(state: State<'_, DbManager>) -> Result<Vec<Stock>, S
         let mut stmt = conn.prepare(
             "SELECT ticker, name, last_price, last_fetched_at, quote_type, daily_change_pct, \
              target_mean_price, post_market_price, post_market_change_pct, \
-             pre_market_price, pre_market_change_pct, market_state FROM stocks",
+             pre_market_price, pre_market_change_pct, market_state, dividend_yield FROM stocks",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(Stock {
@@ -42,6 +43,7 @@ pub fn db_get_cached_stocks(state: State<'_, DbManager>) -> Result<Vec<Stock>, S
                 pre_market_price: r.get(9)?,
                 pre_market_change_pct: r.get(10)?,
                 market_state: r.get(11)?,
+                dividend_yield: r.get(12)?,
             })
         })?;
         rows.collect()
@@ -62,6 +64,7 @@ pub fn db_upsert_stock(
     pre_market_price: Option<f64>,
     pre_market_change_pct: Option<f64>,
     market_state: Option<String>,
+    dividend_yield: Option<f64>,
     state: State<'_, DbManager>,
 ) -> Result<(), String> {
     state.with_conn(|conn| {
@@ -69,8 +72,8 @@ pub fn db_upsert_stock(
         conn.execute(
             "INSERT INTO stocks (ticker, name, last_price, last_fetched_at, quote_type, \
              daily_change_pct, target_mean_price, post_market_price, post_market_change_pct, \
-             pre_market_price, pre_market_change_pct, market_state) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12) \
+             pre_market_price, pre_market_change_pct, market_state, dividend_yield) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) \
              ON CONFLICT(ticker) DO UPDATE SET \
                name                  = excluded.name, \
                last_price            = excluded.last_price, \
@@ -82,7 +85,8 @@ pub fn db_upsert_stock(
                post_market_change_pct = excluded.post_market_change_pct, \
                pre_market_price      = excluded.pre_market_price, \
                pre_market_change_pct = excluded.pre_market_change_pct, \
-               market_state          = excluded.market_state",
+               market_state          = excluded.market_state, \
+               dividend_yield        = COALESCE(excluded.dividend_yield, stocks.dividend_yield)",
             params![
                 ticker.to_uppercase(),
                 name,
@@ -96,6 +100,7 @@ pub fn db_upsert_stock(
                 pre_market_price,
                 pre_market_change_pct,
                 market_state,
+                dividend_yield,
             ],
         )?;
         Ok(())

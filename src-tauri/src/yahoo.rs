@@ -71,6 +71,10 @@ struct QuoteResult {
     fifty_two_week_low: Option<f64>,
     #[serde(rename = "dividendYield")]
     dividend_yield: Option<f64>,
+    #[serde(rename = "dividendDate")]
+    dividend_date: Option<Value>,
+    #[serde(rename = "trailingAnnualDividendRate")]
+    trailing_annual_dividend_rate: Option<Value>,
     #[serde(rename = "epsTrailingTwelveMonths")]
     eps_trailing: Option<f64>,
     #[serde(rename = "recommendationKey")]
@@ -300,6 +304,7 @@ pub struct QuoteData {
     pub pre_market_price: Option<f64>,
     pub pre_market_change_pct: Option<f64>,
     pub market_state: Option<String>,
+    pub dividend_yield: Option<f64>,
 }
 
 async fn fetch_target_mean_price(
@@ -358,7 +363,7 @@ pub async fn fetch_quotes(
             .collect::<Vec<_>>()
             .join(",");
         let url = format!(
-            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent,targetMeanPrice,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent,marketState",
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=regularMarketPrice,longName,shortName,quoteType,regularMarketChangePercent,targetMeanPrice,postMarketPrice,postMarketChangePercent,preMarketPrice,preMarketChangePercent,marketState,dividendYield",
             symbols,
             urlencoding::encode(&crumb)
         );
@@ -403,6 +408,7 @@ pub async fn fetch_quotes(
                         pre_market_price: q.pre_market_price,
                         pre_market_change_pct: q.pre_market_change_pct,
                         market_state: q.market_state,
+                        dividend_yield: q.dividend_yield,
                     });
                 }
             }
@@ -546,6 +552,276 @@ pub async fn fetch_comparison_stats(
     }
 
     Ok(results)
+}
+
+// ── Dividend info ─────────────────────────────────────────────────────────
+
+/// Standalone response for a single-module calendarEvents quoteSummary call.
+#[derive(Debug, Deserialize)]
+struct CalendarEventsResponse {
+    #[serde(rename = "quoteSummary")]
+    quote_summary: CalendarEventsOuter,
+}
+#[derive(Debug, Deserialize)]
+struct CalendarEventsOuter {
+    result: Option<Vec<CalendarEventsResult>>,
+}
+#[derive(Debug, Deserialize)]
+struct CalendarEventsResult {
+    #[serde(rename = "calendarEvents")]
+    calendar_events: Option<CalendarEventsFields>,
+}
+#[derive(Debug, Deserialize)]
+struct CalendarEventsFields {
+    #[serde(rename = "dividendDate")]
+    dividend_date: Option<Value>,
+    #[serde(rename = "exDividendDate")]
+    ex_dividend_date: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DividendInfo {
+    /// Unix timestamp of the next (or most recent) dividend date.
+    pub dividend_date: Option<i64>,
+    /// Most recent dividend payment amount per share, when Yahoo exposes it.
+    pub dividend_amount_per_share: Option<f64>,
+    /// Trailing annual dividend amount per share.
+    pub annual_dividend_rate: Option<f64>,
+    /// Inferred payout cadence from dividend history: monthly, quarterly, annual, etc.
+    pub payout_frequency: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DividendChartSummary {
+    latest_date: Option<i64>,
+    latest_amount: Option<f64>,
+    annual_rate: Option<f64>,
+    payout_frequency: Option<&'static str>,
+}
+
+/// Fetch the next dividend payout/ex-dividend date for a ticker.
+pub async fn fetch_dividend_info(ticker: &str) -> Result<DividendInfo, String> {
+    let fallback_client = Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let chart_summary = fetch_dividend_chart_summary(&fallback_client, ticker).await;
+    if chart_summary.is_none() {
+        return Ok(empty_dividend_info());
+    }
+
+    let Ok((client, crumb)) = get_authenticated_client().await else {
+        return Ok(DividendInfo {
+            dividend_date: chart_summary.and_then(|s| s.latest_date),
+            dividend_amount_per_share: chart_summary.and_then(|s| s.latest_amount),
+            annual_dividend_rate: chart_summary.and_then(|s| s.annual_rate),
+            payout_frequency: chart_summary.and_then(|s| s.payout_frequency).map(str::to_string),
+        });
+    };
+
+    let cal_url = format!(
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/{}?modules=calendarEvents&crumb={}",
+        urlencoding::encode(ticker),
+        urlencoding::encode(&crumb),
+    );
+
+    let calendar_dividend_date = match client.get(&cal_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<CalendarEventsResponse>().await {
+                Ok(data) => data.quote_summary.result
+                    .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+                    .and_then(|r| r.calendar_events)
+                    .and_then(|ev| {
+                        ev.dividend_date.as_ref().and_then(value_to_i64).filter(|&ts| ts > 0)
+                            .or_else(|| {
+                                ev.ex_dividend_date.as_ref().and_then(value_to_i64).filter(|&ts| ts > 0)
+                            })
+                    }),
+                Err(_) => None,
+            }
+        }
+        _ => None,
+    };
+
+    let quote_url = format!(
+        "https://query1.finance.yahoo.com/v7/finance/quote?symbols={}&crumb={}&fields=dividendDate,trailingAnnualDividendRate,dividendYield",
+        urlencoding::encode(ticker),
+        urlencoding::encode(&crumb),
+    );
+
+    let (quote_dividend_date, annual_dividend_rate) = match client.get(&quote_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<YahooQuoteResponse>().await {
+                Ok(data) => data.quote_response.result
+                    .and_then(|mut v| if v.is_empty() { None } else { Some(v.remove(0)) })
+                    .map(|q| {
+                        (
+                            q.dividend_date.as_ref().and_then(value_to_i64).filter(|&ts| ts > 0),
+                            q.trailing_annual_dividend_rate.as_ref().and_then(value_to_f64).filter(|rate| *rate > 0.0),
+                        )
+                    })
+                    .unwrap_or((None, None)),
+                Err(_) => (None, None),
+            }
+        }
+        _ => (None, None),
+    };
+
+    Ok(DividendInfo {
+        dividend_date: calendar_dividend_date
+            .or(quote_dividend_date)
+            .or_else(|| chart_summary.and_then(|s| s.latest_date)),
+        dividend_amount_per_share: chart_summary.and_then(|s| s.latest_amount),
+        annual_dividend_rate: annual_dividend_rate.or_else(|| chart_summary.and_then(|s| s.annual_rate)),
+        payout_frequency: chart_summary.and_then(|s| s.payout_frequency).map(str::to_string),
+    })
+}
+
+fn empty_dividend_info() -> DividendInfo {
+    DividendInfo {
+        dividend_date: None,
+        dividend_amount_per_share: None,
+        annual_dividend_rate: None,
+        payout_frequency: None,
+    }
+}
+
+async fn fetch_dividend_chart_summary(client: &Client, ticker: &str) -> Option<DividendChartSummary> {
+    let chart_url = format!(
+        "https://query1.finance.yahoo.com/v8/finance/chart/{}?range=2y&interval=1d&events=div",
+        urlencoding::encode(ticker),
+    );
+
+    let resp = client.get(&chart_url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let data = resp.json::<Value>().await.ok()?;
+    extract_dividend_chart_summary(&data)
+}
+
+fn extract_dividend_chart_summary(data: &Value) -> Option<DividendChartSummary> {
+    let dividends = data
+        .pointer("/chart/result/0/events/dividends")
+        .and_then(Value::as_object)?;
+
+    let mut events = dividends
+        .iter()
+        .filter_map(|(key, event)| {
+            let amount = event.get("amount").and_then(value_to_f64).filter(|amount| *amount > 0.0)?;
+            let date = event
+                .get("date")
+                .and_then(value_to_i64)
+                .or_else(|| key.parse::<i64>().ok())?;
+            Some((date, amount))
+        })
+        .collect::<Vec<_>>();
+
+    let payout_frequency = infer_dividend_frequency(&events);
+    events.sort_by_key(|(date, _)| *date);
+    let now = chrono::Utc::now().timestamp();
+    let latest_past = events.iter().rev().copied().find(|(date, _)| *date <= now);
+    let next_upcoming = events.iter().copied().find(|(date, _)| *date >= now);
+    let is_current_payer = next_upcoming.is_some()
+        || latest_past
+            .map(|(date, _)| is_recent_dividend(date, payout_frequency, now))
+            .unwrap_or(false);
+
+    if !is_current_payer {
+        return None;
+    }
+
+    let (latest_date, latest_amount) = next_upcoming.or(latest_past)?;
+    let annual_rate = payout_frequency
+        .and_then(payments_per_year)
+        .map(|payments| latest_amount * payments)
+        .or_else(|| {
+            Some(
+                events
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .map(|(_, amount)| *amount)
+                    .sum::<f64>(),
+            )
+            .filter(|rate| *rate > 0.0)
+        });
+
+    Some(DividendChartSummary {
+        latest_date: Some(latest_date),
+        latest_amount: Some(latest_amount),
+        annual_rate,
+        payout_frequency,
+    })
+}
+
+fn is_recent_dividend(
+    latest_date: i64,
+    frequency: Option<&str>,
+    now: i64,
+) -> bool {
+    let elapsed_days = (now - latest_date).max(0) as f64 / 86_400.0;
+    elapsed_days <= active_dividend_grace_days(frequency)
+}
+
+fn active_dividend_grace_days(frequency: Option<&str>) -> f64 {
+    match frequency {
+        Some("monthly") => 60.0,
+        Some("bimonthly") => 105.0,
+        Some("quarterly") => 150.0,
+        Some("semiannual") => 270.0,
+        Some("annual") => 550.0,
+        _ => 550.0,
+    }
+}
+
+fn infer_dividend_frequency(events: &[(i64, f64)]) -> Option<&'static str> {
+    if events.is_empty() {
+        return None;
+    }
+    if events.len() == 1 {
+        return Some("annual");
+    }
+
+    let mut intervals = events
+        .windows(2)
+        .filter_map(|pair| {
+            let days = (pair[1].0 - pair[0].0) as f64 / 86_400.0;
+            (days > 15.0).then_some(days)
+        })
+        .collect::<Vec<_>>();
+
+    if intervals.is_empty() {
+        return None;
+    }
+
+    intervals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median_days = intervals[intervals.len() / 2];
+
+    if median_days <= 45.0 {
+        Some("monthly")
+    } else if median_days <= 75.0 {
+        Some("bimonthly")
+    } else if median_days <= 120.0 {
+        Some("quarterly")
+    } else if median_days <= 220.0 {
+        Some("semiannual")
+    } else {
+        Some("annual")
+    }
+}
+
+fn payments_per_year(frequency: &str) -> Option<f64> {
+    match frequency {
+        "monthly" => Some(12.0),
+        "bimonthly" => Some(6.0),
+        "quarterly" => Some(4.0),
+        "semiannual" => Some(2.0),
+        "annual" => Some(1.0),
+        _ => None,
+    }
 }
 
 /// Fetch upcoming earnings events for tickers within `within_days` from now.
