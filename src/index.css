@@ -65,7 +65,7 @@
   --warning: hsl(35 50% 46%);
   --chart-2: hsl(210 30% 52%);
   --dividend-bg: hsl(35 50% 46% / 0.14);
-  --dividend-fg: hsl(30 38% 34%);
+  --dividend-fg: var(--primary);
 }
 
 /* ── Wire CSS vars into Tailwind v4 theme ────────────────────────────────── */

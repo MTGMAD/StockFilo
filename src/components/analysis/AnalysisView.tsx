@@ -245,7 +245,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
   return (
     <div className="flex h-full gap-0">
       {/* Ticker selector */}
-      <div className="w-52 border-r border-border shrink-0 overflow-y-auto">
+      <div className="w-[15rem] border-r border-border shrink-0 overflow-y-auto">
         {favorites.length > 0 && (
           <SectionLabel label="Favorites" />
         )}

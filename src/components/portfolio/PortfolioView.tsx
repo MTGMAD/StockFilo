@@ -494,7 +494,7 @@ export function PortfolioView({
     <div className="flex h-full gap-0">
       {/* Ticker selector — left panel (hidden when empty) */}
       {!isEmpty && (
-        <div className="w-52 border-r border-border shrink-0 overflow-y-auto">
+        <div className="w-[15rem] border-r border-border shrink-0 overflow-y-auto">
           {favorites.length > 0 && <SectionLabel label="Favorites" />}
           {favorites.map((s) => {
             const favIdx = favoriteTickers.indexOf(s.ticker);
