@@ -133,7 +133,9 @@ export type ChartRange =
 export interface NewsArticle {
   title: string;
   url: string;
+  source: string | null;
   publisher: string | null;
+  published_at: number | null;
   image_url: string | null;
 }
 

@@ -2,7 +2,7 @@ use reqwest::cookie::Jar;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
@@ -893,6 +893,7 @@ pub async fn fetch_upcoming_earnings(
 #[derive(Debug, Deserialize)]
 struct YahooSearchResponse {
     quotes: Option<Vec<SearchQuote>>,
+    news: Option<Vec<SearchNewsItem>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -906,6 +907,28 @@ struct SearchQuote {
     exchange: Option<String>,
     #[serde(rename = "typeDisp")]
     type_disp: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchNewsItem {
+    title: Option<String>,
+    link: Option<String>,
+    publisher: Option<String>,
+    #[serde(rename = "providerPublishTime")]
+    provider_publish_time: Option<i64>,
+    thumbnail: Option<SearchNewsThumbnail>,
+    #[serde(rename = "relatedTickers")]
+    related_tickers: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchNewsThumbnail {
+    resolutions: Option<Vec<SearchNewsThumbnailResolution>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchNewsThumbnailResolution {
+    url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1034,19 +1057,117 @@ pub async fn fetch_chart(
 pub struct NewsArticle {
     pub title: String,
     pub url: String,
+    pub source: Option<String>,
     pub publisher: Option<String>,
+    pub published_at: Option<i64>,
     pub image_url: Option<String>,
 }
 
-/// Fetch recent news for a specific ticker from Yahoo Finance's RSS headline feed.
-/// The feed is pre-filtered to the ticker and sorted newest-first by Yahoo.
+#[derive(Debug, Clone)]
+struct TickerIdentity {
+    symbol: String,
+    aliases: Vec<String>,
+}
+
+impl TickerIdentity {
+    fn new(ticker: &str) -> Self {
+        Self {
+            symbol: canonical_ticker(ticker),
+            aliases: Vec::new(),
+        }
+    }
+}
+
+/// Fetch recent news for a specific ticker. Prefer Yahoo's search payload because
+/// it carries related ticker metadata; RSS is used only to fill remaining slots.
 pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, String> {
+    if count == 0 {
+        return Ok(vec![]);
+    }
+
     let client = Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
+    let desired_count = count as usize;
+    let fetch_count = desired_count.saturating_mul(8).max(24);
+    let mut identity = TickerIdentity::new(ticker);
+    let mut articles = Vec::new();
+    let mut first_error: Option<String> = None;
+
+    match fetch_news_from_search(&client, ticker, fetch_count).await {
+        Ok((mut search_articles, search_identity)) => {
+            identity = search_identity;
+            articles.append(&mut search_articles);
+        }
+        Err(e) => first_error = Some(e),
+    }
+
+    if articles.len() < desired_count {
+        match fetch_news_from_rss(&client, ticker, &identity).await {
+            Ok(mut rss_articles) => articles.append(&mut rss_articles),
+            Err(e) if first_error.is_none() => first_error = Some(e),
+            Err(_) => {}
+        }
+    }
+
+    let articles = dedupe_sort_take_news(articles, desired_count);
+    if articles.is_empty() {
+        if let Some(e) = first_error {
+            return Err(e);
+        }
+    }
+
+    Ok(articles)
+}
+
+async fn fetch_news_from_search(
+    client: &Client,
+    ticker: &str,
+    fetch_count: usize,
+) -> Result<(Vec<NewsArticle>, TickerIdentity), String> {
+    let url = format!(
+        "https://query2.finance.yahoo.com/v1/finance/search?q={}&quotesCount=4&newsCount={}&listsCount=0&enableFuzzyQuery=false&quotesQueryId=tss_match_phrase_query&newsQueryId=news_cie_vespa",
+        urlencoding::encode(ticker),
+        fetch_count,
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("News search request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Yahoo news search returned HTTP {status}: {body}"));
+    }
+
+    let data: YahooSearchResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse news search response: {e}"))?;
+
+    let identity = ticker_identity_from_quotes(ticker, data.quotes.as_deref());
+    let articles = data
+        .news
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| search_news_item_matches_ticker(item, &identity))
+        .filter_map(search_news_item_to_article)
+        .collect();
+
+    Ok((articles, identity))
+}
+
+async fn fetch_news_from_rss(
+    client: &Client,
+    ticker: &str,
+    identity: &TickerIdentity,
+) -> Result<Vec<NewsArticle>, String> {
     let url = format!(
         "https://feeds.finance.yahoo.com/rss/2.0/headline?s={}&region=US&lang=en-US",
         urlencoding::encode(ticker),
@@ -1056,7 +1177,7 @@ pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, St
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("News request failed: {e}"))?;
+        .map_err(|e| format!("News RSS request failed: {e}"))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -1067,29 +1188,348 @@ pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, St
     let body = resp
         .text()
         .await
-        .map_err(|e| format!("Failed to read news response body: {e}"))?;
+        .map_err(|e| format!("Failed to read news RSS response body: {e}"))?;
 
     let channel = rss::Channel::read_from(body.as_bytes())
         .map_err(|e| format!("Failed to parse RSS feed: {e}"))?;
+    let default_source = Some(channel.title());
 
-    let articles = channel
+    Ok(channel
         .items()
         .iter()
-        .take(count as usize)
-        .filter_map(|item| {
-            let title = item.title()?.to_string();
-            let url = item.link()?.to_string();
-            let publisher = item.source().and_then(|s| s.title().map(|t| t.to_string()));
-            let image_url = item
-                .extensions()
-                .get("media")
-                .and_then(|m| m.get("content"))
-                .and_then(|v| v.first())
-                .and_then(|e| e.attrs().get("url"))
-                .cloned();
-            Some(NewsArticle { title, url, publisher, image_url })
-        })
-        .collect();
+        .filter(|item| rss_item_matches_ticker(item, identity))
+        .filter_map(|item| rss_item_to_article(item, default_source))
+        .collect())
+}
 
-    Ok(articles)
+fn search_news_item_matches_ticker(item: &SearchNewsItem, identity: &TickerIdentity) -> bool {
+    if let Some(related_tickers) = item
+        .related_tickers
+        .as_ref()
+        .filter(|related_tickers| !related_tickers.is_empty())
+    {
+        return related_tickers
+            .iter()
+            .any(|related| tickers_match(related, &identity.symbol));
+    }
+
+    let text = format!(
+        "{} {}",
+        item.title.as_deref().unwrap_or_default(),
+        item.publisher.as_deref().unwrap_or_default(),
+    );
+    article_text_matches_identity(&text, identity)
+}
+
+fn rss_item_matches_ticker(item: &rss::Item, identity: &TickerIdentity) -> bool {
+    let text = format!(
+        "{} {}",
+        item.title().unwrap_or_default(),
+        item.description().unwrap_or_default(),
+    );
+    article_text_matches_identity(&text, identity)
+}
+
+fn search_news_item_to_article(item: SearchNewsItem) -> Option<NewsArticle> {
+    let title = clean_optional_string(item.title)?;
+    let url = clean_optional_string(item.link)?;
+    let source = clean_optional_string(item.publisher);
+    let image_url = item
+        .thumbnail
+        .and_then(|thumbnail| thumbnail.resolutions)
+        .and_then(|resolutions| {
+            resolutions
+                .into_iter()
+                .find_map(|resolution| clean_optional_string(resolution.url))
+        });
+
+    Some(NewsArticle {
+        title,
+        url,
+        source: source.clone(),
+        publisher: source,
+        published_at: item.provider_publish_time.filter(|ts| *ts > 0),
+        image_url,
+    })
+}
+
+fn rss_item_to_article(item: &rss::Item, default_source: Option<&str>) -> Option<NewsArticle> {
+    let title = clean_optional_string(item.title().map(str::to_string))?;
+    let url = clean_optional_string(item.link().map(str::to_string))?;
+    let source = item
+        .source()
+        .and_then(|s| s.title().map(str::to_string))
+        .or_else(|| default_source.map(str::to_string))
+        .and_then(|s| clean_optional_string(Some(s)));
+    let image_url = item
+        .extensions()
+        .get("media")
+        .and_then(|m| m.get("content"))
+        .and_then(|v| v.first())
+        .and_then(|e| e.attrs().get("url"))
+        .cloned()
+        .and_then(|s| clean_optional_string(Some(s)));
+
+    Some(NewsArticle {
+        title,
+        url,
+        source: source.clone(),
+        publisher: source,
+        published_at: item
+            .pub_date()
+            .and_then(|d| chrono::DateTime::parse_from_rfc2822(d).ok())
+            .map(|d| d.timestamp()),
+        image_url,
+    })
+}
+
+fn dedupe_sort_take_news(mut articles: Vec<NewsArticle>, count: usize) -> Vec<NewsArticle> {
+    let mut seen = HashSet::new();
+    articles.retain(|article| {
+        let key = if article.url.is_empty() {
+            normalize_search_text(&article.title)
+        } else {
+            article.url.trim().trim_end_matches('/').to_lowercase()
+        };
+        seen.insert(key)
+    });
+    articles.sort_by(|a, b| {
+        b.published_at
+            .unwrap_or(0)
+            .cmp(&a.published_at.unwrap_or(0))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    articles.truncate(count);
+    articles
+}
+
+fn ticker_identity_from_quotes(ticker: &str, quotes: Option<&[SearchQuote]>) -> TickerIdentity {
+    let mut identity = TickerIdentity::new(ticker);
+    let Some(quotes) = quotes else {
+        return identity;
+    };
+
+    if let Some(quote) = quotes.iter().find(|q| tickers_match(&q.symbol, ticker)) {
+        add_quote_aliases(&mut identity.aliases, quote);
+    }
+
+    identity.aliases.sort();
+    identity.aliases.dedup();
+    identity
+}
+
+fn add_quote_aliases(aliases: &mut Vec<String>, quote: &SearchQuote) {
+    for name in [quote.long_name.as_deref(), quote.short_name.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if let Some(company_name) = cleaned_company_name(name) {
+            aliases.push(company_name.clone());
+            for token in significant_company_tokens(&company_name)
+                .into_iter()
+                .take(2)
+            {
+                aliases.push(token);
+            }
+        }
+    }
+}
+
+fn article_text_matches_identity(text: &str, identity: &TickerIdentity) -> bool {
+    text_has_ticker_symbol(text, &identity.symbol)
+        || identity
+            .aliases
+            .iter()
+            .any(|alias| text_has_alias(text, alias))
+}
+
+fn text_has_ticker_symbol(text: &str, ticker: &str) -> bool {
+    let symbol = canonical_ticker(ticker);
+    if symbol.is_empty() {
+        return false;
+    }
+
+    let upper_text = text.to_uppercase();
+    let strong_patterns = [
+        format!("${symbol}"),
+        format!("({symbol})"),
+        format!(":{symbol}"),
+        format!("/{symbol}"),
+    ];
+    if strong_patterns
+        .iter()
+        .any(|pattern| upper_text.contains(pattern))
+    {
+        return true;
+    }
+
+    if symbol.len() < 3 || is_common_symbol_word(&symbol) {
+        return false;
+    }
+
+    upper_text
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '.')
+        .any(|token| canonical_ticker(token) == symbol)
+}
+
+fn text_has_alias(text: &str, alias: &str) -> bool {
+    let normalized_text = format!(" {} ", normalize_search_text(text));
+    let normalized_alias = normalize_search_text(alias);
+
+    !normalized_alias.is_empty()
+        && normalized_alias.len() >= 4
+        && normalized_text.contains(&format!(" {normalized_alias} "))
+}
+
+fn significant_company_tokens(company_name: &str) -> Vec<String> {
+    normalize_search_text(company_name)
+        .split_whitespace()
+        .filter(|token| token.len() >= 4 && !is_company_noise_word(token))
+        .map(str::to_string)
+        .collect()
+}
+
+fn cleaned_company_name(name: &str) -> Option<String> {
+    let mut cleaned = name
+        .replace("&amp;", "&")
+        .replace(" - ", " ")
+        .trim()
+        .to_string();
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    loop {
+        let normalized = normalize_search_text(&cleaned);
+        let mut changed = false;
+        for suffix in [
+            "common stock",
+            "ordinary shares",
+            "class a",
+            "class b",
+            "class c",
+            "incorporated",
+            "corporation",
+            "company",
+            "holdings",
+            "holding",
+            "limited",
+            "inc",
+            "corp",
+            "co",
+            "ltd",
+            "plc",
+            "sa",
+            "nv",
+            "ag",
+        ] {
+            if normalized == suffix {
+                return None;
+            }
+            if normalized.ends_with(&format!(" {suffix}")) {
+                let keep_len = normalized.len() - suffix.len() - 1;
+                cleaned = normalized[..keep_len].to_string();
+                changed = true;
+                break;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    clean_optional_string(Some(cleaned))
+}
+
+fn normalize_search_text(value: &str) -> String {
+    value
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '&' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn canonical_ticker(ticker: &str) -> String {
+    ticker
+        .trim()
+        .trim_start_matches('$')
+        .to_uppercase()
+        .replace('.', "-")
+}
+
+fn tickers_match(a: &str, b: &str) -> bool {
+    canonical_ticker(a) == canonical_ticker(b)
+}
+
+fn is_common_symbol_word(symbol: &str) -> bool {
+    matches!(
+        symbol,
+        "A" | "AI"
+            | "ALL"
+            | "AN"
+            | "ARE"
+            | "BE"
+            | "BY"
+            | "CAN"
+            | "DO"
+            | "FOR"
+            | "GO"
+            | "HAS"
+            | "HE"
+            | "I"
+            | "IN"
+            | "IT"
+            | "NOW"
+            | "ON"
+            | "OR"
+            | "OUT"
+            | "SEE"
+            | "SO"
+            | "TO"
+            | "UP"
+            | "WE"
+    )
+}
+
+fn is_company_noise_word(token: &str) -> bool {
+    matches!(
+        token,
+        "and"
+            | "the"
+            | "inc"
+            | "corp"
+            | "corporation"
+            | "company"
+            | "class"
+            | "common"
+            | "stock"
+            | "shares"
+            | "holdings"
+            | "holding"
+            | "group"
+            | "limited"
+            | "ltd"
+            | "plc"
+            | "trust"
+            | "fund"
+            | "etf"
+            | "index"
+            | "american"
+            | "depositary"
+    )
+}
+
+fn clean_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
