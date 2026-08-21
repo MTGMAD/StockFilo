@@ -236,12 +236,23 @@ struct Indicators {
 #[derive(Debug, Deserialize)]
 struct QuoteIndicator {
     close: Option<Vec<Option<f64>>>,
+    open: Option<Vec<Option<f64>>>,
+    high: Option<Vec<Option<f64>>>,
+    low: Option<Vec<Option<f64>>>,
+    volume: Option<Vec<Option<f64>>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ChartPoint {
     pub timestamp: i64,
     pub close: f64,
+    /// Open/high/low are carried for candlestick rendering. Yahoo omits them
+    /// for some instruments and intervals, so they stay optional — the chart
+    /// falls back to a line rather than drawing an incomplete candle.
+    pub open: Option<f64>,
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    pub volume: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1030,18 +1041,31 @@ pub async fn fetch_chart(
         .ok_or_else(|| "No chart data returned from Yahoo".to_string())?;
 
     let timestamps = result.timestamp.unwrap_or_default();
-    let closes = result
-        .indicators
-        .quote
-        .into_iter()
-        .next()
-        .and_then(|q| q.close)
-        .unwrap_or_default();
+    let quote = result.indicators.quote.into_iter().next();
+    let closes = quote.as_ref().and_then(|q| q.close.clone()).unwrap_or_default();
+    let opens = quote.as_ref().and_then(|q| q.open.clone()).unwrap_or_default();
+    let highs = quote.as_ref().and_then(|q| q.high.clone()).unwrap_or_default();
+    let lows = quote.as_ref().and_then(|q| q.low.clone()).unwrap_or_default();
+    let volumes = quote.as_ref().and_then(|q| q.volume.clone()).unwrap_or_default();
+
+    // The OHLC arrays are index-aligned with `timestamp`, but Yahoo may omit an
+    // array entirely — index defensively rather than zipping, so a missing
+    // `open` series cannot silently truncate the whole chart.
+    let at = |v: &Vec<Option<f64>>, i: usize| -> Option<f64> { v.get(i).copied().flatten() };
 
     let points: Vec<ChartPoint> = timestamps
         .into_iter()
-        .zip(closes)
-        .filter_map(|(ts, close)| close.map(|c| ChartPoint { timestamp: ts, close: c }))
+        .enumerate()
+        .filter_map(|(i, ts)| {
+            at(&closes, i).map(|c| ChartPoint {
+                timestamp: ts,
+                close: c,
+                open: at(&opens, i),
+                high: at(&highs, i),
+                low: at(&lows, i),
+                volume: at(&volumes, i),
+            })
+        })
         .collect();
 
     Ok(ChartData {

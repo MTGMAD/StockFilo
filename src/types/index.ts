@@ -121,7 +121,16 @@ export interface DividendInfo {
 export interface ChartPoint {
   timestamp: number;
   close: number;
+  /** Present when the provider supplies OHLC; needed for candlesticks.
+   *  Null for instruments or intervals Yahoo does not publish them for. */
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  volume: number | null;
 }
+
+/** How the price chart is drawn. */
+export type ChartStyle = "mountain" | "line" | "candles";
 
 export interface ChartData {
   points: ChartPoint[];

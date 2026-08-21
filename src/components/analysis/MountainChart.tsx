@@ -1,16 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { ChartData, ChartRange } from "../../types";
-import { formatCurrency, getCssVar, cn } from "../../lib/utils";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from "recharts";
+import type { ChartData, ChartRange, ChartStyle } from "../../types";
+import { formatCurrency, cn } from "../../lib/utils";
+import { openUrl } from "../../lib/openUrl";
+import { ChartStyleMenu } from "./ChartStyleMenu";
+import { hasOhlc } from "./ohlc";
+import { PriceChart } from "./PriceChart";
 
 interface MountainChartProps {
   ticker: string;
@@ -38,26 +33,23 @@ const FUND_RANGES: { label: string; value: ChartRange; interval: string }[] = [
   { label: "All", value: "max", interval: "1mo" },
 ];
 
-function formatTime(ts: number, range: ChartRange): string {
-  const d = new Date(ts * 1000);
-  if (range === "1d") {
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
-  if (range === "5d") {
-    return d.toLocaleDateString([], { weekday: "short", hour: "numeric" });
-  }
-  if (range === "1mo" || range === "6mo" || range === "ytd") {
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
-  }
-  return d.toLocaleDateString([], { month: "short", year: "2-digit" });
-}
-
 export function MountainChart({ ticker, quoteType }: MountainChartProps) {
   const isFund = quoteType === "MUTUALFUND" || quoteType === "UIT";
   const ranges = isFund ? FUND_RANGES : RANGES;
   const defaultRange = isFund ? "1mo" : "1d";
 
   const [range, setRange] = useState<ChartRange>(defaultRange);
+  const [style, setStyle] = useState<ChartStyle>(() => {
+    const saved = localStorage.getItem("stockfolio-chart-style");
+    return saved === "line" || saved === "candles" || saved === "mountain"
+      ? saved
+      : "mountain";
+  });
+
+  function changeStyle(s: ChartStyle) {
+    setStyle(s);
+    localStorage.setItem("stockfolio-chart-style", s);
+  }
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,8 +96,20 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
   const refPrice = previousClose ?? firstPrice;
   const isUp = lastPrice != null && refPrice != null ? lastPrice >= refPrice : true;
 
-  const chartColor = isUp ? getCssVar("--positive") : getCssVar("--negative"); // theme-aware
-  const gradientId = `mountain-gradient-${ticker}`;
+  // Candles need OHLC, which Yahoo omits for some instruments and intervals.
+  const candlesReady = hasOhlc(points);
+  const effectiveStyle: ChartStyle =
+    style === "candles" && !candlesReady ? "mountain" : style;
+
+  // Tick precision has to follow the visible price range. Two cents of spread
+  // formatted with toFixed(0) renders as "$26, $26, $26" — every tick looking
+  // identical, which is what a fixed precision does to a narrow intraday range.
+  const lows = points.map((p) => p.low ?? p.close);
+  const highs = points.map((p) => p.high ?? p.close);
+  const span =
+    points.length > 0 ? Math.max(...highs) - Math.min(...lows) : 0;
+  const priceDecimals = span >= 50 ? 0 : span >= 5 ? 1 : span >= 0.5 ? 2 : 3;
+
 
   // Price change display
   const priceDelta =
@@ -122,7 +126,17 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
         <h3 className="text-sm font-medium text-muted-foreground">
           {ticker} Price Chart
         </h3>
-        <div className="flex gap-1">
+        <div className="flex items-center gap-1">
+          <ChartStyleMenu
+            value={style}
+            onChange={changeStyle}
+            candlesUnavailableReason={
+              candlesReady
+                ? null
+                : "No open/high/low data for this range"
+            }
+          />
+          <div className="w-px h-4 bg-border mx-0.5" />
           {ranges.map((r) => (
             <button
               key={r.value}
@@ -176,79 +190,27 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
             No chart data available
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
-              data={points}
-              margin={{ top: 4, right: 8, left: 8, bottom: 0 }}
-            >
-              <defs>
-                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={chartColor} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={chartColor} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <XAxis
-                dataKey="timestamp"
-                tickFormatter={(ts) => formatTime(ts, range)}
-                tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-                minTickGap={40}
-              />
-              <YAxis
-                domain={["auto", "auto"]}
-                tickFormatter={(v) => `$${v.toFixed(0)}`}
-                tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-                width={55}
-              />
-              <Tooltip
-                labelFormatter={(ts) => {
-                  const d = new Date((ts as number) * 1000);
-                  if (range === "1d" || range === "5d") {
-                    return d.toLocaleString([], {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    });
-                  }
-                  return d.toLocaleDateString([], {
-                    month: "long",
-                    day: "numeric",
-                    year: "numeric",
-                  });
-                }}
-                formatter={(value) => [value != null ? formatCurrency(Number(value)) : "—", "Price"] as [string, string]}
-                contentStyle={{
-                  background: "var(--background)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 6,
-                  fontSize: 13,
-                }}
-              />
-              {previousClose != null && range === "1d" && (
-                <ReferenceLine
-                  y={previousClose}
-                  stroke="var(--muted-foreground)"
-                  strokeDasharray="4 4"
-                  strokeOpacity={0.5}
-                />
-              )}
-              <Area
-                type="monotone"
-                dataKey="close"
-                stroke={chartColor}
-                strokeWidth={2}
-                fill={`url(#${gradientId})`}
-                dot={false}
-                activeDot={{ r: 4, fill: chartColor }}
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          <PriceChart
+            points={points}
+            style={effectiveStyle}
+            range={range}
+            previousClose={previousClose}
+            isUp={isUp}
+            priceDecimals={priceDecimals}
+          />
         )}
+      </div>
+
+      {/* Lightweight Charts is Apache-2.0 and requires attribution with a link
+          back to TradingView wherever its charts are shown. */}
+      <div className="flex justify-end pt-1">
+        <button
+          type="button"
+          onClick={() => openUrl("https://www.tradingview.com/", "browser")}
+          className="text-[10px] text-muted-foreground/70 hover:text-muted-foreground transition-colors"
+        >
+          Charts by TradingView
+        </button>
       </div>
     </div>
   );
