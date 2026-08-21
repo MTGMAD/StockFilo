@@ -11,6 +11,7 @@ import {
 import { ChartStyleMenu } from "./ChartStyleMenu";
 import { TimeZoneMenu } from "./TimeZoneMenu";
 import { RangeMenu } from "./RangeMenu";
+import { TickerLogo } from "../shared/TickerLogo";
 import { hasOhlc } from "./ohlc";
 import { PriceChart } from "./PriceChart";
 
@@ -137,12 +138,43 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
 
   return (
     <div className="bg-muted/30 border border-border rounded-lg p-4">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-1">
-        <h3 className="text-sm font-medium text-muted-foreground">
-          {ticker} Price Chart
-        </h3>
-        <div className="flex items-center gap-1">
+      {/* Header: identity on the left, controls on the right. */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2.5">
+            <TickerLogo ticker={ticker} size="lg" />
+            {/* Sized so the cap height sits level with the logo rather than
+                floating beside it as a caption. */}
+            <span className="text-2xl font-bold text-foreground truncate tracking-tight">
+              {ticker}
+            </span>
+          </div>
+
+          {/* Price sits under the identity rather than beside it, so a long
+              name can never push the change onto a second line. */}
+          {lastPrice != null && (
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl font-bold text-foreground tabular-nums">
+                {formatCurrency(lastPrice)}
+              </span>
+              {priceDelta != null && pctDelta != null && (
+                <span
+                  className={cn(
+                    "text-sm font-medium tabular-nums",
+                    isUp ? "text-positive" : "text-negative",
+                  )}
+                >
+                  {priceDelta >= 0 ? "+" : "-"}
+                  {formatCurrency(Math.abs(priceDelta))} (
+                  {pctDelta >= 0 ? "+" : ""}
+                  {pctDelta.toFixed(2)}%)
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
           <TimeZoneMenu value={timeZone} onChange={changeTimeZone} />
           <ChartStyleMenu
             value={style}
@@ -157,27 +189,6 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
           <RangeMenu ranges={ranges} value={range} onChange={setRange} />
         </div>
       </div>
-
-      {/* Price summary */}
-      {lastPrice != null && (
-        <div className="flex items-baseline gap-2 mb-3">
-          <span className="text-2xl font-bold text-foreground">
-            {formatCurrency(lastPrice)}
-          </span>
-          {priceDelta != null && pctDelta != null && (
-            <span
-              className={cn(
-                "text-sm font-medium",
-                isUp ? "text-positive" : "text-negative"
-              )}
-            >
-              {priceDelta >= 0 ? "+" : ""}
-              {priceDelta.toFixed(2)} ({pctDelta >= 0 ? "+" : ""}
-              {pctDelta.toFixed(2)}%)
-            </span>
-          )}
-        </div>
-      )}
 
       {/* Chart area. Taller than the header above it needs, so the extra height
           extends downward into the page rather than pushing the price summary

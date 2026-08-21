@@ -1,4 +1,5 @@
 pub mod brokers;
+pub mod logos;
 pub mod stocks;
 pub mod browser;
 pub mod db_portfolios;
