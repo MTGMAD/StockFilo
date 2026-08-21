@@ -55,6 +55,7 @@ impl Alpaca {
             supports_activities: true,
             provides_pricing: true,
             docs_url: Some("https://app.alpaca.markets/paper/dashboard/overview".to_string()),
+            logo_domain: Some("alpaca.markets".to_string()),
         }
     }
 

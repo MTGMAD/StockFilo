@@ -61,13 +61,15 @@ pub fn upsert_account(
 ) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO broker_accounts \
-           (connection_id, provider_account_id, account_mask, currency, equity, cash, snapshot_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+           (connection_id, provider_account_id, account_mask, currency, equity, cash, \
+            buying_power, snapshot_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
          ON CONFLICT(connection_id, provider_account_id) DO UPDATE SET \
            account_mask = excluded.account_mask, \
            currency     = excluded.currency, \
            equity       = excluded.equity, \
            cash         = excluded.cash, \
+           buying_power = excluded.buying_power, \
            snapshot_at  = excluded.snapshot_at",
         params![
             connection_id,
@@ -76,6 +78,7 @@ pub fn upsert_account(
             acct.currency,
             acct.equity,
             acct.cash,
+            acct.buying_power,
             now_secs()
         ],
     )?;

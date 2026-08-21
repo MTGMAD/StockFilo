@@ -104,6 +104,9 @@ pub struct ProviderDescriptor {
     /// data the broker does not publish. False falls back to Yahoo entirely.
     pub provides_pricing: bool,
     pub docs_url: Option<String>,
+    /// Domain used to look up the brokerage's icon, e.g. "alpaca.markets".
+    /// A provider that omits it falls back to a lettered chip.
+    pub logo_domain: Option<String>,
 }
 
 /// An account exposed by a connection.

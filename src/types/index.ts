@@ -259,6 +259,7 @@ export interface ProviderDescriptor {
    *  reference data (name, asset type, analyst target, dividend yield). */
   provides_pricing: boolean;
   docs_url: string | null;
+  logo_domain: string | null;
 }
 
 export interface RemoteAccount {
@@ -277,6 +278,8 @@ export interface BrokerAccountInfo {
   currency: string;
   equity: number | null;
   cash: number | null;
+  /** Brokerage figure only; null for providers that do not report it. */
+  buying_power: number | null;
   snapshot_at: number | null;
   portfolio_id: number | null;
   portfolio_name: string | null;
@@ -286,6 +289,8 @@ export interface BrokerConnectionInfo {
   id: string;
   provider: string;
   provider_name: string;
+  /** Domain for the brokerage icon, declared by the provider. */
+  provider_logo_domain: string | null;
   environment: string;
   /** Display label for the account type, e.g. "Margin". */
   environment_label: string;

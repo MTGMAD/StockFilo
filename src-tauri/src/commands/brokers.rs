@@ -28,6 +28,8 @@ pub struct BrokerAccountInfo {
     pub currency: String,
     pub equity: Option<f64>,
     pub cash: Option<f64>,
+    /// Brokerage concept only — absent for providers that do not report it.
+    pub buying_power: Option<f64>,
     pub snapshot_at: Option<i64>,
     pub portfolio_id: Option<i64>,
     pub portfolio_name: Option<String>,
@@ -38,6 +40,8 @@ pub struct BrokerConnectionInfo {
     pub id: String,
     pub provider: String,
     pub provider_name: String,
+    /// Domain for the brokerage icon, declared by the provider.
+    pub provider_logo_domain: Option<String>,
     pub environment: String,
     /// Display label for the account type, e.g. "Margin" or "Paper".
     pub environment_label: String,
@@ -214,6 +218,9 @@ pub fn broker_list_connections(
             let provider_name = Provider::from_id(&provider)
                 .map(|p| p.descriptor().name)
                 .unwrap_or_else(|_| provider.clone());
+            let provider_logo_domain = Provider::from_id(&provider)
+                .ok()
+                .and_then(|p| p.descriptor().logo_domain);
             let environment: String = r.get(2)?;
             let environment_label = env_label(&provider, &environment);
             let environment_kind = env_kind(&provider, &environment);
@@ -221,6 +228,7 @@ pub fn broker_list_connections(
                 id: r.get(0)?,
                 provider,
                 provider_name,
+                provider_logo_domain,
                 environment,
                 environment_label,
                 environment_kind,
@@ -242,7 +250,7 @@ pub fn broker_list_connections(
         c.accounts = state.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT a.id, a.provider_account_id, a.account_mask, a.currency, a.equity, \
-                        a.cash, a.snapshot_at, p.id, p.name \
+                        a.cash, a.buying_power, a.snapshot_at, p.id, p.name \
                  FROM broker_accounts a \
                  LEFT JOIN portfolios p ON p.broker_account_id = a.id \
                  WHERE a.connection_id = ?1 ORDER BY a.id ASC",
@@ -255,9 +263,10 @@ pub fn broker_list_connections(
                     currency: r.get(3)?,
                     equity: r.get(4)?,
                     cash: r.get(5)?,
-                    snapshot_at: r.get(6)?,
-                    portfolio_id: r.get(7)?,
-                    portfolio_name: r.get(8)?,
+                    buying_power: r.get(6)?,
+                    snapshot_at: r.get(7)?,
+                    portfolio_id: r.get(8)?,
+                    portfolio_name: r.get(9)?,
                 })
             })?;
             rows.collect()

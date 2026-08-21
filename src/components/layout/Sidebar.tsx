@@ -133,8 +133,10 @@ export function Sidebar({
       {/* Logo header */}
       <div
         className={cn(
-          "flex items-center border-b border-border shrink-0",
-          collapsed ? "justify-center px-0 py-4" : "px-4 py-4"
+          // h-16 is the shared header height, matched in Header.tsx so the
+          // three sections line up across the top.
+          "flex items-center h-16 border-b border-border shrink-0",
+          collapsed ? "justify-center px-0" : "px-4"
         )}
       >
         {collapsed ? (

@@ -5,6 +5,7 @@ import type { View, AppConfig, SyncResult, SyncStatus } from "./types";
 import { isBrokerPortfolio } from "./types";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
+import type { HeaderFigures } from "./components/layout/Header";
 import { PortfolioView } from "./components/portfolio/PortfolioView";
 import { WatchList } from "./components/watchlist/WatchList";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
@@ -219,6 +220,71 @@ export default function App() {
 
   const showRefresh = view === "portfolio" || view === "dashboard";
 
+  // The sectioned header belongs to the portfolio view only — the dashboard
+  // keeps its own layout untouched.
+  const inPortfolio = view === "portfolio" && activePortfolio != null;
+
+  // Which brokerage this portfolio belongs to, for the header icon. Null on
+  // manual portfolios, which belong to none.
+  const headerBroker = useMemo(() => {
+    if (!inPortfolio || !isBroker) return null;
+    const conn = connections.find((c) =>
+      c.accounts.some((a) => a.id === activePortfolio?.broker_account_id),
+    );
+    return conn
+      ? { name: conn.provider_name, domain: conn.provider_logo_domain }
+      : null;
+  }, [inPortfolio, isBroker, connections, activePortfolio]);
+
+  const headerFigures: HeaderFigures | null = useMemo(() => {
+    if (!inPortfolio) return null;
+
+    if (isBroker) {
+      // Straight from the brokerage. Buying power is theirs alone — a manual
+      // portfolio has no such concept, which is why the shapes differ.
+      const acct = connections
+        .flatMap((c) => c.accounts)
+        .find((a) => a.id === activePortfolio?.broker_account_id);
+      // Unrealized P&L summed from the broker's own per-position figures, so
+      // the total is theirs rather than something recomputed from prices.
+      let pl = 0;
+      let reported = false;
+      for (const s of summaries) {
+        if (s.pnlDollar != null) {
+          pl += s.pnlDollar;
+          reported = true;
+        }
+      }
+
+      return {
+        kind: "broker",
+        equity: acct?.equity ?? null,
+        cash: acct?.cash ?? null,
+        buyingPower: acct?.buying_power ?? null,
+        gain: reported ? pl : null,
+      };
+    }
+
+    let value = 0;
+    let cost = 0;
+    let priced = false;
+    for (const s of summaries) {
+      cost += s.totalInvested;
+      if (s.marketValue != null) {
+        value += s.marketValue;
+        priced = true;
+      }
+    }
+    return {
+      kind: "manual",
+      // Until a price arrives there is no market value; showing cost basis
+      // under a "Value" label would be a different number wearing that name.
+      value: priced ? value : null,
+      cost,
+      gain: priced ? value - cost : null,
+    };
+  }, [inPortfolio, isBroker, connections, activePortfolio, summaries]);
+
   const headerTitle =
     view === "portfolio" && activePortfolio
       ? activePortfolio.name
@@ -279,6 +345,10 @@ export default function App() {
           onSyncNow={runAutoSync}
           hasSyncTargets={hasSyncTargets}
           lastSyncedAt={lastSyncedAt}
+          positionsCount={inPortfolio ? summaries.length : null}
+          figures={headerFigures}
+          brokerName={headerBroker?.name ?? null}
+          brokerLogoDomain={headerBroker?.domain ?? null}
         />
         {error && (
           <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-sm text-red-600">

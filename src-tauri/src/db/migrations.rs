@@ -254,7 +254,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 14);
+        assert_eq!(v, 15);
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 14);
+        assert_eq!(v, 15);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 14);
+        assert_eq!(after, 15);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -452,6 +452,14 @@ mod tests {
     }
 }
 
+/// V15: persist buying power.
+///
+/// Alpaca reports it on every account fetch and it was already mapped into
+/// `RemoteAccount`, but there was nowhere to store it. Nullable, because it is
+/// a brokerage concept — a provider that does not report it leaves it unset
+/// rather than defaulting to zero, which would read as "no buying power".
+const MIGRATION_V15: &str = "ALTER TABLE broker_accounts ADD COLUMN buying_power REAL;";
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -471,6 +479,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (12, MIGRATION_V12),
         (13, MIGRATION_V13),
         (14, MIGRATION_V14),
+        (15, MIGRATION_V15),
     ];
 
     let user_version: i64 =

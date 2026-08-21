@@ -19,6 +19,12 @@ use tauri::{AppHandle, Manager};
 /// Remote source. Returns a small square PNG per symbol.
 const LOGO_URL: &str = "https://assets.parqet.com/logos/symbol";
 
+/// Brand icons, looked up by domain. Used for brokerage logos, where there is
+/// no ticker to key on. Requested at 128px so the icon stays crisp on a
+/// high-DPI display; the service returns a real site icon rather than a
+/// generated placeholder.
+const BRAND_URL: &str = "https://www.google.com/s2/favicons";
+
 /// How long to wait before retrying a symbol that had no logo. Without this a
 /// portfolio full of bonds and mutual funds would re-request on every render.
 const MISS_TTL_SECS: i64 = 7 * 24 * 60 * 60;
@@ -145,6 +151,72 @@ pub async fn fetch_ticker_logo(app: AppHandle, ticker: String) -> Result<TickerL
         _ => {
             let _ = fs::write(&miss, now_secs().to_string());
             Ok(TickerLogo { ticker: symbol, data_uri: None })
+        }
+    }
+}
+
+/// Fetch a brand icon by domain, e.g. "alpaca.markets".
+///
+/// Same disk cache and miss handling as ticker logos, and the same reason for
+/// living in Rust: the webview makes no network requests of its own, and a
+/// cached icon keeps working offline.
+#[tauri::command]
+pub async fn fetch_brand_logo(app: AppHandle, domain: String) -> Result<TickerLogo, String> {
+    let host = domain.trim().to_lowercase();
+    if host.is_empty() {
+        return Ok(TickerLogo { ticker: domain, data_uri: None });
+    }
+
+    let dir = cache_dir(&app)?;
+    let key = format!("brand_{}", safe_name(&host));
+    let hit = dir.join(format!("{key}.png"));
+    let miss = dir.join(format!("{key}.miss"));
+
+    if let Ok(bytes) = fs::read(&hit) {
+        if !bytes.is_empty() {
+            return Ok(TickerLogo { ticker: host, data_uri: Some(to_data_uri(&bytes)) });
+        }
+    }
+
+    if let Ok(contents) = fs::read_to_string(&miss) {
+        if let Ok(at) = contents.trim().parse::<i64>() {
+            if now_secs() - at < MISS_TTL_SECS {
+                return Ok(TickerLogo { ticker: host, data_uri: None });
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let url = format!("{BRAND_URL}?domain={}&sz=128", urlencoding::encode(&host));
+    let bytes = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => {
+            let is_image = r
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.starts_with("image/"))
+                .unwrap_or(false);
+            if is_image { r.bytes().await.ok().map(|b| b.to_vec()) } else { None }
+        }
+        Ok(_) => None,
+        // A network failure is not a miss — the icon may well exist once
+        // connectivity returns, so it is not written to the miss cache.
+        Err(_) => return Ok(TickerLogo { ticker: host, data_uri: None }),
+    };
+
+    match bytes {
+        Some(b) if !b.is_empty() && b.len() <= MAX_BYTES => {
+            let _ = fs::write(&hit, &b);
+            let _ = fs::remove_file(&miss);
+            Ok(TickerLogo { ticker: host, data_uri: Some(to_data_uri(&b)) })
+        }
+        _ => {
+            let _ = fs::write(&miss, now_secs().to_string());
+            Ok(TickerLogo { ticker: host, data_uri: None })
         }
     }
 }
