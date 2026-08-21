@@ -337,26 +337,18 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
   ) {
     if (!config) return;
 
-    // Encrypt password for WebDAV targets before saving
-    let processedTarget: NewTarget = { ...newTarget };
-    if (newTarget.kind === "webdav" && newTarget.password_enc) {
-      try {
-        const encrypted = await invoke<string>("encrypt_sync_password", {
-          plain: newTarget.password_enc,
-          deviceId: config.device_id,
-        });
-        processedTarget = {
-          ...processedTarget,
-          password_enc: encrypted,
-        };
-      } catch {
-        // If encryption fails, save as-is
-      }
-    }
+    // The form carries the password in the clear so it can be tested before
+    // saving. It must never reach config.json — the database and config live
+    // next to each other and config.json is not a safe place for a credential.
+    // Strip it here and hand it to the OS keychain once the target has an id.
+    const plainPassword =
+      newTarget.kind === "webdav" ? (newTarget.password_enc ?? "") : "";
 
+    const targetId = crypto.randomUUID();
     const target: SyncTarget = {
-      ...processedTarget,
-      id: crypto.randomUUID(),
+      ...newTarget,
+      password_enc: null,
+      id: targetId,
       last_synced_at: null,
       last_sync_status: null,
     } as SyncTarget;
@@ -365,6 +357,14 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
       sync_targets: [...config.sync_targets, target],
     };
     try {
+      if (plainPassword) {
+        // Store the secret first: a target saved without its password would
+        // fail every sync with an auth error that looks like a server problem.
+        await invoke("save_sync_password", {
+          targetId,
+          password: plainPassword,
+        });
+      }
       await invoke("save_config", { config: updated });
       setConfig(updated);
       setShowAddForm(false);
@@ -407,6 +407,8 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
     };
     try {
       await invoke("save_config", { config: updated });
+      // Don't leave an orphaned credential behind in the keychain.
+      await invoke("delete_sync_password", { targetId: id }).catch(() => {});
       setConfig(updated);
       onConfigSaved?.();
     } catch (e) {

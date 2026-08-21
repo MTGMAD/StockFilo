@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -11,13 +11,18 @@ pub struct Portfolio {
     pub sort_order: i64,
     pub is_starred: i64,
     pub created_at: i64,
+    /// 'manual' for hand-maintained portfolios, otherwise the provider id
+    /// ('alpaca'). Existing rows default to 'manual' via migration V14.
+    pub source: String,
+    /// Set only for broker-linked portfolios.
+    pub broker_account_id: Option<i64>,
 }
 
 #[tauri::command]
 pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, name, sort_order, is_starred, created_at \
+            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id \
              FROM portfolios ORDER BY sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -27,6 +32,8 @@ pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>,
                 sort_order: r.get(2)?,
                 is_starred: r.get(3)?,
                 created_at: r.get(4)?,
+                source: r.get(5)?,
+                broker_account_id: r.get(6)?,
             })
         })?;
         rows.collect()
@@ -61,13 +68,32 @@ pub fn db_rename_portfolio(id: i64, name: String, state: State<'_, DbManager>) -
 #[tauri::command]
 pub fn db_delete_portfolio(id: i64, state: State<'_, DbManager>) -> Result<(), String> {
     state.with_conn(|conn| {
+        // A linked portfolio is owned by its connection. Deleting it here would
+        // leave the connection pointing at nothing, so disconnecting has to go
+        // through Settings, which also clears the stored credentials.
+        let source: Option<String> = conn
+            .query_row("SELECT source FROM portfolios WHERE id = ?1", params![id], |r| r.get(0))
+            .optional()?;
+        if let Some(s) = source.as_deref() {
+            if s != "manual" {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+                    Some(
+                        "This portfolio mirrors a brokerage account. Disconnect it in Settings → Brokerage Accounts to remove it."
+                            .to_string(),
+                    ),
+                ));
+            }
+        }
+
         conn.execute("DELETE FROM favorites WHERE portfolio_id = ?1", params![id])?;
         conn.execute("DELETE FROM purchases WHERE portfolio_id = ?1", params![id])?;
         conn.execute("DELETE FROM portfolios WHERE id = ?1", params![id])?;
         // Clean up orphaned stock cache entries
         conn.execute(
             "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) \
-             AND ticker NOT IN (SELECT ticker FROM watchlist)",
+             AND ticker NOT IN (SELECT ticker FROM watchlist) \
+             AND ticker NOT IN (SELECT ticker FROM broker_positions WHERE ticker IS NOT NULL)",
             [],
         )?;
         Ok(())

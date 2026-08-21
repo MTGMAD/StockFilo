@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  BrokerTransaction,
   DividendInfo,
   TickerSummary,
   Purchase,
@@ -32,11 +33,13 @@ import {
   Upload,
   Landmark,
   Trophy,
+  Lock,
 } from "lucide-react";
 import { PortfolioRankView } from "./PortfolioRankView";
 import { MountainChart } from "../analysis/MountainChart";
 import { TickerNews } from "../analysis/TickerNews";
 import { PurchasesTable } from "./PurchasesTable";
+import { BrokerTransactionsTable } from "./BrokerTransactionsTable";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useFavorites } from "../../hooks/useFavorites";
 import { openUrl } from "../../lib/openUrl";
@@ -78,6 +81,11 @@ interface PortfolioViewProps {
   onRefresh: () => void;
   linkOpenMode: LinkOpenMode;
   onDeletePortfolio: (id: number) => Promise<void>;
+  /** True for broker-linked portfolios: holdings mirror the brokerage and
+   *  cannot be edited by hand. */
+  readOnly?: boolean;
+  /** Dated transaction history from the broker, shown instead of purchases. */
+  brokerTransactions?: BrokerTransaction[];
 }
 
 export function PortfolioView({
@@ -92,6 +100,8 @@ export function PortfolioView({
   onRefresh,
   linkOpenMode,
   onDeletePortfolio,
+  readOnly = false,
+  brokerTransactions,
 }: PortfolioViewProps) {
   const [activeTab, setActiveTab] = useState<PortfolioTab>("analysis");
 
@@ -661,7 +671,36 @@ export function PortfolioView({
                 </p>
               </div>
 
-              {/* Data management */}
+              {/* A linked portfolio mirrors the brokerage. Import would write
+                  rows that never display (holdings come from broker_positions,
+                  not purchases), and export would emit an empty file — both
+                  read as data loss. Show what governs it instead. */}
+              {readOnly ? (
+                <div className="flex flex-col gap-4">
+                  <div className="rounded-lg border border-border bg-card p-4 flex gap-3">
+                    <Lock className="w-4 h-4 shrink-0 mt-0.5 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-semibold text-foreground mb-0.5">
+                        Managed by your brokerage
+                      </h3>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Holdings, prices and profit for this portfolio come
+                        directly from the broker, so purchases cannot be added,
+                        imported or edited here. Your manual portfolios are
+                        unaffected — nothing from this account is mixed into
+                        them.
+                      </p>
+                      <p className="text-xs text-muted-foreground leading-relaxed mt-2">
+                        To stop mirroring it, disconnect it under{" "}
+                        <span className="text-foreground font-medium">
+                          Settings → Brokerage Accounts
+                        </span>
+                        . That also removes the stored keys from this device.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
               <div className="flex flex-col gap-4">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-0.5">
@@ -740,8 +779,10 @@ export function PortfolioView({
                 </div>
               </div>
 
+              )}
+
               {/* Status feedback */}
-              {dataOpStatus && (
+              {!readOnly && dataOpStatus && (
                 <div
                   className={cn(
                     "text-sm px-4 py-3 rounded-lg border flex items-center justify-between gap-3",
@@ -761,7 +802,9 @@ export function PortfolioView({
                 </div>
               )}
 
-              {/* Danger Zone */}
+              {/* Danger Zone — manual portfolios only. A linked one is removed
+                  by disconnecting, which also clears its credentials. */}
+              {!readOnly && (
               <div className="border-t border-red-500/20 pt-6 flex flex-col gap-6">
                 <div>
                   <h3 className="text-sm font-semibold text-red-600 dark:text-red-400 mb-0.5">
@@ -863,16 +906,21 @@ export function PortfolioView({
                   )}
                 </div>
               </div>
+              )}
             </div>
           </div>
         ) : activeTab === "purchases" ? (
-          <PurchasesTable
-            purchases={purchases}
-            stocks={stocks}
-            onAdd={onAdd}
-            onUpdate={onUpdate}
-            onDelete={onDelete}
-          />
+          readOnly ? (
+            <BrokerTransactionsTable transactions={brokerTransactions ?? []} />
+          ) : (
+            <PurchasesTable
+              purchases={purchases}
+              stocks={stocks}
+              onAdd={onAdd}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+            />
+          )
         ) : isEmpty ? (
           <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">
             <p className="text-sm">No purchases yet.</p>

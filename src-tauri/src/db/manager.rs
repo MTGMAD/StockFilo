@@ -36,6 +36,24 @@ impl DbManager {
         f(&conn).map_err(|e| e.to_string())
     }
 
+    /// Execute a closure inside a transaction, committing on `Ok` and rolling
+    /// back on `Err`.
+    ///
+    /// `with_conn` hands out a shared `&Connection`, which cannot start a
+    /// transaction the usual way; `unchecked_transaction` is rusqlite's
+    /// supported escape hatch for exactly this case.  Safe here because the
+    /// connection is behind a `Mutex`, so no second transaction can overlap.
+    pub fn with_txn<F, R>(&self, f: F) -> Result<R, String>
+    where
+        F: FnOnce(&Connection) -> SqlResult<R>,
+    {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let txn = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let out = f(&txn).map_err(|e| e.to_string())?;
+        txn.commit().map_err(|e| e.to_string())?;
+        Ok(out)
+    }
+
     pub fn get_path(&self) -> PathBuf {
         self.path.lock().unwrap().clone()
     }

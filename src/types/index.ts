@@ -88,6 +88,15 @@ export interface Portfolio {
   sort_order: number;
   is_starred: number; // 0 or 1
   created_at: number;
+  /** "manual" for hand-maintained portfolios, otherwise the provider id. */
+  source: string;
+  /** Set only for broker-linked portfolios. */
+  broker_account_id: number | null;
+}
+
+/** True when this portfolio mirrors a brokerage account and is read-only. */
+export function isBrokerPortfolio(p: Portfolio | null | undefined): boolean {
+  return !!p && p.source !== "manual" && p.broker_account_id != null;
 }
 
 export interface Watchlist {
@@ -205,3 +214,125 @@ export interface SyncResult {
 }
 
 export type SyncStatus = "idle" | "syncing" | "success" | "error";
+
+// ── Brokerage types ────────────────────────────────────────────────────────
+// Flat structs mirroring src-tauri/src/brokers/types.rs — same convention as
+// SyncTarget, avoiding the serde flatten + tagged-enum bridge bug.
+
+export interface CredentialField {
+  key: string;
+  label: string;
+  secret: boolean;
+  placeholder: string | null;
+  help: string | null;
+}
+
+/** One kind of account a provider offers. */
+export interface AccountType {
+  /** Stored value; also selects the API environment. */
+  id: string;
+  /** What the user sees, e.g. "Margin", "Paper", "Cash". */
+  label: string;
+  /** "margin" | "paper" | "cash" — maps to a colour via lib/accountTypes.ts */
+  kind: string;
+  description: string | null;
+}
+
+export interface ProviderDescriptor {
+  id: string;
+  name: string;
+  auth_kind: string; // "fields" | "oauth"
+  account_types: AccountType[];
+  credential_fields: CredentialField[];
+  supports_positions: boolean;
+  supports_activities: boolean;
+  /** When true the broker prices its own holdings and Yahoo supplies only
+   *  reference data (name, asset type, analyst target, dividend yield). */
+  provides_pricing: boolean;
+  docs_url: string | null;
+}
+
+export interface RemoteAccount {
+  id: string;
+  mask: string | null;
+  currency: string;
+  equity: number | null;
+  cash: number | null;
+  buying_power: number | null;
+}
+
+export interface BrokerAccountInfo {
+  id: number;
+  provider_account_id: string;
+  account_mask: string | null;
+  currency: string;
+  equity: number | null;
+  cash: number | null;
+  snapshot_at: number | null;
+  portfolio_id: number | null;
+  portfolio_name: string | null;
+}
+
+export interface BrokerConnectionInfo {
+  id: string;
+  provider: string;
+  provider_name: string;
+  environment: string;
+  /** Display label for the account type, e.g. "Margin". */
+  environment_label: string;
+  /** "margin" | "paper" | "cash" — drives the chip colour. */
+  environment_kind: string;
+  label: string;
+  created_at: number;
+  last_synced_at: number | null;
+  last_sync_status: string | null;
+  disabled: boolean;
+  /** False when the database came from another device and the keychain here
+   *  holds nothing. Surface as "add credentials here", never as an error. */
+  has_credentials: boolean;
+  device_id: string | null;
+  accounts: BrokerAccountInfo[];
+}
+
+export interface BrokerSyncResult {
+  connection_id: string;
+  success: boolean;
+  message: string;
+  synced_at: number;
+  positions: number;
+  new_transactions: number;
+}
+
+/** A holding exactly as the broker reports it. Nothing here is computed. */
+export interface BrokerPosition {
+  broker_account_id: number;
+  provider_symbol: string;
+  /** Yahoo ticker, or null for instruments Yahoo cannot quote (e.g. options).
+   *  Null affects reference data only — price and P&L still come from the broker. */
+  ticker: string | null;
+  asset_class: string | null;
+  qty: number;
+  avg_entry_price: number | null;
+  cost_basis: number | null;
+  current_price: number | null;
+  market_value: number | null;
+  unrealized_pl: number | null;
+  /** Fraction, not percent. */
+  unrealized_plpc: number | null;
+  /** Fraction, not percent. */
+  change_today: number | null;
+  snapshot_at: number;
+}
+
+export interface BrokerTransaction {
+  id: number;
+  broker_account_id: number;
+  external_id: string;
+  kind: string;
+  side: string | null;
+  provider_symbol: string;
+  ticker: string | null;
+  qty: number | null;
+  price: number | null;
+  occurred_at: string; // YYYY-MM-DD
+}

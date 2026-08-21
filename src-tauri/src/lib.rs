@@ -1,7 +1,9 @@
 use tauri::Manager;
 
+mod brokers;
 mod commands;
 mod db;
+mod secrets;
 mod yahoo;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -135,9 +137,22 @@ pub fn run() {
             commands::config::move_database,
             commands::sync::sync_now,
             commands::sync::test_sync_connection,
-            commands::sync::encrypt_sync_password,
+            commands::sync::save_sync_password,
+            commands::sync::delete_sync_password,
+            commands::sync::has_sync_password,
             commands::sync::check_remote_db_exists,
             commands::sync::import_remote_db,
+            // ── Brokerage commands ─────────────────────────────────────────
+            commands::brokers::broker_list_providers,
+            commands::brokers::broker_test_connection,
+            commands::brokers::broker_save_connection,
+            commands::brokers::broker_list_connections,
+            commands::brokers::broker_list_positions,
+            commands::brokers::broker_list_transactions,
+            commands::brokers::broker_update_connection,
+            commands::brokers::broker_delete_connection,
+            commands::brokers::broker_sync_connection,
+            commands::brokers::broker_sync_all,
         ])
         .setup(|app| {
             // Load config and resolve DB path

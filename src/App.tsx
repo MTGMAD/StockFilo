@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { addPurchase } from "./lib/db";
 import type { View, AppConfig, SyncResult, SyncStatus } from "./types";
+import { isBrokerPortfolio } from "./types";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
 import { PortfolioView } from "./components/portfolio/PortfolioView";
@@ -8,6 +10,8 @@ import { WatchList } from "./components/watchlist/WatchList";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Dashboard } from "./components/dashboard/Dashboard";
 import { usePortfolio } from "./hooks/usePortfolio";
+import { useBrokerPortfolio } from "./hooks/useBrokerPortfolio";
+import { useBrokerConnections } from "./hooks/useBrokerConnections";
 import { usePortfolios } from "./hooks/usePortfolios";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useWatchlists } from "./hooks/useWatchlists";
@@ -114,12 +118,14 @@ export default function App() {
     remove,
     star,
     reorder,
+    reload: reloadPortfolios,
   } = usePortfolios();
 
   const [activePortfolioId, setActivePortfolioId] = useState<number | null>(
     null,
   );
   const [newPortfolioTrigger, setNewPortfolioTrigger] = useState(0);
+  const [openBrokerFormTrigger, setOpenBrokerFormTrigger] = useState(0);
 
   // Once portfolios are loaded, default to the starred one
   useEffect(() => {
@@ -136,19 +142,33 @@ export default function App() {
   const activePortfolio =
     portfolios.find((p) => p.id === resolvedPortfolioId) ?? null;
 
-  const {
-    purchases,
-    stocks,
-    summaries,
-    loading,
-    refreshing,
-    error,
-    refresh,
-    reload,
-    add,
-    update,
-    remove: deletePurchase,
-  } = usePortfolio(resolvedPortfolioId);
+  const isBroker = isBrokerPortfolio(activePortfolio);
+
+  // Both hooks always run — hooks cannot be conditional — but each is inert
+  // when its id is null, so only the active portfolio's kind does any work.
+  const manual = usePortfolio(isBroker ? null : resolvedPortfolioId);
+
+  const { connections, reload: reloadBrokers } = useBrokerConnections();
+  const brokerConnectionId =
+    connections.find((c) =>
+      c.accounts.some((a) => a.id === activePortfolio?.broker_account_id),
+    )?.id ?? null;
+  const broker = useBrokerPortfolio(
+    isBroker ? (activePortfolio?.broker_account_id ?? null) : null,
+    isBroker ? brokerConnectionId : null,
+  );
+
+  // From here down the views cannot tell the two apart: both produce
+  // TickerSummary[] and the same loading/refresh surface.
+  const purchases = manual.purchases;
+  const stocks = isBroker ? broker.stocks : manual.stocks;
+  const summaries = isBroker ? broker.summaries : manual.summaries;
+  const loading = isBroker ? broker.loading : manual.loading;
+  const refreshing = isBroker ? broker.refreshing : manual.refreshing;
+  const error = isBroker ? broker.error : manual.error;
+  const refresh = isBroker ? broker.refresh : manual.refresh;
+  const reload = isBroker ? broker.reload : manual.reload;
+  const { add, update, remove: deletePurchase } = manual;
 
   const {
     watchlists,
@@ -173,6 +193,20 @@ export default function App() {
   }, [watchlistsLoading, watchlists, activeWatchlistId]);
 
   const watchlist = useWatchlist(activeWatchlistId);
+
+  // Account-type chips for the sidebar, resolved from the live connection list.
+  const brokerBadges = useMemo(() => {
+    const map: Record<number, { label: string; kind: string }> = {};
+    for (const c of connections) {
+      for (const a of c.accounts) {
+        map[a.id] = {
+          label: c.environment_label,
+          kind: c.environment_kind,
+        };
+      }
+    }
+    return map;
+  }, [connections]);
 
   const lastRefreshedAt = useMemo(() => {
     if (stocks.length === 0) return null;
@@ -229,6 +263,11 @@ export default function App() {
         newPortfolioTrigger={newPortfolioTrigger}
         onStarPortfolio={star}
         onReorderPortfolios={reorder}
+        brokerBadges={brokerBadges}
+        onAddBrokerage={() => {
+          setView("settings");
+          setOpenBrokerFormTrigger((n) => n + 1);
+        }}
       />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header
@@ -267,6 +306,8 @@ export default function App() {
             <PortfolioView
               portfolioId={resolvedPortfolioId}
               portfolioName={activePortfolio?.name ?? ""}
+              readOnly={isBroker}
+              brokerTransactions={isBroker ? broker.transactions : undefined}
               purchases={purchases}
               stocks={stocks}
               summaries={summaries}
@@ -315,7 +356,36 @@ export default function App() {
               onRemove={watchlist.remove}
               onReload={watchlist.reload}
               onPurchase={async (ticker, shares, price, date) => {
-                await add(ticker, shares, price, date);
+                // Buying from the watch list is a hand-entered action, so it
+                // always lands in a manual portfolio — never in a broker
+                // mirror, where the row would be stored but never displayed.
+                const target =
+                  (activePortfolio && !isBrokerPortfolio(activePortfolio)
+                    ? activePortfolio
+                    : null) ??
+                  (starredPortfolio && !isBrokerPortfolio(starredPortfolio)
+                    ? starredPortfolio
+                    : null) ??
+                  portfolios.find((p) => !isBrokerPortfolio(p)) ??
+                  null;
+
+                if (!target) {
+                  alert(
+                    "Create a manual portfolio first — purchases cannot be added to a brokerage-linked portfolio.",
+                  );
+                  return;
+                }
+
+                await addPurchase(target.id, ticker, shares, price, date);
+
+                if (target.id === resolvedPortfolioId) {
+                  await reload();
+                } else {
+                  alert(
+                    `Added ${ticker} to "${target.name}". Brokerage portfolios mirror your broker, so hand-entered purchases go to a manual portfolio.`,
+                  );
+                  await reloadPortfolios();
+                }
               }}
             />
           ) : (
@@ -331,6 +401,10 @@ export default function App() {
               onShowInfoTooltipsChange={setShowInfoTooltips}
               syncTick={syncTick}
               onConfigSaved={() => setConfigVersion((v) => v + 1)}
+              onBrokersChanged={async () => {
+                await Promise.all([reloadPortfolios(), reloadBrokers()]);
+              }}
+              openBrokerFormTrigger={openBrokerFormTrigger}
             />
           )}
         </main>

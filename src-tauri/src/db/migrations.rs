@@ -142,6 +142,316 @@ CREATE TABLE IF NOT EXISTS _sf_config (
 
 const MIGRATION_V13: &str = "ALTER TABLE stocks ADD COLUMN dividend_yield REAL;";
 
+/// V14: brokerage connections.
+///
+/// Additive only.  Four new tables plus two defaulted columns on `portfolios`.
+/// The `purchases` table is deliberately NOT modified — broker data lives in
+/// its own tables and never enters the user's hand-entered purchase history.
+///
+/// Credentials are never stored here.  `broker_connections.credential_ref` is
+/// an opaque handle into the OS keychain (see `secrets.rs`); the database file
+/// is synced wholesale to WebDAV/NAS targets, so a secret in this file would be
+/// a secret uploaded to that target.
+const MIGRATION_V14: &str = r#"
+CREATE TABLE IF NOT EXISTS broker_connections (
+    id                 TEXT PRIMARY KEY,
+    provider           TEXT NOT NULL,
+    environment        TEXT NOT NULL DEFAULT 'live',
+    label              TEXT NOT NULL,
+    credential_ref     TEXT NOT NULL,
+    device_id          TEXT,
+    created_at         INTEGER NOT NULL,
+    last_synced_at     INTEGER,
+    last_sync_status   TEXT,
+    auto_sync_minutes  INTEGER,
+    disabled           INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(provider, environment, credential_ref)
+);
+
+CREATE TABLE IF NOT EXISTS broker_accounts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    connection_id       TEXT NOT NULL,
+    provider_account_id TEXT NOT NULL,
+    account_mask        TEXT,
+    currency            TEXT NOT NULL DEFAULT 'USD',
+    equity              REAL,
+    cash                REAL,
+    snapshot_at         INTEGER,
+    UNIQUE(connection_id, provider_account_id)
+);
+
+CREATE TABLE IF NOT EXISTS broker_transactions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    broker_account_id INTEGER NOT NULL,
+    external_id       TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    side              TEXT,
+    provider_symbol   TEXT NOT NULL,
+    ticker            TEXT,
+    qty               REAL,
+    price             REAL,
+    occurred_at       TEXT NOT NULL,
+    raw               TEXT,
+    UNIQUE(broker_account_id, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_broker_tx_account
+    ON broker_transactions(broker_account_id, occurred_at);
+
+CREATE TABLE IF NOT EXISTS broker_positions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    broker_account_id INTEGER NOT NULL,
+    provider_symbol   TEXT NOT NULL,
+    ticker            TEXT,
+    asset_class       TEXT,
+    qty               REAL NOT NULL,
+    avg_entry_price   REAL,
+    cost_basis        REAL,
+    current_price     REAL,
+    market_value      REAL,
+    unrealized_pl     REAL,
+    unrealized_plpc   REAL,
+    change_today      REAL,
+    snapshot_at       INTEGER NOT NULL,
+    UNIQUE(broker_account_id, provider_symbol)
+);
+
+ALTER TABLE portfolios ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE portfolios ADD COLUMN broker_account_id INTEGER;
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn columns(conn: &Connection, table: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        rows
+    }
+
+    fn table_exists(conn: &Connection, table: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            [table],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
+    }
+
+    #[test]
+    fn fresh_database_reaches_latest_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 14);
+    }
+
+    #[test]
+    fn v14_creates_broker_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        for t in [
+            "broker_connections",
+            "broker_accounts",
+            "broker_transactions",
+            "broker_positions",
+        ] {
+            assert!(table_exists(&conn, t), "missing table {t}");
+        }
+    }
+
+    /// The core backward-compatibility promise: broker data never enters the
+    /// user's hand-entered purchase history, so `purchases` must be untouched.
+    #[test]
+    fn v14_does_not_modify_purchases() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let cols = columns(&conn, "purchases");
+        assert_eq!(
+            cols,
+            vec![
+                "id",
+                "ticker",
+                "shares",
+                "price_per_share",
+                "purchased_at",
+                "created_at",
+                "portfolio_id",
+            ]
+        );
+    }
+
+    /// Existing portfolios must come out of the migration already correct,
+    /// with no backfill step and no user-visible conversion.
+    #[test]
+    fn existing_portfolios_default_to_manual() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+
+        // The seed portfolio created back in V8, migrated through V14.
+        let (source, broker): (String, Option<i64>) = conn
+            .query_row(
+                "SELECT source, broker_account_id FROM portfolios WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(source, "manual");
+        assert_eq!(broker, None);
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        // A second run must be a no-op, not an "duplicate column name" error.
+        run_all(&conn).unwrap();
+        run_all(&conn).unwrap();
+        let v: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, 14);
+    }
+
+    /// Applies the migrations to a real database file and verifies no user data
+    /// moved.  Opt-in, because it needs a database to point at:
+    ///
+    /// ```text
+    /// STOCKFOLIO_TEST_DB=/path/to/a/COPY.db cargo test --lib -- --ignored --nocapture
+    /// ```
+    ///
+    /// Always point this at a copy.  It writes to whatever it is given.
+    #[test]
+    #[ignore = "requires STOCKFOLIO_TEST_DB pointing at a copy of a real database"]
+    fn migrates_a_real_database_without_data_loss() {
+        let Ok(path) = std::env::var("STOCKFOLIO_TEST_DB") else {
+            eprintln!("STOCKFOLIO_TEST_DB not set — skipping");
+            return;
+        };
+
+        let conn = Connection::open(&path).unwrap();
+        let count = |t: &str| -> i64 {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0))
+                .unwrap()
+        };
+
+        let before: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        let (p, f, w, s) = (
+            count("purchases"),
+            count("portfolios"),
+            count("watchlist"),
+            count("stocks"),
+        );
+        println!(
+            "BEFORE v{before}: purchases={p} portfolios={f} watchlist={w} stocks={s}"
+        );
+
+        run_all(&conn).unwrap();
+
+        let after: i64 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        println!(
+            "AFTER  v{after}: purchases={} portfolios={} watchlist={} stocks={}",
+            count("purchases"),
+            count("portfolios"),
+            count("watchlist"),
+            count("stocks")
+        );
+
+        assert_eq!(count("purchases"), p, "purchase rows changed");
+        assert_eq!(count("portfolios"), f, "portfolio rows changed");
+        assert_eq!(count("watchlist"), w, "watchlist rows changed");
+        assert_eq!(count("stocks"), s, "stock cache rows changed");
+        assert_eq!(after, 14);
+
+        let mut stmt = conn
+            .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            })
+            .unwrap();
+        for row in rows {
+            let (id, name, source, broker) = row.unwrap();
+            println!("  [{id}] {name:<26} source={source:<8} broker={broker:?}");
+            assert_eq!(source, "manual", "existing portfolio was not left manual");
+        }
+
+        // Idempotent against real data too.
+        run_all(&conn).unwrap();
+        println!("second run: OK");
+    }
+
+    /// Simulates a real user's database sitting at V13, to prove V14 applies
+    /// cleanly on top of existing data rather than only on a fresh schema.
+    #[test]
+    fn upgrades_a_v13_database_with_data() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Bring it to V13 only.
+        for (version, sql) in [
+            (1, MIGRATION_V1),
+            (2, MIGRATION_V2),
+            (3, MIGRATION_V3),
+            (4, MIGRATION_V4),
+            (5, MIGRATION_V5),
+            (6, MIGRATION_V6),
+            (7, MIGRATION_V7),
+            (8, MIGRATION_V8),
+            (9, MIGRATION_V9),
+            (10, MIGRATION_V10),
+            (11, MIGRATION_V11),
+            (12, MIGRATION_V12),
+            (13, MIGRATION_V13),
+        ] {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", version).unwrap();
+        }
+
+        conn.execute(
+            "INSERT INTO purchases (ticker, shares, price_per_share, purchased_at, created_at, portfolio_id) \
+             VALUES ('AAPL', 10.0, 150.0, '2025-01-15', 1736899200, 1)",
+            [],
+        )
+        .unwrap();
+
+        run_all(&conn).unwrap();
+
+        // The pre-existing purchase survives verbatim.
+        let (ticker, shares): (String, f64) = conn
+            .query_row("SELECT ticker, shares FROM purchases", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(ticker, "AAPL");
+        assert_eq!(shares, 10.0);
+
+        // And the new structures are in place.
+        assert!(table_exists(&conn, "broker_positions"));
+        assert!(columns(&conn, "portfolios").contains(&"source".to_string()));
+    }
+}
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -160,6 +470,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (11, MIGRATION_V11),
         (12, MIGRATION_V12),
         (13, MIGRATION_V13),
+        (14, MIGRATION_V14),
     ];
 
     let user_version: i64 =

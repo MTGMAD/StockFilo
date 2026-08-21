@@ -71,5 +71,5 @@ export function usePortfolios() {
 
   const starredPortfolio = portfolios.find((p) => p.is_starred === 1) ?? portfolios[0] ?? null;
 
-  return { portfolios, loading, starredPortfolio, create, rename, remove, star, reorder };
+  return { portfolios, loading, starredPortfolio, create, rename, remove, star, reorder, reload: load };
 }

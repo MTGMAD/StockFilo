@@ -92,7 +92,8 @@ pub fn db_delete_watchlist(id: i64, state: State<'_, DbManager>) -> Result<(), S
         conn.execute("DELETE FROM watchlists WHERE id = ?1", params![id])?;
         conn.execute(
             "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) \
-             AND ticker NOT IN (SELECT ticker FROM watchlist)",
+             AND ticker NOT IN (SELECT ticker FROM watchlist) \
+             AND ticker NOT IN (SELECT ticker FROM broker_positions WHERE ticker IS NOT NULL)",
             [],
         )?;
         Ok(())

@@ -1,8 +1,36 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::manager::DbManager;
+
+/// Reject writes aimed at a broker-linked portfolio.
+///
+/// Broker portfolios mirror what the brokerage reports; their holdings come
+/// from `broker_positions`, not `purchases`. A hand-entered row there would be
+/// silently invisible — stored, but never shown — which looks exactly like
+/// data loss. Enforced here rather than in the UI so that no code path,
+/// present or future, can mix the two kinds of data.
+fn ensure_manual_portfolio(conn: &rusqlite::Connection, portfolio_id: i64) -> rusqlite::Result<()> {
+    let source: Option<String> = conn
+        .query_row(
+            "SELECT source FROM portfolios WHERE id = ?1",
+            params![portfolio_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+
+    match source.as_deref() {
+        Some("manual") | None => Ok(()),
+        Some(_) => Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+            Some(
+                "This portfolio mirrors a brokerage account, so purchases cannot be added to it by hand. Use a manual portfolio instead."
+                    .to_string(),
+            ),
+        )),
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Purchase {
@@ -50,6 +78,7 @@ pub fn db_add_purchase(
     state: State<'_, DbManager>,
 ) -> Result<(), String> {
     state.with_conn(|conn| {
+        ensure_manual_portfolio(conn, portfolio_id)?;
         let now = now_secs();
         let t = ticker.to_uppercase();
         conn.execute(
@@ -109,7 +138,8 @@ pub fn db_clear_all_purchases(state: State<'_, DbManager>) -> Result<(), String>
     state.with_conn(|conn| {
         conn.execute("DELETE FROM purchases", [])?;
         conn.execute(
-            "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist)",
+            "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist) \
+             AND ticker NOT IN (SELECT ticker FROM broker_positions WHERE ticker IS NOT NULL)",
             [],
         )?;
         conn.execute("DELETE FROM favorites", [])?;
@@ -129,7 +159,8 @@ pub fn db_clear_portfolio_purchases(
         )?;
         conn.execute(
             "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM purchases) \
-             AND ticker NOT IN (SELECT ticker FROM watchlist)",
+             AND ticker NOT IN (SELECT ticker FROM watchlist) \
+             AND ticker NOT IN (SELECT ticker FROM broker_positions WHERE ticker IS NOT NULL)",
             [],
         )?;
         conn.execute(

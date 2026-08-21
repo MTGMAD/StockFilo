@@ -1,11 +1,10 @@
-use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
 
-use crate::commands::config::{load_config, save_config_to_disk, SyncTarget};
+use crate::commands::config::{load_config, save_config_to_disk, AppConfig, SyncTarget};
 use crate::db::manager::DbManager;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -275,7 +274,7 @@ pub async fn sync_now(
                 .ok_or_else(|| "webdav target missing 'url' field".to_string())?;
             let url = normalize_webdav_url(raw_url);
             let username = target.username.as_deref().unwrap_or("");
-            let password = decrypt_password(target.password_enc.as_deref().unwrap_or(""), &cfg.device_id);
+            let password = resolve_password(&app, &cfg, &target);
             let never_synced = target.last_synced_at.is_none();
             sync_webdav_target(&local_db_path, &url, username, &password, &cfg.device_id, never_synced).await
         }
@@ -348,7 +347,12 @@ pub async fn test_sync_connection(target: SyncTarget) -> Result<bool, String> {
                 .ok_or_else(|| "webdav target missing 'url'".to_string())?;
             let url = normalize_webdav_url(raw_url);
             let username = target.username.as_deref().unwrap_or("");
-            let password = decrypt_password(target.password_enc.as_deref().unwrap_or(""), "test");
+            // The Add-Target form has not saved anything yet, so it passes the
+            // password in the clear in `password_enc` for this probe only.
+            // (Previously this ran the value through the legacy decrypt, which
+            // always failed on plaintext and silently tested with an empty
+            // password — making a correct password look like a bad one.)
+            let password = target.password_enc.clone().unwrap_or_default();
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
@@ -375,78 +379,81 @@ pub async fn test_sync_connection(target: SyncTarget) -> Result<bool, String> {
     }
 }
 
-// ── Password encryption (AES-GCM) ─────────────────────────────────────────
+// ── Password storage ──────────────────────────────────────────────────────
+//
+// Passwords used to be AES-GCM sealed into `config.json` with a key XOR-folded
+// from the plaintext `device_id` stored in that same file, using nonces derived
+// from a timestamp hash rather than a CSPRNG.  Both are broken: the key was
+// recoverable from the file, and AES-GCM nonce reuse leaks plaintext.
+//
+// They now live in the OS keychain via `secrets.rs`.  `SyncTarget.password_enc`
+// is retained only so existing configs can be migrated on first use, after
+// which the field is cleared.
 
-use aes_gcm::{
-    aead::{Aead, KeyInit},
-    Aes256Gcm, Key, Nonce,
-};
+use crate::secrets;
 
-fn derive_key(device_id: &str) -> [u8; 32] {
-    let seed = format!("stockfolio-sync-v1:{}", device_id);
-    let bytes = seed.as_bytes();
-    let mut key = [0u8; 32];
-    for (i, b) in bytes.iter().enumerate() {
-        key[i % 32] ^= b;
+/// Resolve a target's password: keychain first, legacy `config.json` value as
+/// a fallback, copying it into the keychain the first time it is used.
+///
+/// # Why the legacy value is copied, not moved
+///
+/// Deleting `password_enc` here would break any *already-installed* build of
+/// Stockfolio still on this machine.  Those builds predate the keychain and
+/// read the password straight out of `config.json`; blanking the field makes
+/// their WebDAV sync fail with an auth error that looks like a server outage.
+///
+/// So the weakly-sealed copy is deliberately left in place. It stops being
+/// written for *new* targets (see `save_sync_password`), and can be cleared
+/// once the keychain-aware build has replaced the installed one — a one-line
+/// change here, plus a config rewrite.
+fn resolve_password(app: &AppHandle, cfg: &AppConfig, target: &SyncTarget) -> String {
+    let reference = secrets::sync_reference(&target.id);
+
+    if let Ok(Some(password)) = secrets::get_secret(app, &reference) {
+        return password;
     }
-    key
-}
 
-pub fn encrypt_password(plain: &str, device_id: &str) -> String {
-    let key_bytes = derive_key(device_id);
-    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
-    let cipher = Aes256Gcm::new(key);
-    let nonce_bytes: [u8; 12] = rand_nonce();
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    match cipher.encrypt(nonce, plain.as_bytes()) {
-        Ok(ciphertext) => {
-            let mut out = nonce_bytes.to_vec();
-            out.extend_from_slice(&ciphertext);
-            base64::engine::general_purpose::STANDARD.encode(&out)
-        }
-        Err(_) => String::new(),
-    }
-}
-
-pub fn decrypt_password(enc: &str, device_id: &str) -> String {
-    use base64::Engine;
-    let data = match base64::engine::general_purpose::STANDARD.decode(enc) {
-        Ok(d) => d,
-        Err(_) => return String::new(),
-    };
-    if data.len() < 12 {
+    let legacy = target.password_enc.as_deref().unwrap_or("");
+    if legacy.is_empty() {
         return String::new();
     }
-    let (nonce_bytes, ciphertext) = data.split_at(12);
-    let key_bytes = derive_key(device_id);
-    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
-    let cipher = Aes256Gcm::new(key);
-    let nonce = Nonce::from_slice(nonce_bytes);
-    cipher
-        .decrypt(nonce, ciphertext)
-        .ok()
-        .and_then(|b| String::from_utf8(b).ok())
-        .unwrap_or_default()
+
+    let password = secrets::legacy_decrypt(legacy, &cfg.device_id);
+    if password.is_empty() {
+        // Undecryptable — most likely sealed on a different device, since the
+        // legacy key was derived from that device's id. Nothing to recover.
+        return String::new();
+    }
+
+    // Copy into the keychain so future reads use it, but leave config.json
+    // alone. Note that `sync_now` re-saves its own copy of the config after
+    // this returns, so any edit made here would be silently reverted anyway.
+    if secrets::set_secret(app, &reference, &password).is_ok() {
+        eprintln!(
+            "[sync] cached password for target '{}' in the keychain (legacy value retained for the installed build)",
+            target.id
+        );
+    }
+
+    password
 }
 
-fn rand_nonce() -> [u8; 12] {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    std::time::SystemTime::now().hash(&mut hasher);
-    std::thread::current().id().hash(&mut hasher);
-    let h1 = hasher.finish();
-    std::time::SystemTime::now().hash(&mut hasher);
-    let h2 = hasher.finish();
-    let mut out = [0u8; 12];
-    out[..8].copy_from_slice(&h1.to_le_bytes());
-    out[8..].copy_from_slice(&h2.to_le_bytes()[..4]);
-    out
-}
-
+/// Store a sync target's password. Called by the frontend after saving a target.
 #[tauri::command]
-pub fn encrypt_sync_password(plain: String, device_id: String) -> String {
-    encrypt_password(&plain, &device_id)
+pub fn save_sync_password(app: AppHandle, target_id: String, password: String) -> Result<(), String> {
+    secrets::set_secret(&app, &secrets::sync_reference(&target_id), &password)
+}
+
+/// Remove a sync target's password, e.g. when the target is deleted.
+#[tauri::command]
+pub fn delete_sync_password(app: AppHandle, target_id: String) -> Result<(), String> {
+    secrets::delete_secret(&app, &secrets::sync_reference(&target_id))
+}
+
+/// Whether a password is available on this device for the given target.
+#[tauri::command]
+pub fn has_sync_password(app: AppHandle, target_id: String) -> bool {
+    secrets::has_secret(&app, &secrets::sync_reference(&target_id))
 }
 
 fn now_secs() -> i64 {
@@ -485,8 +492,7 @@ pub async fn check_remote_db_exists(target_id: String, app: AppHandle) -> Result
                 .ok_or_else(|| "webdav target missing 'url' field".to_string())?;
             let url = normalize_webdav_url(raw_url);
             let username = target.username.as_deref().unwrap_or("");
-            let password =
-                decrypt_password(target.password_enc.as_deref().unwrap_or(""), &cfg.device_id);
+            let password = resolve_password(&app, &cfg, &target);
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
@@ -545,8 +551,7 @@ pub async fn import_remote_db(
                 .ok_or_else(|| "webdav target missing 'url' field".to_string())?;
             let url = normalize_webdav_url(raw_url);
             let username = target.username.as_deref().unwrap_or("");
-            let password =
-                decrypt_password(target.password_enc.as_deref().unwrap_or(""), &cfg.device_id);
+            let password = resolve_password(&app, &cfg, &target);
             let bytes = webdav_get(&url, username, &password).await?;
             if bytes.is_empty() {
                 return Err("Remote database is empty".into());

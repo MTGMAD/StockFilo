@@ -9,6 +9,7 @@ import {
   fetchAndCachePrices,
 } from "../lib/db";
 import { isCusip } from "../lib/utils";
+import { buildFromPurchases } from "../lib/summaries";
 
 const POLL_INTERVAL_MS = 30_000; // 30 seconds
 
@@ -125,54 +126,7 @@ export function usePortfolio(portfolioId: number | null) {
     [loadAll]
   );
 
-  const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
-  const STALE_THRESHOLD_SECONDS = 3600; // 1 hour
-  const now = Math.floor(Date.now() / 1000);
-
-  const summaries: TickerSummary[] = [...new Set(purchases.map((p) => p.ticker))].map(
-    (ticker) => {
-      const tickerPurchases = purchases.filter((p) => p.ticker === ticker);
-      const totalShares = tickerPurchases.reduce((s, p) => s + p.shares, 0);
-      const totalInvested = tickerPurchases.reduce(
-        (s, p) => s + p.shares * p.price_per_share,
-        0
-      );
-      const avgCostBasis = totalShares > 0 ? totalInvested / totalShares : 0;
-      const stock = stockMap.get(ticker);
-      const currentPrice = stock?.last_price ?? null;
-      const marketValue = currentPrice != null ? totalShares * currentPrice : null;
-      const pnlDollar = marketValue != null ? marketValue - totalInvested : null;
-      const pnlPercent =
-        pnlDollar != null && totalInvested > 0
-          ? (pnlDollar / totalInvested) * 100
-          : null;
-      const lastFetchedAt = stock?.last_fetched_at ?? null;
-      const isStale =
-        lastFetchedAt == null || now - lastFetchedAt > STALE_THRESHOLD_SECONDS;
-
-      return {
-        ticker,
-        name: stock?.name ?? null,
-        totalShares,
-        totalInvested,
-        avgCostBasis,
-        currentPrice,
-        marketValue,
-        pnlDollar,
-        pnlPercent,
-        isStale,
-        lastFetchedAt,
-        quoteType: stock?.quote_type ?? null,
-        dailyChangePct: stock?.daily_change_pct ?? null,
-        market_state: stock?.market_state ?? null,
-        pre_market_price: stock?.pre_market_price ?? null,
-        pre_market_change_pct: stock?.pre_market_change_pct ?? null,
-        post_market_price: stock?.post_market_price ?? null,
-        post_market_change_pct: stock?.post_market_change_pct ?? null,
-        dividendYield: stock?.dividend_yield ?? null,
-      };
-    }
-  );
+  const summaries: TickerSummary[] = buildFromPurchases(purchases, stocks);
 
   return {
     purchases,
