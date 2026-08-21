@@ -13,6 +13,7 @@ import {
 } from "lightweight-charts";
 import type { ChartPoint, ChartRange, ChartStyle } from "../../types";
 import { getCssVar } from "../../lib/utils";
+import { formatInZone, type TimeZoneChoice } from "../../lib/timezones";
 
 /**
  * Price chart, rendered with TradingView's Lightweight Charts.
@@ -42,6 +43,8 @@ interface PriceChartProps {
   isUp: boolean;
   /** Decimal places for the price axis, matched to the visible range. */
   priceDecimals: number;
+  /** Zone the time axis is rendered in; "local" follows the system. */
+  timeZone: TimeZoneChoice;
 }
 
 /**
@@ -87,31 +90,29 @@ function palette() {
 
 /** Local-time labels, matching the rest of the app. Lightweight Charts renders
  *  UTC by default, which would show a 9:30 ET open as 13:30. */
-function localTickLabel(ts: number, range: ChartRange): string {
-  const d = new Date(ts * 1000);
+function tickLabel(ts: number, range: ChartRange, zone: TimeZoneChoice): string {
   if (range === "1d") {
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return formatInZone(ts, zone, { hour: "numeric", minute: "2-digit" });
   }
   if (range === "5d") {
-    return d.toLocaleDateString([], { weekday: "short", hour: "numeric" });
+    return formatInZone(ts, zone, { weekday: "short", hour: "numeric" });
   }
   if (range === "1mo" || range === "6mo" || range === "ytd") {
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    return formatInZone(ts, zone, { month: "short", day: "numeric" });
   }
-  return d.toLocaleDateString([], { month: "short", year: "2-digit" });
+  return formatInZone(ts, zone, { month: "short", year: "2-digit" });
 }
 
-function localCrosshairLabel(ts: number, range: ChartRange): string {
-  const d = new Date(ts * 1000);
+function crosshairLabel(ts: number, range: ChartRange, zone: TimeZoneChoice): string {
   if (range === "1d" || range === "5d") {
-    return d.toLocaleString([], {
+    return formatInZone(ts, zone, {
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
     });
   }
-  return d.toLocaleDateString([], {
+  return formatInZone(ts, zone, {
     month: "long",
     day: "numeric",
     year: "numeric",
@@ -136,12 +137,15 @@ export function PriceChart({
   previousClose,
   isUp,
   priceDecimals,
+  timeZone,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // The chart is created once but the formatters must see the current range,
   // so read it through a ref rather than closing over a stale value.
   const rangeRef = useRef<ChartRange>(range);
   rangeRef.current = range;
+  const zoneRef = useRef<TimeZoneChoice>(timeZone);
+  zoneRef.current = timeZone;
   const chartRef = useRef<IChartApi | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seriesRef = useRef<ISeriesApi<any> | null>(null);
@@ -171,11 +175,11 @@ export function PriceChart({
       timeScale: {
         borderVisible: false,
         tickMarkFormatter: (t: unknown) =>
-          localTickLabel(t as number, rangeRef.current),
+          tickLabel(t as number, rangeRef.current, zoneRef.current),
       },
       localization: {
         timeFormatter: (t: unknown) =>
-          localCrosshairLabel(t as number, rangeRef.current),
+          crosshairLabel(t as number, rangeRef.current, zoneRef.current),
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -306,6 +310,23 @@ export function PriceChart({
     chart.timeScale().applyOptions(timeScaleOptions(range));
     chart.timeScale().fitContent();
   }, [points, style, range]);
+
+  // Tick and crosshair labels are cached, so changing the zone needs an
+  // explicit nudge — the formatters alone would keep returning stale text.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.applyOptions({
+      timeScale: {
+        tickMarkFormatter: (t: unknown) =>
+          tickLabel(t as number, rangeRef.current, zoneRef.current),
+      },
+      localization: {
+        timeFormatter: (t: unknown) =>
+          crosshairLabel(t as number, rangeRef.current, zoneRef.current),
+      },
+    });
+  }, [timeZone, range]);
 
   // Previous close, as a dashed marker on intraday ranges only — over months it
   // would be an arbitrary horizontal line with no meaning.

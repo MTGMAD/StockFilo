@@ -3,7 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ChartData, ChartRange, ChartStyle } from "../../types";
 import { formatCurrency, cn } from "../../lib/utils";
 import { openUrl } from "../../lib/openUrl";
+import {
+  loadZoneChoice,
+  saveZoneChoice,
+  type TimeZoneChoice,
+} from "../../lib/timezones";
 import { ChartStyleMenu } from "./ChartStyleMenu";
+import { TimeZoneMenu } from "./TimeZoneMenu";
 import { hasOhlc } from "./ohlc";
 import { PriceChart } from "./PriceChart";
 
@@ -49,6 +55,15 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
   function changeStyle(s: ChartStyle) {
     setStyle(s);
     localStorage.setItem("stockfolio-chart-style", s);
+  }
+
+  // Defaults to the machine's own zone, so nothing needs configuring to read
+  // correctly for the market the user actually lives in.
+  const [timeZone, setTimeZone] = useState<TimeZoneChoice>(loadZoneChoice);
+
+  function changeTimeZone(z: TimeZoneChoice) {
+    setTimeZone(z);
+    saveZoneChoice(z);
   }
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -127,6 +142,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
           {ticker} Price Chart
         </h3>
         <div className="flex items-center gap-1">
+          <TimeZoneMenu value={timeZone} onChange={changeTimeZone} />
           <ChartStyleMenu
             value={style}
             onChange={changeStyle}
@@ -197,6 +213,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
             previousClose={previousClose}
             isUp={isUp}
             priceDecimals={priceDecimals}
+            timeZone={timeZone}
           />
         )}
       </div>
