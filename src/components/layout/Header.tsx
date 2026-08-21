@@ -2,6 +2,7 @@ import { RefreshCw, Cloud, CheckCircle, AlertCircle, Loader2, Layers } from "luc
 import { cn, formatCurrency } from "../../lib/utils";
 import type { SyncStatus } from "../../types";
 import { BrokerLogo } from "../shared/BrokerLogo";
+import { accountKindStyle } from "../../lib/accountTypes";
 
 /**
  * Figures shown beneath the portfolio name.
@@ -38,6 +39,10 @@ interface HeaderProps {
    *  portfolios, which belong to no brokerage. */
   brokerName?: string | null;
   brokerLogoDomain?: string | null;
+  /** Account-type chip, e.g. "Margin" / "Paper" / "Cash", with the kind that
+   *  drives its colour. Same treatment as the sidebar and settings chips. */
+  brokerBadgeLabel?: string | null;
+  brokerBadgeKind?: string | null;
 }
 
 export function Header({
@@ -53,6 +58,8 @@ export function Header({
   figures,
   brokerName,
   brokerLogoDomain,
+  brokerBadgeLabel,
+  brokerBadgeKind,
 }: HeaderProps) {
   const clock = new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
@@ -92,9 +99,21 @@ export function Header({
             />
           )}
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold text-foreground truncate">
-              {title}
-            </h1>
+            <div className="flex items-center gap-2 min-w-0">
+              <h1 className="text-lg font-semibold text-foreground truncate">
+                {title}
+              </h1>
+              {brokerBadgeLabel && (
+                <span
+                  className={cn(
+                    "shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide",
+                    accountKindStyle(brokerBadgeKind).chip,
+                  )}
+                >
+                  {brokerBadgeLabel}
+                </span>
+              )}
+            </div>
             {figures && (
               <div className="text-xs text-muted-foreground mt-0.5 truncate">
                 {figures.kind === "broker" ? (

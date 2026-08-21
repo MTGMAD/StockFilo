@@ -15,7 +15,6 @@ import {
   X,
   ChevronUp,
   ChevronDown,
-  Briefcase,
   PencilLine,
   Landmark,
 } from "lucide-react";
@@ -68,6 +67,13 @@ export function Sidebar({
   const [choosingKind, setChoosingKind] = useState(false);
   const [newName, setNewName] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [portfoliosOpen, setPortfoliosOpen] = useState<boolean>(() => {
+    return localStorage.getItem("stockfolio-portfolios-open") !== "false";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("stockfolio-portfolios-open", String(portfoliosOpen));
+  }, [portfoliosOpen]);
 
   useEffect(() => {
     if (newPortfolioTrigger && newPortfolioTrigger > 0) {
@@ -167,17 +173,36 @@ export function Sidebar({
           {!collapsed && "Dashboard"}
         </button>
 
-        {/* Portfolios section */}
+        {/* Portfolios — styled as a nav row like Dashboard and Watch List,
+            but it toggles the list below rather than navigating anywhere. */}
         {!collapsed && (
-          <div className="mt-3 mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground select-none">
-            Portfolios
-          </div>
+          <button
+            onClick={() => setPortfoliosOpen((o) => !o)}
+            aria-expanded={portfoliosOpen}
+            className={cn(
+              "flex items-center rounded-md text-sm font-medium transition-colors w-full mt-3",
+              "gap-3 px-3 py-2 text-left",
+              // Deliberately never takes the active highlight: the selected
+              // portfolio in the list below already carries it, and two green
+              // rows would compete for the same meaning.
+              "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+            )}
+          >
+            <Landmark className="w-4 h-4 shrink-0" />
+            <span className="flex-1">Portfolios</span>
+            <ChevronDown
+              className={cn(
+                "w-3.5 h-3.5 shrink-0 transition-transform",
+                !portfoliosOpen && "-rotate-90",
+              )}
+            />
+          </button>
         )}
         {collapsed && portfolios.length > 0 && (
           <div className="my-1 border-t border-border/50" />
         )}
 
-        {portfolios.map((p, idx) => (
+        {(collapsed || portfoliosOpen) && portfolios.map((p, idx) => (
           <div key={p.id} className="group relative">
             {editingId === p.id ? (
               // Inline rename input
@@ -236,7 +261,7 @@ export function Sidebar({
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}
               >
-                <Briefcase className="w-4 h-4 shrink-0" />
+                <Landmark className="w-4 h-4 shrink-0" />
               </button>
             ) : (
               // Expanded: full portfolio row
@@ -351,8 +376,9 @@ export function Sidebar({
           </div>
         ))}
 
-        {/* New portfolio button / input */}
-        {!collapsed && (
+        {/* New portfolio button / input — part of the section, so it hides
+            with the list rather than floating under a collapsed header. */}
+        {!collapsed && portfoliosOpen && (
           creatingNew ? (
             <div className="flex items-center gap-1 px-2 py-1 mt-0.5">
               <input

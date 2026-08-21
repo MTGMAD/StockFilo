@@ -232,7 +232,12 @@ export default function App() {
       c.accounts.some((a) => a.id === activePortfolio?.broker_account_id),
     );
     return conn
-      ? { name: conn.provider_name, domain: conn.provider_logo_domain }
+      ? {
+          name: conn.provider_name,
+          domain: conn.provider_logo_domain,
+          badgeLabel: conn.environment_label,
+          badgeKind: conn.environment_kind,
+        }
       : null;
   }, [inPortfolio, isBroker, connections, activePortfolio]);
 
@@ -349,6 +354,8 @@ export default function App() {
           figures={headerFigures}
           brokerName={headerBroker?.name ?? null}
           brokerLogoDomain={headerBroker?.domain ?? null}
+          brokerBadgeLabel={headerBroker?.badgeLabel ?? null}
+          brokerBadgeKind={headerBroker?.badgeKind ?? null}
         />
         {error && (
           <div className="px-6 py-2 bg-red-500/10 border-b border-red-500/20 text-sm text-red-600">
