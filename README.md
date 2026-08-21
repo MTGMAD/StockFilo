@@ -50,6 +50,21 @@ Organize your investments into as many named portfolios as you like:
 - Create, rename, star, and delete portfolios
 - Reorder the portfolio list in the sidebar
 - Each portfolio maintains its own holdings, purchases, and settings independently
+- Two kinds, chosen when you create one: **Manual**, which you fill in yourself, and **Brokerage**, which mirrors a connected account
+
+### 🏦 Brokerage Accounts
+
+Connect a broker and its holdings appear as a read-only portfolio, alongside the ones you keep by hand.
+
+- **Alpaca** supported today — **Margin** and **Paper** accounts, each connected separately
+- **Every figure comes from the broker.** Share counts, average cost, market value and profit are read straight from the brokerage, so your totals match what they show you — nothing is recalculated or estimated
+- **Nothing is invented.** Where the broker supplies no value, the app says so rather than filling in a guess
+- Prices refresh every 30 seconds, and options and crypto are priced properly — both of which a market-data-only source cannot do
+- Dated transaction history where the broker publishes it
+
+**Manual and brokerage data never mix.** A brokerage portfolio cannot accept hand-entered purchases, and a manual portfolio can never receive broker holdings — enforced in the database, not just hidden in the UI. Manual portfolios work exactly as they always have; connecting a broker is purely additive.
+
+> **Read-only, by construction.** The brokerage client can only issue GET requests — there is no code anywhere in the app that places or cancels an order, so it cannot trade on your behalf even by accident.
 
 ### 📊 Dual-Mode Dashboard
 
@@ -157,6 +172,10 @@ You own your data — completely:
 Stockfolio makes **zero network requests from your browser**. All market data fetching happens in the Rust backend process and is stored in a local SQLite database on your machine. No accounts. No telemetry.
 
 **Sync is entirely optional and self-hosted.** If you enable it, your database is copied directly between devices via a path or WebDAV server you control — no Stockfolio servers are ever involved. The sync feature works with your own NAS, Nextcloud instance, or any WebDAV-compatible service.
+
+**Credentials never leave your machine.** Brokerage API keys and sync passwords are stored in your operating system's credential manager — Windows Credential Manager, macOS Keychain, or the Secret Service on Linux — and the database holds only an opaque reference to them. Because sync copies the database wholesale, this is what keeps a key out of the copy that lands on your NAS or Nextcloud. A regression test sweeps every value in every table to keep it that way.
+
+A database synced to a second device therefore arrives without its keys, which is deliberate: the brokerage portfolios are visible and read-only there until you add the credentials on that machine too.
 
 ---
 

@@ -421,6 +421,7 @@ const QUOTE_TYPE_LABELS: Record<string, string> = {
   CRYPTOCURRENCY: "Crypto",
   CURRENCY: "Currency",
   FUTURE: "Futures",
+  OPTION: "Options",
 };
 
 function AssetAllocation({
@@ -432,15 +433,23 @@ function AssetAllocation({
   totalValue: number;
   totalInvested: number;
 }) {
-  const base = totalValue > 0 ? totalValue : totalInvested;
-
   type Bucket = { label: string; value: number; count: number };
   const buckets = new Map<string, Bucket>();
 
+  // A short position carries a negative market value. That is correct for the
+  // portfolio total, but this breakdown expresses parts of a whole, and a
+  // negative slice has no meaning here — so shorts are left out and counted
+  // separately rather than silently distorting every other percentage.
+  let excludedShorts = 0;
+
   for (const s of summaries) {
+    const val = s.marketValue ?? s.totalInvested;
+    if (val <= 0) {
+      if (s.totalShares < 0) excludedShorts += 1;
+      continue;
+    }
     const raw = s.quoteType?.toUpperCase() ?? "EQUITY";
     const label = QUOTE_TYPE_LABELS[raw] ?? raw;
-    const val = s.marketValue ?? s.totalInvested;
     const existing = buckets.get(label);
     if (existing) {
       existing.value += val;
@@ -450,6 +459,12 @@ function AssetAllocation({
     }
   }
 
+  // Percentages are of the value actually charted. Using the portfolio total
+  // would make the slices sum past 100% whenever a short was excluded above.
+  const bucketTotal = [...buckets.values()].reduce((a, b) => a + b.value, 0);
+  const base =
+    bucketTotal > 0 ? bucketTotal : totalValue > 0 ? totalValue : totalInvested;
+
   const sorted = [...buckets.values()].sort((a, b) => b.value - a.value);
   const COLORS = [getCssVar("--primary"), getCssVar("--chart-2"), "#f59e0b", "#ec4899", "#14b8a6", "#f97316", "#a78bfa"];
 
@@ -458,6 +473,15 @@ function AssetAllocation({
       <h3 className="text-sm font-semibold text-foreground mb-0.5">Asset Type Allocation</h3>
       <p className="text-xs text-muted-foreground mb-4">
         How your portfolio is split by security type
+        {excludedShorts > 0 && (
+          <>
+            {" · "}
+            <span className="text-negative">
+              {excludedShorts} short position{excludedShorts === 1 ? "" : "s"} not
+              shown here
+            </span>
+          </>
+        )}
       </p>
       <div className="flex h-4 w-full rounded-full overflow-hidden mb-4 gap-px">
         {sorted.map((b, i) => (

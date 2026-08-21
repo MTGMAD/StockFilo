@@ -763,3 +763,151 @@ mod isolation_tests {
         assert_eq!(list_positions(&conn, margin).unwrap().len(), 1);
     }
 }
+
+/// The database is uploaded wholesale to WebDAV/NAS sync targets, so a
+/// credential stored in it is a credential published to that target.
+///
+/// This guards the property structurally: it sweeps *every* text value in
+/// *every* table, so it keeps holding if someone later adds a column, a table,
+/// or a debug field that happens to carry a secret.
+#[cfg(test)]
+mod credential_leak_tests {
+    use super::*;
+    use crate::db::migrations;
+
+    const FAKE_KEY: &str = "PKTESTKEY0000000000000000";
+    const FAKE_SECRET: &str = "sUpErSeCrEtAlPaCaVaLuE1234567890abcd";
+
+    /// Every text value stored anywhere in the database.
+    fn all_text_values(conn: &Connection) -> Vec<String> {
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+
+        let mut out = Vec::new();
+        for t in tables {
+            if t.starts_with("sqlite_") {
+                continue;
+            }
+            let cols: Vec<String> = conn
+                .prepare(&format!("PRAGMA table_info({t})"))
+                .unwrap()
+                .query_map([], |r| r.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+
+            for c in cols {
+                let sql = format!("SELECT CAST(\"{c}\" AS TEXT) FROM \"{t}\" WHERE \"{c}\" IS NOT NULL");
+                let mut stmt = conn.prepare(&sql).unwrap();
+                let vals = stmt
+                    .query_map([], |r| r.get::<_, String>(0))
+                    .unwrap()
+                    .filter_map(|v| v.ok());
+                out.extend(vals);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn no_credential_is_ever_written_to_the_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrations::run_all(&conn).unwrap();
+
+        // Exactly what broker_save_connection persists: a reference, never the
+        // secret itself. The secret goes to the OS keychain (secrets.rs).
+        conn.execute(
+            "INSERT INTO broker_connections \
+               (id, provider, environment, label, credential_ref, device_id, created_at) \
+             VALUES ('conn-1', 'alpaca', 'live', 'Alpaca — Margin', 'broker:conn-1', 'dev-1', 0)",
+            [],
+        )
+        .unwrap();
+
+        let acct = upsert_account(
+            &conn,
+            "conn-1",
+            &RemoteAccount {
+                id: "A1".into(),
+                mask: Some("****4342".into()),
+                currency: "USD".into(),
+                equity: Some(1000.0),
+                cash: Some(10.0),
+                buying_power: None,
+            },
+        )
+        .unwrap();
+        ensure_portfolio(&conn, acct, "alpaca", "Alpaca Margin (****4342)").unwrap();
+        replace_positions(
+            &conn,
+            acct,
+            &[RemotePosition {
+                provider_symbol: "AAPL".into(),
+                asset_class: Some("us_equity".into()),
+                qty: 1.0,
+                avg_entry_price: Some(1.0),
+                cost_basis: Some(1.0),
+                current_price: Some(1.0),
+                market_value: Some(1.0),
+                unrealized_pl: Some(0.0),
+                unrealized_plpc: Some(0.0),
+                change_today: Some(0.0),
+            }],
+        )
+        .unwrap();
+        append_transactions(
+            &conn,
+            acct,
+            &[RemoteActivity {
+                external_id: "f1".into(),
+                kind: "fill".into(),
+                side: Some("buy".into()),
+                provider_symbol: "AAPL".into(),
+                qty: Some(1.0),
+                price: Some(1.0),
+                occurred_at: "2025-01-01".into(),
+                // `raw` keeps the provider's original JSON — the most likely
+                // place for a credential to end up by accident.
+                raw: Some(r#"{"id":"f1","symbol":"AAPL"}"#.into()),
+            }],
+        )
+        .unwrap();
+
+        for value in all_text_values(&conn) {
+            assert!(
+                !value.contains(FAKE_KEY),
+                "an API key id reached the database: {value}"
+            );
+            assert!(
+                !value.contains(FAKE_SECRET),
+                "an API secret reached the database: {value}"
+            );
+        }
+    }
+
+    /// `credential_ref` must be an opaque handle, not the secret in disguise.
+    #[test]
+    fn credential_ref_is_only_a_handle() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrations::run_all(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO broker_connections \
+               (id, provider, environment, label, credential_ref, created_at) \
+             VALUES ('conn-1', 'alpaca', 'live', 'x', 'broker:conn-1', 0)",
+            [],
+        )
+        .unwrap();
+
+        let r: String = conn
+            .query_row("SELECT credential_ref FROM broker_connections", [], |x| x.get(0))
+            .unwrap();
+        assert!(r.starts_with("broker:"), "unexpected reference form: {r}");
+        assert!(r.ends_with("conn-1"), "reference should name the connection");
+        assert!(!r.contains(FAKE_SECRET));
+    }
+}

@@ -33,3 +33,15 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Secrets & local data — these live outside the repo (in the OS app-data and
+# config directories), but are listed so a copy dropped here for debugging can
+# never be committed by accident.
+config.json
+secrets.json
+secrets.key
+*.db
+*.db-wal
+*.db-shm
+*.db.bak
+pre-v14-backup-*/
