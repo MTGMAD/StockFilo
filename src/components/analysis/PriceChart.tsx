@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   ColorType,
@@ -11,6 +11,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
+import { Maximize2 } from "lucide-react";
 import type { ChartPoint, ChartRange, ChartStyle } from "../../types";
 import { getCssVar } from "../../lib/utils";
 import { formatInZone, type TimeZoneChoice } from "../../lib/timezones";
@@ -45,6 +46,9 @@ interface PriceChartProps {
   priceDecimals: number;
   /** Zone the time axis is rendered in; "local" follows the system. */
   timeZone: TimeZoneChoice;
+  /** Changes when the view should be re-framed — a new ticker, range or style.
+   *  A plain data refresh must not, or it would undo the user's zoom. */
+  resetKey: string;
 }
 
 /**
@@ -119,14 +123,20 @@ function crosshairLabel(ts: number, range: ChartRange, zone: TimeZoneChoice): st
   });
 }
 
-/** Time axis formatting per range, mirroring the previous chart's labels. */
+/**
+ * Time axis formatting per range.
+ *
+ * Deliberately no `barSpacing`: it pins bars to a fixed pixel width, which
+ * overrides whatever `fitContent` worked out and leaves the series bunched
+ * against the right edge with dead space to its left. `minBarSpacing` sets a
+ * floor for readability without dictating the layout.
+ */
 function timeScaleOptions(range: ChartRange) {
   const intraday = range === "1d" || range === "5d";
   return {
     timeVisible: intraday,
     secondsVisible: false,
-    // Intraday needs tighter spacing to fit a session; longer ranges breathe.
-    barSpacing: intraday ? 6 : 8,
+    minBarSpacing: 0.5,
   };
 }
 
@@ -138,6 +148,7 @@ export function PriceChart({
   isUp,
   priceDecimals,
   timeZone,
+  resetKey,
 }: PriceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // The chart is created once but the formatters must see the current range,
@@ -146,6 +157,10 @@ export function PriceChart({
   rangeRef.current = range;
   const zoneRef = useRef<TimeZoneChoice>(timeZone);
   zoneRef.current = timeZone;
+  const fittedForRef = useRef<string | null>(null);
+  const [adjusted, setAdjusted] = useState(false);
+  const adjustedRef = useRef(false);
+  adjustedRef.current = adjusted;
   const chartRef = useRef<IChartApi | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const seriesRef = useRef<ISeriesApi<any> | null>(null);
@@ -170,6 +185,9 @@ export function PriceChart({
       rightPriceScale: {
         borderVisible: false,
         scaleMargins: { top: 0.12, bottom: 0.08 },
+        autoScale: true,
+        // Widen the hit area so the axis is comfortable to grab and drag.
+        entireTextOnly: false,
       },
       leftPriceScale: { visible: false },
       timeScale: {
@@ -186,9 +204,23 @@ export function PriceChart({
         vertLine: { color: c.text, width: 1, style: LineStyle.Dashed, labelBackgroundColor: c.text },
         horzLine: { color: c.text, width: 1, style: LineStyle.Dashed, labelBackgroundColor: c.text },
       },
-      handleScale: { axisPressedMouseMove: false },
-      width: el.clientWidth,
-      height: el.clientHeight,
+      // Zoom and pan the plot, and drag either axis to rescale it. Dragging
+      // the price axis is what lets a chart be re-centred vertically; the
+      // library drops out of auto-scale as soon as it is used.
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      width: Math.max(el.clientWidth, 1),
+      height: Math.max(el.clientHeight, 1),
     });
 
     chartRef.current = chart;
@@ -199,9 +231,27 @@ export function PriceChart({
     // observer means it can be disconnected before disposal, deterministically.
     const resize = new ResizeObserver(() => {
       if (!chartRef.current) return;
-      chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+      const width = Math.max(el.clientWidth, 1);
+      const height = Math.max(el.clientHeight, 1);
+      chart.applyOptions({ width, height });
+
+      // Bar spacing survives a resize, so a chart first laid out at zero or
+      // partial width would keep that spacing and sit squashed against the
+      // right edge. Re-fit whenever the size changes — unless the user has
+      // zoomed, in which case their framing is the one to respect.
+      if (!adjustedRef.current) {
+        chart.timeScale().fitContent();
+      }
     });
     resize.observe(el);
+
+    // Any zoom, pan or axis drag means the view is no longer auto-framed, so
+    // offer a way back. Tracked from input events rather than by comparing
+    // ranges, which would also fire on ordinary data updates.
+    const markAdjusted = () => setAdjusted(true);
+    el.addEventListener("wheel", markAdjusted, { passive: true });
+    el.addEventListener("mousedown", markAdjusted);
+    el.addEventListener("touchstart", markAdjusted, { passive: true });
 
     // The library takes literal colours, so a theme switch has to be pushed in.
     const observer = new MutationObserver(() => {
@@ -223,6 +273,9 @@ export function PriceChart({
     return () => {
       // Order matters: stop every callback source before disposing, or a
       // queued frame will paint into a destroyed canvas.
+      el.removeEventListener("wheel", markAdjusted);
+      el.removeEventListener("mousedown", markAdjusted);
+      el.removeEventListener("touchstart", markAdjusted);
       resize.disconnect();
       observer.disconnect();
       chartRef.current = null;
@@ -308,8 +361,17 @@ export function PriceChart({
     }
 
     chart.timeScale().applyOptions(timeScaleOptions(range));
-    chart.timeScale().fitContent();
-  }, [points, style, range]);
+
+    // Re-frame only when the ticker, range or style changed. Intraday data
+    // reloads every 60s, and fitting on each one would yank the chart back
+    // from wherever the user had zoomed to.
+    if (fittedForRef.current !== resetKey) {
+      chart.timeScale().fitContent();
+      chart.priceScale("right").applyOptions({ autoScale: true });
+      fittedForRef.current = resetKey;
+      setAdjusted(false);
+    }
+  }, [points, style, range, resetKey]);
 
   // Tick and crosshair labels are cached, so changing the zone needs an
   // explicit nudge — the formatters alone would keep returning stale text.
@@ -353,5 +415,31 @@ export function PriceChart({
     };
   }, [previousClose, range, style, points]);
 
-  return <div ref={containerRef} className="w-full h-full" />;
+  function resetView() {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.timeScale().fitContent();
+    chart.priceScale("right").applyOptions({ autoScale: true });
+    setAdjusted(false);
+  }
+
+  return (
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="w-full h-full" />
+      {adjusted && (
+        <button
+          type="button"
+          onClick={resetView}
+          title="Reset zoom and price scale"
+          className="absolute top-1 left-1 z-10 flex items-center gap-1 px-1.5 py-0.5 rounded-md
+                     border border-border bg-background/90 backdrop-blur-sm
+                     text-[10px] font-medium text-muted-foreground
+                     hover:text-foreground hover:bg-background transition-colors"
+        >
+          <Maximize2 className="w-3 h-3" />
+          Reset view
+        </button>
+      )}
+    </div>
+  );
 }

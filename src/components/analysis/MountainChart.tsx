@@ -10,6 +10,7 @@ import {
 } from "../../lib/timezones";
 import { ChartStyleMenu } from "./ChartStyleMenu";
 import { TimeZoneMenu } from "./TimeZoneMenu";
+import { RangeMenu } from "./RangeMenu";
 import { hasOhlc } from "./ohlc";
 import { PriceChart } from "./PriceChart";
 
@@ -153,20 +154,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
             }
           />
           <div className="w-px h-4 bg-border mx-0.5" />
-          {ranges.map((r) => (
-            <button
-              key={r.value}
-              onClick={() => setRange(r.value)}
-              className={cn(
-                "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
-                range === r.value
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-            >
-              {r.label}
-            </button>
-          ))}
+          <RangeMenu ranges={ranges} value={range} onChange={setRange} />
         </div>
       </div>
 
@@ -191,8 +179,10 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
         </div>
       )}
 
-      {/* Chart area */}
-      <div className="h-[260px]">
+      {/* Chart area. Taller than the header above it needs, so the extra height
+          extends downward into the page rather than pushing the price summary
+          up — the ticker, price and controls stay exactly where they were. */}
+      <div className="h-[360px]">
         {loading && points.length === 0 ? (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             Loading chart…
@@ -214,6 +204,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
             isUp={isUp}
             priceDecimals={priceDecimals}
             timeZone={timeZone}
+            resetKey={`${ticker}|${range}|${effectiveStyle}`}
           />
         )}
       </div>
