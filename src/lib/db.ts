@@ -216,6 +216,51 @@ export async function setWatchlistWatchPrice(
 ): Promise<void> {
   return invoke("db_set_watch_price", { id, watchPrice });
 }
+
+/**
+ * Set or clear a watchlist row's note. Blank/whitespace-only text clears it
+ * (see `db_set_watchlist_note`), so callers don't need to special-case an
+ * empty string themselves.
+ */
+export async function updateWatchlistNote(
+  id: number,
+  notes: string,
+): Promise<void> {
+  return invoke("db_set_watchlist_note", { id, notes });
+}
+
+/**
+ * One-time move of notes written before migration V17, when they lived in
+ * `localStorage` keyed by ticker rather than as a column on the row. Called
+ * on every watchlist load, but it is nearly free once done — the old key is
+ * removed as soon as everything in it has somewhere to go, so this is only
+ * ever real work the first time a given watchlist loads after upgrading.
+ * A note already in the database always wins over the legacy one.
+ */
+export async function migrateLegacyWatchlistNotes(
+  watchlistId: number,
+  items: WatchlistItem[],
+): Promise<number> {
+  const key = `stockfolio-watchlist-notes-${watchlistId}`;
+  const legacy = readLocalJson<Record<string, string>>(key, {});
+  if (Object.keys(legacy).length === 0) {
+    localStorage.removeItem(key);
+    return 0;
+  }
+
+  let migrated = 0;
+  for (const item of items) {
+    if (item.notes?.trim()) continue;
+    const text = legacy[item.ticker];
+    if (text?.trim()) {
+      await updateWatchlistNote(item.id, text);
+      migrated++;
+    }
+  }
+  localStorage.removeItem(key);
+  return migrated;
+}
+
 // ── Watchlist backup (all watchlists) ─────────────────────────────────────
 
 interface WatchlistItemFull {
@@ -224,18 +269,32 @@ interface WatchlistItemFull {
   watch_price: number | null;
   created_at: number;
   watchlist_id: number;
+  notes: string | null;
+  notes_updated_at: number | null;
 }
 
 interface WatchlistBackupEntry {
   name: string;
   sort_order: number;
-  items: { ticker: string; watch_price: number | null; created_at: number }[];
+  items: {
+    ticker: string;
+    watch_price: number | null;
+    created_at: number;
+    notes: string | null;
+  }[];
   targets: Record<string, number>;
-  notes: Record<string, string>;
+  /**
+   * v2-only: notes used to live in `localStorage`, keyed by ticker rather
+   * than tied to a row, so an old backup carries them here — as a top-level,
+   * ticker-keyed map — instead of on each item. Absent from anything
+   * exported after notes moved into the `watchlist` table, which is per-item
+   * (see `items[].notes`) since each row now owns its own note directly.
+   */
+  notes?: Record<string, string>;
 }
 
 interface AllWatchlistsBackup {
-  version: 2;
+  version: 2 | 3;
   exported_at: number;
   watchlists: WatchlistBackupEntry[];
 }
@@ -260,19 +319,19 @@ export async function exportAllWatchlistsBackup(): Promise<boolean> {
     sort_order: wl.sort_order,
     items: allItems
       .filter((i) => i.watchlist_id === wl.id)
-      .map(({ ticker, watch_price, created_at }) => ({
+      .map(({ ticker, watch_price, created_at, notes }) => ({
         ticker,
         watch_price,
         created_at,
+        notes,
       })),
     targets: readLocalJson<Record<string, number>>(
       `stockfolio-watchlist-targets-${wl.id}`,
       {},
     ),
-    notes: readLocalJson<Record<string, string>>(
-      `stockfolio-watchlist-notes-${wl.id}`,
-      {},
-    ),
+    // No `notes` map here — notes now live per-item (above), in the database,
+    // so they travel with the rest of a WebDAV/NAS sync instead of needing a
+    // manual backup/restore round-trip at all.
   }));
 
   const path = await save({
@@ -281,7 +340,7 @@ export async function exportAllWatchlistsBackup(): Promise<boolean> {
   });
   if (!path) return false;
   const backup: AllWatchlistsBackup = {
-    version: 2,
+    version: 3,
     exported_at: Math.floor(Date.now() / 1000),
     watchlists: entries,
   };
@@ -342,11 +401,25 @@ export async function importAllWatchlistsBackup(): Promise<{
     const mergedTargets = { ...entry.targets, ...existingTargets };
     localStorage.setItem(targetsKey, JSON.stringify(mergedTargets));
 
-    // Merge notes (existing values win)
-    const notesKey = `stockfolio-watchlist-notes-${watchlistId}`;
-    const existingNotes = readLocalJson<Record<string, string>>(notesKey, {});
-    const mergedNotes = { ...entry.notes, ...existingNotes };
-    localStorage.setItem(notesKey, JSON.stringify(mergedNotes));
+    // Notes now live in the database rather than localStorage, so they merge
+    // per-row instead of as a blob — existing values still win, matching
+    // targets above. A backup may carry notes either way: per-item (current
+    // export format) or as v2's legacy ticker-keyed map.
+    const noteByTicker = new Map<string, string>();
+    for (const [ticker, text] of Object.entries(entry.notes ?? {})) {
+      if (text.trim()) noteByTicker.set(ticker, text);
+    }
+    for (const item of entry.items ?? []) {
+      if (item.notes?.trim()) noteByTicker.set(item.ticker, item.notes);
+    }
+    if (noteByTicker.size > 0) {
+      const current = await listWatchlist(watchlistId);
+      for (const row of current) {
+        if (row.notes?.trim()) continue; // existing value wins
+        const incoming = noteByTicker.get(row.ticker);
+        if (incoming) await updateWatchlistNote(row.id, incoming);
+      }
+    }
   }
 
   return { watchlistsImported, tickersImported };

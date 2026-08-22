@@ -19,9 +19,9 @@ import { SparkLine } from "./SparkLine";
 import { TickerLogo } from "../shared/TickerLogo";
 import { StockDetailModal } from "./StockDetailModal";
 import { StockCompareModal } from "./StockCompareModal";
+import { NoteEditor } from "./NoteEditor";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
-import { useWatchlistNotes } from "../../hooks/useWatchlistNotes";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import {
   Plus,
@@ -65,6 +65,7 @@ interface WatchListProps {
   onAdd: (ticker: string, watchPrice: number | null) => Promise<void>;
   onRemove: (id: number) => Promise<void>;
   onReload: () => Promise<void>;
+  onSetNote: (id: number, notes: string) => Promise<void>;
   onPurchase: (
     ticker: string,
     shares: number,
@@ -116,6 +117,7 @@ export function WatchList({
   onAdd,
   onRemove,
   onReload,
+  onSetNote,
   onPurchase,
 }: WatchListProps) {
   const [activeTab, setActiveTab] = useState<WatchListTab>("list");
@@ -130,7 +132,8 @@ export function WatchList({
   const [detailTicker, setDetailTicker] = useState<string | null>(null);
   const [editingTarget, setEditingTarget] = useState<string | null>(null);
   const [targetDraft, setTargetDraft] = useState("");
-  const [openNotes, setOpenNotes] = useState<Set<string>>(new Set());
+  const [openNoteIds, setOpenNoteIds] = useState<Set<number>>(new Set());
+  const [notesOnly, setNotesOnly] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -182,12 +185,6 @@ export function WatchList({
     isTriggered,
     refresh: refreshTargets,
   } = useWatchlistTargets(activeWatchlistId);
-  const {
-    getNote,
-    setNote,
-    hasNote,
-    refresh: refreshNotes,
-  } = useWatchlistNotes(activeWatchlistId);
 
   const [upcomingEarnings, setUpcomingEarnings] = useState<
     Record<string, number>
@@ -252,11 +249,13 @@ export function WatchList({
     );
   }
 
-  const rankedItems = [...items].sort((a, b) => {
-    const rankDelta = liveRank(b) - liveRank(a);
-    if (rankDelta !== 0) return rankDelta;
-    return a.ticker.localeCompare(b.ticker);
-  });
+  const rankedItems = [...items]
+    .filter((item) => !notesOnly || !!item.notes?.trim())
+    .sort((a, b) => {
+      const rankDelta = liveRank(b) - liveRank(a);
+      if (rankDelta !== 0) return rankDelta;
+      return a.ticker.localeCompare(b.ticker);
+    });
 
   function formatAddedDate(unixSeconds: number): string {
     return new Intl.DateTimeFormat("en-US", {
@@ -409,7 +408,6 @@ export function WatchList({
       await onReloadWatchlists();
       await onReload();
       refreshTargets();
-      refreshNotes();
       setBackupStatus({
         kind: "success",
         msg: `Restored ${result.watchlistsImported} watchlist${result.watchlistsImported === 1 ? "" : "s"}, ${result.tickersImported} ticker${result.tickersImported === 1 ? "" : "s"} imported.`,
@@ -494,12 +492,29 @@ export function WatchList({
         )}
 
         {/* Settings gear — far right */}
+        <Tooltip text={notesOnly ? "Show all tickers" : "Show only tickers with notes"}>
+          <button
+            type="button"
+            onClick={() => setNotesOnly((v) => !v)}
+            className={cn(
+              "ml-auto shrink-0 p-2 rounded-md transition-colors",
+              notesOnly
+                ? "text-primary bg-primary/10"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted",
+            )}
+          >
+            <MessageSquare
+              className="w-4 h-4"
+              fill={notesOnly ? "currentColor" : "none"}
+            />
+          </button>
+        </Tooltip>
         <Tooltip text={compareMode ? "Exit Compare Mode" : "Compare Stocks (select up to 4)"}>
           <button
             type="button"
             onClick={toggleCompareMode}
             className={cn(
-              "ml-auto shrink-0 p-2 rounded-md transition-colors",
+              "shrink-0 p-2 rounded-md transition-colors",
               compareMode
                 ? "text-primary bg-primary/10"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted",
@@ -794,6 +809,17 @@ export function WatchList({
                 <p className="text-sm">This watchlist is empty.</p>
                 <p className="text-xs">Add tickers above to start watching.</p>
               </div>
+            ) : notesOnly && rankedItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                <p className="text-sm">No tickers have a note yet.</p>
+                <button
+                  type="button"
+                  onClick={() => setNotesOnly(false)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Show all tickers
+                </button>
+              </div>
             ) : (
               <table className="w-full text-sm border-collapse">
                 <thead className="sticky top-0 z-10">
@@ -868,8 +894,8 @@ export function WatchList({
                       now - stock.last_fetched_at > STALE_THRESHOLD;
                     const triggered = isTriggered(item.ticker, currentPrice);
                     const target = getTarget(item.ticker);
-                    const note = getNote(item.ticker);
-                    const noteOpen = openNotes.has(item.ticker);
+                    const hasNote = !!item.notes?.trim();
+                    const noteOpen = openNoteIds.has(item.id);
 
                     const watchPrice = item.watch_price;
                     const sinceChangePct = sinceAddedPct(item);
@@ -1124,26 +1150,28 @@ export function WatchList({
                           </td>
                           <td className="px-4 py-2.5">
                             <div className="flex items-center justify-center gap-1">
-                              <Tooltip text={noteOpen ? "Hide notes" : "Add / view notes"}>
+                              <Tooltip text={noteOpen ? "Hide note" : hasNote ? "View / edit note" : "Add a note"}>
                                 <button
                                   onClick={() =>
-                                    setOpenNotes((prev) => {
+                                    setOpenNoteIds((prev) => {
                                       const next = new Set(prev);
-                                      if (next.has(item.ticker))
-                                        next.delete(item.ticker);
-                                      else next.add(item.ticker);
+                                      if (next.has(item.id)) next.delete(item.id);
+                                      else next.add(item.id);
                                       return next;
                                     })
                                   }
                                   className={cn(
                                     "p-1.5 rounded transition-colors",
-                                    hasNote(item.ticker)
+                                    hasNote
                                       ? "text-primary hover:bg-primary/10"
                                       : "text-muted-foreground hover:text-foreground hover:bg-muted",
                                   )}
                                 >
-                                  {hasNote(item.ticker) ? (
-                                    <MessageSquare className="w-3.5 h-3.5" />
+                                  {hasNote ? (
+                                    <MessageSquare
+                                      className="w-3.5 h-3.5"
+                                      fill="currentColor"
+                                    />
                                   ) : (
                                     <MessageSquareDiff className="w-3.5 h-3.5" />
                                   )}
@@ -1174,16 +1202,12 @@ export function WatchList({
                             key={`${item.id}-note`}
                             className="border-b border-border bg-muted/20"
                           >
-                            <td colSpan={10} className="px-6 py-2">
-                              <textarea
-                                autoFocus
-                                rows={2}
-                                value={note}
-                                onChange={(e) =>
-                                  setNote(item.ticker, e.target.value)
-                                }
-                                placeholder="Add your investment thesis, price targets, catalysts to watch…"
-                                className="w-full resize-none rounded border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary"
+                            <td colSpan={10} className="px-6 py-2.5">
+                              <NoteEditor
+                                initialText={item.notes ?? ""}
+                                updatedAt={item.notes_updated_at}
+                                onSave={(text) => onSetNote(item.id, text)}
+                                linkOpenMode={linkOpenMode}
                               />
                             </td>
                           </tr>

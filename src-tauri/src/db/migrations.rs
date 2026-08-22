@@ -254,7 +254,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 16);
+        assert_eq!(v, 17);
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 16);
+        assert_eq!(v, 17);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 16);
+        assert_eq!(after, 17);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -469,6 +469,19 @@ const MIGRATION_V15: &str = "ALTER TABLE broker_accounts ADD COLUMN buying_power
 const MIGRATION_V16: &str =
     "ALTER TABLE broker_accounts ADD COLUMN visible INTEGER NOT NULL DEFAULT 1;";
 
+/// V17: watchlist notes move into the database.
+///
+/// They used to live entirely in `localStorage`, keyed per watchlist — which
+/// meant they were the one piece of a person's data that silently did not
+/// travel with a WebDAV/NAS sync, unlike everything else in this file.
+/// `notes_updated_at` is separate from `created_at` (when the row was first
+/// added to the watchlist) so the UI can show "edited 3h ago" against the
+/// note itself; both are nullable because most rows have no note.
+const MIGRATION_V17: &str = r#"
+ALTER TABLE watchlist ADD COLUMN notes TEXT;
+ALTER TABLE watchlist ADD COLUMN notes_updated_at INTEGER;
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -490,6 +503,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (14, MIGRATION_V14),
         (15, MIGRATION_V15),
         (16, MIGRATION_V16),
+        (17, MIGRATION_V17),
     ];
 
     let user_version: i64 =

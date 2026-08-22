@@ -20,6 +20,8 @@ pub struct WatchlistItem {
     pub ticker: String,
     pub watch_price: Option<f64>,
     pub created_at: i64,
+    pub notes: Option<String>,
+    pub notes_updated_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,6 +31,8 @@ pub struct WatchlistItemFull {
     pub watch_price: Option<f64>,
     pub created_at: i64,
     pub watchlist_id: i64,
+    pub notes: Option<String>,
+    pub notes_updated_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,7 +113,7 @@ pub fn db_list_watchlist_items(
 ) -> Result<Vec<WatchlistItem>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, ticker, watch_price, created_at FROM watchlist \
+            "SELECT id, ticker, watch_price, created_at, notes, notes_updated_at FROM watchlist \
              WHERE watchlist_id = ?1 ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![watchlist_id], |r| {
@@ -118,6 +122,8 @@ pub fn db_list_watchlist_items(
                 ticker: r.get(1)?,
                 watch_price: r.get(2)?,
                 created_at: r.get(3)?,
+                notes: r.get(4)?,
+                notes_updated_at: r.get(5)?,
             })
         })?;
         rows.collect()
@@ -130,8 +136,8 @@ pub fn db_list_all_watchlist_items(
 ) -> Result<Vec<WatchlistItemFull>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, ticker, watch_price, created_at, watchlist_id FROM watchlist \
-             ORDER BY created_at DESC",
+            "SELECT id, ticker, watch_price, created_at, watchlist_id, notes, notes_updated_at \
+             FROM watchlist ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(WatchlistItemFull {
@@ -140,6 +146,8 @@ pub fn db_list_all_watchlist_items(
                 watch_price: r.get(2)?,
                 created_at: r.get(3)?,
                 watchlist_id: r.get(4)?,
+                notes: r.get(5)?,
+                notes_updated_at: r.get(6)?,
             })
         })?;
         rows.collect()
@@ -185,6 +193,27 @@ pub fn db_set_watch_price(
             "UPDATE watchlist SET watch_price = ?1 \
              WHERE id = ?2 AND (watch_price IS NULL OR watch_price <= 0)",
             params![watch_price, id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Set or clear a watchlist row's note. Blank/whitespace-only text clears it
+/// (and its timestamp) rather than storing an empty string, matching how
+/// `hasNote` on the frontend already treats "no note" as the absence of any
+/// non-whitespace content.
+#[tauri::command]
+pub fn db_set_watchlist_note(
+    id: i64,
+    notes: Option<String>,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        let trimmed = notes.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        let updated_at = trimmed.map(|_| now_secs());
+        conn.execute(
+            "UPDATE watchlist SET notes = ?1, notes_updated_at = ?2 WHERE id = ?3",
+            params![trimmed, updated_at, id],
         )?;
         Ok(())
     })

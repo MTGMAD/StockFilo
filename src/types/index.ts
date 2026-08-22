@@ -66,6 +66,8 @@ export interface WatchlistItem {
   ticker: string;
   watch_price: number | null;
   created_at: number;
+  notes: string | null;
+  notes_updated_at: number | null;
 }
 
 export interface TickerSearchResult {

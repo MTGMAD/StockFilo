@@ -432,6 +432,7 @@ export default function App() {
               onAdd={watchlist.add}
               onRemove={watchlist.remove}
               onReload={watchlist.reload}
+              onSetNote={watchlist.setNote}
               onPurchase={async (ticker, shares, price, date) => {
                 // Buying from the watch list is a hand-entered action, so it
                 // always lands in a manual portfolio — never in a broker

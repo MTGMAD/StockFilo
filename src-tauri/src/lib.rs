@@ -129,6 +129,7 @@ pub fn run() {
             commands::db_watchlists::db_add_to_watchlist,
             commands::db_watchlists::db_remove_from_watchlist,
             commands::db_watchlists::db_set_watch_price,
+            commands::db_watchlists::db_set_watchlist_note,
             commands::db_watchlists::db_list_favorites,
             commands::db_watchlists::db_add_favorite,
             commands::db_watchlists::db_remove_favorite,

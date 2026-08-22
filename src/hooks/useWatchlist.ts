@@ -5,6 +5,8 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   setWatchlistWatchPrice,
+  updateWatchlistNote,
+  migrateLegacyWatchlistNotes,
   getCachedStocks,
   fetchAndCachePrices,
 } from "../lib/db";
@@ -24,7 +26,8 @@ export function useWatchlist(watchlistId: number | null) {
     }
     try {
       const [w, s] = await Promise.all([listWatchlist(watchlistId), getCachedStocks()]);
-      setItems(w);
+      const migrated = await migrateLegacyWatchlistNotes(watchlistId, w);
+      setItems(migrated > 0 ? await listWatchlist(watchlistId) : w);
       setStocks(s);
       // Fire a background price refresh so switching watchlists always shows current data
       const tickers = w.map((i) => i.ticker);
@@ -124,5 +127,28 @@ export function useWatchlist(watchlistId: number | null) {
     [loadAll]
   );
 
-  return { items, stocks, loading, error, add, remove, reload: loadAll };
+  /**
+   * Persist a note and reflect it immediately in `items` — the caller (an
+   * open note editor) has already been showing this exact text locally while
+   * typing, so there's nothing to gain from a full `loadAll()` round trip
+   * here, only a chance to visibly overwrite an in-progress edit with a
+   * slightly-stale server response.
+   */
+  const setNote = useCallback(async (id: number, notes: string) => {
+    await updateWatchlistNote(id, notes);
+    const trimmed = notes.trim();
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              notes: trimmed || null,
+              notes_updated_at: trimmed ? Math.floor(Date.now() / 1000) : null,
+            }
+          : item,
+      ),
+    );
+  }, []);
+
+  return { items, stocks, loading, error, add, remove, setNote, reload: loadAll };
 }
