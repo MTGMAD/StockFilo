@@ -21,6 +21,12 @@ import {
 import { cn } from "../../lib/utils";
 import { AppLogoMark } from "../shared/AppLogoMark";
 
+const SIDEBAR_WIDTH_KEY = "stockfolio-sidebar-width";
+const COLLAPSED_WIDTH = 56; // matches w-14
+const DEFAULT_WIDTH = 224; // matches w-56, the pre-resize default
+const MIN_WIDTH = 180;
+const MAX_WIDTH = 480;
+
 interface SidebarProps {
   view: View;
   onNavigate: (v: View) => void;
@@ -74,6 +80,39 @@ export function Sidebar({
   useEffect(() => {
     localStorage.setItem("stockfolio-portfolios-open", String(portfoliosOpen));
   }, [portfoliosOpen]);
+
+  const [width, setWidth] = useState<number>(() => {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    return stored >= MIN_WIDTH && stored <= MAX_WIDTH ? stored : DEFAULT_WIDTH;
+  });
+  const [resizing, setResizing] = useState(false);
+
+  useEffect(() => {
+    if (!resizing) return;
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function onMove(e: MouseEvent) {
+      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX)));
+    }
+    function onUp() {
+      setResizing(false);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+    };
+  }, [resizing]);
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  }, [width]);
 
   useEffect(() => {
     if (newPortfolioTrigger && newPortfolioTrigger > 0) {
@@ -131,9 +170,10 @@ export function Sidebar({
 
   return (
     <aside
+      style={{ width: collapsed ? COLLAPSED_WIDTH : width }}
       className={cn(
-        "flex flex-col h-full bg-sidebar border-r border-border shrink-0 transition-all duration-200",
-        collapsed ? "w-14" : "w-56"
+        "relative flex flex-col h-full bg-sidebar border-r border-border shrink-0",
+        !resizing && "transition-[width] duration-200"
       )}
     >
       {/* Logo header */}
@@ -513,6 +553,21 @@ export function Sidebar({
           )}
         </button>
       </div>
+
+      {/* Resize handle — straddles the border so it's easy to grab. */}
+      {!collapsed && (
+        <div
+          onMouseDown={(e) => {
+            e.preventDefault();
+            setResizing(true);
+          }}
+          title="Drag to resize"
+          className={cn(
+            "absolute top-0 right-0 h-full w-1.5 -translate-x-1/2 cursor-col-resize transition-colors z-10",
+            resizing ? "bg-primary/60" : "hover:bg-primary/40"
+          )}
+        />
+      )}
     </aside>
   );
 }

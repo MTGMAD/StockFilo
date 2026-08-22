@@ -24,6 +24,7 @@ import {
   listBrokerConnections,
   testBrokerConnection,
   saveBrokerConnection,
+  addBrokerCredentials,
   deleteBrokerConnection,
   syncBrokerConnection,
 } from "../../lib/brokers";
@@ -313,6 +314,107 @@ function ConnectForm({ providers, onSaved, onCancel }: ConnectFormProps) {
   );
 }
 
+// ── Add credentials to an existing connection ───────────────────────────────
+
+/**
+ * A synced connection carries no keychain entry. This attaches one to the
+ * *existing* connection id instead of creating a new connection/portfolio —
+ * the backend verifies against the brokerage before storing anything.
+ */
+function AddCredentialsForm({
+  connectionId,
+  fields,
+  onSaved,
+  onCancel,
+}: {
+  connectionId: string;
+  fields: ProviderDescriptor["credential_fields"];
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [shown, setShown] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const complete = fields.every((f) => (values[f.key] ?? "").trim());
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      await addBrokerCredentials(connectionId, values);
+      onSaved();
+    } catch (e) {
+      setError(String(e));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-border bg-background p-3 space-y-2.5">
+      {fields.map((f) => (
+        <div key={f.key}>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">
+            {f.label}
+          </label>
+          <div className="relative">
+            <input
+              type={f.secret && !shown[f.key] ? "password" : "text"}
+              value={values[f.key] ?? ""}
+              onChange={(e) =>
+                setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
+              }
+              placeholder={f.placeholder ?? ""}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full px-3 py-1.5 pr-8 text-sm rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            {f.secret && (
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setShown((s) => ({ ...s, [f.key]: !s[f.key] }))}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                {shown[f.key] ? (
+                  <EyeOff className="w-3.5 h-3.5" />
+                ) : (
+                  <Eye className="w-3.5 h-3.5" />
+                )}
+              </button>
+            )}
+          </div>
+          {f.help && (
+            <p className="text-xs text-muted-foreground mt-1">{f.help}</p>
+          )}
+        </div>
+      ))}
+
+      {error && (
+        <div className="flex items-start gap-2 text-sm text-negative">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 pt-0.5">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!complete || saving}
+          className="btn-primary text-sm disabled:opacity-50"
+        >
+          {saving ? "Connecting…" : "Save Key"}
+        </button>
+        <button type="button" onClick={onCancel} className="btn-secondary text-sm">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Panel ──────────────────────────────────────────────────────────────────
 
 interface BrokerSettingsProps {
@@ -336,6 +438,7 @@ export function BrokerSettings({
     Record<string, { ok: boolean; text: string }>
   >({});
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [addingCredsFor, setAddingCredsFor] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -433,6 +536,18 @@ export function BrokerSettings({
               </div>
 
               <div className="flex items-center gap-1 shrink-0">
+                {!c.has_credentials && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAddingCredsFor(addingCredsFor === c.id ? null : c.id)
+                    }
+                    title="Add API key"
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                  >
+                    <KeyRound className="w-4 h-4" />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => handleSync(c.id)}
@@ -472,6 +587,22 @@ export function BrokerSettings({
                   cannot refresh here until you add the keys on this machine.
                 </span>
               </div>
+            )}
+
+            {addingCredsFor === c.id && (
+              <AddCredentialsForm
+                connectionId={c.id}
+                fields={
+                  providers.find((p) => p.id === c.provider)?.credential_fields ??
+                  []
+                }
+                onSaved={async () => {
+                  setAddingCredsFor(null);
+                  await reload();
+                  onConnectionsChanged?.();
+                }}
+                onCancel={() => setAddingCredsFor(null)}
+              />
             )}
 
             {c.accounts.map((a) => (

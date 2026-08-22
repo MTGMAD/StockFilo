@@ -148,6 +148,7 @@ pub fn run() {
             commands::brokers::broker_list_providers,
             commands::brokers::broker_test_connection,
             commands::brokers::broker_save_connection,
+            commands::brokers::broker_add_credentials,
             commands::brokers::broker_list_connections,
             commands::brokers::broker_list_positions,
             commands::brokers::broker_list_transactions,

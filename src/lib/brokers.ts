@@ -54,6 +54,18 @@ export async function saveBrokerConnection(
   });
 }
 
+/**
+ * Attach credentials to an existing connection that has none on this device —
+ * e.g. one that arrived via a database sync from another machine. Verifies
+ * against the brokerage before storing, and returns the accounts it unlocks.
+ */
+export async function addBrokerCredentials(
+  id: string,
+  credentials: Record<string, string>,
+): Promise<RemoteAccount[]> {
+  return invoke<RemoteAccount[]>("broker_add_credentials", { id, credentials });
+}
+
 /** Configured connections. Never includes credentials. */
 export async function listBrokerConnections(): Promise<BrokerConnectionInfo[]> {
   return invoke<BrokerConnectionInfo[]>("broker_list_connections");

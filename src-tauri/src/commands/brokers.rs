@@ -155,6 +155,50 @@ pub async fn broker_save_connection(
     result
 }
 
+/// Attach credentials to an existing connection that has none on this device —
+/// the case of a connection that arrived via a database sync from another
+/// machine. Verifies against the brokerage first, then stores the secret and
+/// refreshes the account roster (idempotent: `ensure_portfolio` reuses the
+/// portfolio already linked from the sync instead of duplicating it).
+#[tauri::command]
+pub async fn broker_add_credentials(
+    app: AppHandle,
+    id: String,
+    credentials: Credentials,
+    state: State<'_, DbManager>,
+) -> Result<Vec<RemoteAccount>, String> {
+    let (provider, environment) = state.with_conn(|conn| {
+        conn.query_row(
+            "SELECT provider, environment FROM broker_connections WHERE id = ?1",
+            rusqlite::params![id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+    })?;
+
+    let p = Provider::from_id(&provider)?;
+    let descriptor = p.descriptor();
+    let accounts = p.verify(&credentials, &environment).await?;
+    if accounts.is_empty() {
+        return Err("The brokerage reported no accounts for these credentials.".into());
+    }
+
+    let reference = secrets::broker_reference(&id);
+    let blob = serde_json::to_string(&credentials).map_err(|e| e.to_string())?;
+    secrets::set_secret(&app, &reference, &blob)?;
+
+    state.with_txn(|conn| {
+        for acct in &accounts {
+            let acct_id = store::upsert_account(conn, &id, acct)?;
+            let name =
+                portfolio_name(&provider, &descriptor.name, &environment, acct.mask.as_deref());
+            store::ensure_portfolio(conn, acct_id, &provider, &name)?;
+        }
+        Ok(())
+    })?;
+
+    Ok(accounts)
+}
+
 /// Display label for an account type, as declared by its provider.
 ///
 /// Falls back to the raw id so an unknown value still renders as something
