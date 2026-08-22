@@ -1,10 +1,11 @@
 import { useState } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark } from "lucide-react";
+import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark, Network } from "lucide-react";
 import { clearAllPurchases } from "../../lib/db";
 import { StorageSettings } from "./StorageSettings";
 import { BrokerSettings } from "./BrokerSettings";
+import { SnapTradeSettings } from "./SnapTradeSettings";
 
 interface SettingsPanelProps {
   theme: Theme;
@@ -244,6 +245,20 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
           </div>
           <div className="flex-1">
             <BrokerSettings onConnectionsChanged={onBrokersChanged} openFormTrigger={openBrokerFormTrigger} />
+          </div>
+        </div>
+
+        {/* SnapTrade */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48 pt-0.5">
+            <div className="flex items-center gap-2">
+              <Network className="w-4 h-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">SnapTrade</h2>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5 pl-6">Link many brokerages at once through SnapTrade.</p>
+          </div>
+          <div className="flex-1">
+            <SnapTradeSettings onConnectionsChanged={onBrokersChanged} />
           </div>
         </div>
 

@@ -23,6 +23,7 @@
 
 pub mod alpaca;
 pub mod error;
+pub mod snaptrade;
 pub mod store;
 pub mod symbols;
 pub mod types;
@@ -34,17 +35,25 @@ use types::{Credentials, ProviderDescriptor, RemoteAccount, RemoteActivity, Remo
 pub enum Provider {
     Alpaca,
     // Schwab,   <- adding a brokerage starts here
+    /// Not in `all_descriptors()` — SnapTrade connects through its own portal
+    /// flow (see `commands::snaptrade`), not the generic credential form, so
+    /// it must stay out of that dropdown. It still resolves through `from_id`
+    /// because sync, positions, and the connection-card UI are all generic
+    /// over `Provider` and need it to dispatch like any other one.
+    SnapTrade,
 }
 
 impl Provider {
     pub fn from_id(id: &str) -> BrokerResult<Self> {
         match id {
             alpaca::ID => Ok(Provider::Alpaca),
+            snaptrade::ID => Ok(Provider::SnapTrade),
             other => Err(BrokerError::UnknownProvider(other.to_string())),
         }
     }
 
-    /// Every provider the app can offer. Drives the whole connect UI.
+    /// Every provider the app can offer through the generic connect form.
+    /// SnapTrade is deliberately excluded — see the enum variant's doc.
     pub fn all_descriptors() -> Vec<ProviderDescriptor> {
         vec![alpaca::Alpaca::descriptor()]
     }
@@ -52,6 +61,7 @@ impl Provider {
     pub fn descriptor(&self) -> ProviderDescriptor {
         match self {
             Provider::Alpaca => alpaca::Alpaca::descriptor(),
+            Provider::SnapTrade => snaptrade::SnapTrade::descriptor(),
         }
     }
 
@@ -62,6 +72,7 @@ impl Provider {
     ) -> BrokerResult<Vec<RemoteAccount>> {
         match self {
             Provider::Alpaca => alpaca::Alpaca::verify(creds, environment).await,
+            Provider::SnapTrade => snaptrade::SnapTrade::verify(creds, environment).await,
         }
     }
 
@@ -69,9 +80,15 @@ impl Provider {
         &self,
         creds: &Credentials,
         environment: &str,
+        provider_account_id: &str,
     ) -> BrokerResult<Vec<RemotePosition>> {
         match self {
-            Provider::Alpaca => alpaca::Alpaca::positions(creds, environment).await,
+            Provider::Alpaca => {
+                alpaca::Alpaca::positions(creds, environment, provider_account_id).await
+            }
+            Provider::SnapTrade => {
+                snaptrade::SnapTrade::positions(creds, environment, provider_account_id).await
+            }
         }
     }
 
@@ -83,6 +100,9 @@ impl Provider {
     ) -> BrokerResult<Vec<RemoteActivity>> {
         match self {
             Provider::Alpaca => alpaca::Alpaca::activities(creds, environment, since).await,
+            // Not implemented yet — descriptor.supports_activities is false,
+            // so the generic sync path never calls this.
+            Provider::SnapTrade => Ok(Vec::new()),
         }
     }
 }

@@ -33,6 +33,11 @@ pub struct BrokerAccountInfo {
     pub snapshot_at: Option<i64>,
     pub portfolio_id: Option<i64>,
     pub portfolio_name: Option<String>,
+    /// False for a candidate account a person has not opted into yet — an
+    /// aggregator like SnapTrade can report far more accounts than anyone
+    /// wants mirrored. Every current single-account-per-key provider always
+    /// sets this true.
+    pub visible: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +143,7 @@ pub async fn broker_save_connection(
         )?;
 
         for acct in &accounts {
-            let acct_id = store::upsert_account(conn, &connection_id, acct)?;
+            let acct_id = store::upsert_account(conn, &connection_id, acct, true)?;
             let name =
                 portfolio_name(&provider, &descriptor.name, &environment, acct.mask.as_deref());
             store::ensure_portfolio(conn, acct_id, &provider, &name)?;
@@ -188,7 +193,7 @@ pub async fn broker_add_credentials(
 
     state.with_txn(|conn| {
         for acct in &accounts {
-            let acct_id = store::upsert_account(conn, &id, acct)?;
+            let acct_id = store::upsert_account(conn, &id, acct, true)?;
             let name =
                 portfolio_name(&provider, &descriptor.name, &environment, acct.mask.as_deref());
             store::ensure_portfolio(conn, acct_id, &provider, &name)?;
@@ -294,7 +299,7 @@ pub fn broker_list_connections(
         c.accounts = state.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT a.id, a.provider_account_id, a.account_mask, a.currency, a.equity, \
-                        a.cash, a.buying_power, a.snapshot_at, p.id, p.name \
+                        a.cash, a.buying_power, a.snapshot_at, p.id, p.name, a.visible \
                  FROM broker_accounts a \
                  LEFT JOIN portfolios p ON p.broker_account_id = a.id \
                  WHERE a.connection_id = ?1 ORDER BY a.id ASC",
@@ -311,6 +316,7 @@ pub fn broker_list_connections(
                     snapshot_at: r.get(7)?,
                     portfolio_id: r.get(8)?,
                     portfolio_name: r.get(9)?,
+                    visible: r.get::<_, i64>(10)? != 0,
                 })
             })?;
             rows.collect()
@@ -318,6 +324,36 @@ pub fn broker_list_connections(
     }
 
     Ok(connections)
+}
+
+/// Show or hide one account. Hiding removes its portfolio — the cached
+/// positions and the account row itself stay put, so re-showing it later
+/// needs no resync. Direct single-account-per-key providers (Alpaca) never
+/// call this: every account they return is already visible the moment it is
+/// first synced. It exists for an aggregator like SnapTrade, where one
+/// connection can expose far more accounts than a person wants mirrored.
+#[tauri::command]
+pub fn broker_set_account_visible(
+    broker_account_id: i64,
+    visible: bool,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_txn(|conn| {
+        let (provider, environment, mask): (String, String, Option<String>) = conn.query_row(
+            "SELECT c.provider, c.environment, a.account_mask \
+             FROM broker_accounts a JOIN broker_connections c ON c.id = a.connection_id \
+             WHERE a.id = ?1",
+            rusqlite::params![broker_account_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+
+        let provider_name = Provider::from_id(&provider)
+            .map(|p| p.descriptor().name)
+            .unwrap_or_else(|_| provider.clone());
+        let name = portfolio_name(&provider, &provider_name, &environment, mask.as_deref());
+
+        store::set_account_visible(conn, broker_account_id, visible, &provider, &name)
+    })
 }
 
 #[tauri::command]
@@ -455,17 +491,33 @@ async fn sync_one(
 
     for acct in &accounts {
         let positions = if descriptor.supports_positions {
-            p.positions(&creds, environment).await?
+            p.positions(&creds, environment, &acct.id).await?
         } else {
             Vec::new()
         };
 
         let acct_id = state
             .with_txn(|conn| {
-                let id = store::upsert_account(conn, connection_id, acct)?;
-                let name =
-                    portfolio_name(provider, &descriptor.name, environment, acct.mask.as_deref());
-                store::ensure_portfolio(conn, id, provider, &name)?;
+                // New accounts default to visible: every current provider
+                // (Alpaca) auto-imports everything it returns. An aggregator
+                // like SnapTrade inserts its candidates as hidden up front
+                // (via its own connect flow, not this generic sync path), so
+                // this default never overrides a person's choice to hide one.
+                let id = store::upsert_account(conn, connection_id, acct, true)?;
+                let visible: bool = conn.query_row(
+                    "SELECT visible FROM broker_accounts WHERE id = ?1",
+                    rusqlite::params![id],
+                    |r| r.get(0),
+                )?;
+                if visible {
+                    let name = portfolio_name(
+                        provider,
+                        &descriptor.name,
+                        environment,
+                        acct.mask.as_deref(),
+                    );
+                    store::ensure_portfolio(conn, id, provider, &name)?;
+                }
                 store::replace_positions(conn, id, &positions)?;
                 Ok(id)
             })

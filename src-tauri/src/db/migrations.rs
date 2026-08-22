@@ -254,7 +254,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 15);
+        assert_eq!(v, 16);
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 15);
+        assert_eq!(v, 16);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 15);
+        assert_eq!(after, 16);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -460,6 +460,15 @@ mod tests {
 /// rather than defaulting to zero, which would read as "no buying power".
 const MIGRATION_V15: &str = "ALTER TABLE broker_accounts ADD COLUMN buying_power REAL;";
 
+/// V16: per-account visibility, for providers where one connection exposes
+/// many accounts and the person picks which ones become portfolios (SnapTrade
+/// aggregates many brokerages behind one login; nothing before this needed
+/// the distinction because every existing provider auto-imports everything it
+/// returns).  Defaults to visible so every account synced up to this point —
+/// which already has a linked portfolio — is unaffected.
+const MIGRATION_V16: &str =
+    "ALTER TABLE broker_accounts ADD COLUMN visible INTEGER NOT NULL DEFAULT 1;";
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -480,6 +489,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (13, MIGRATION_V13),
         (14, MIGRATION_V14),
         (15, MIGRATION_V15),
+        (16, MIGRATION_V16),
     ];
 
     let user_version: i64 =

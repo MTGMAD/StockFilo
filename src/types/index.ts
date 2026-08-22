@@ -283,6 +283,9 @@ export interface BrokerAccountInfo {
   snapshot_at: number | null;
   portfolio_id: number | null;
   portfolio_name: string | null;
+  /** False for a candidate account not yet opted into (e.g. an unselected
+   *  SnapTrade account). Always true for a single-account-per-key provider. */
+  visible: boolean;
 }
 
 export interface BrokerConnectionInfo {

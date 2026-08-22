@@ -71,6 +71,22 @@ export async function listBrokerConnections(): Promise<BrokerConnectionInfo[]> {
   return invoke<BrokerConnectionInfo[]>("broker_list_connections");
 }
 
+/**
+ * Show or hide one account. Hiding removes its portfolio without forgetting
+ * the account — re-showing it needs no resync. For aggregator connections
+ * (SnapTrade) where one login can expose more accounts than should be
+ * mirrored; direct providers never need this.
+ */
+export async function setBrokerAccountVisible(
+  brokerAccountId: number,
+  visible: boolean,
+): Promise<void> {
+  return invoke("broker_set_account_visible", {
+    brokerAccountId,
+    visible,
+  });
+}
+
 export async function updateBrokerConnection(
   id: string,
   changes: { label?: string; disabled?: boolean; autoSyncMinutes?: number },

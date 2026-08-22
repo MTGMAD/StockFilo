@@ -21,10 +21,18 @@ pub fn to_yahoo(provider_symbol: &str, asset_class: Option<&str>) -> Option<Stri
         return None;
     }
 
-    // Crypto: Alpaca writes BTC/USD, Yahoo writes BTC-USD.
+    // Crypto: Alpaca writes BTC/USD, Yahoo writes BTC-USD. Some providers
+    // (SnapTrade/Coinbase among them) report crypto as the bare asset with no
+    // quote currency at all, e.g. "BTC" — Yahoo has no ticker for that, only
+    // for the pair, so default the unpaired case to USD rather than passing
+    // a plain "BTC" through to a lookup that can never match anything.
     if class.contains("crypto") || s.contains('/') {
         let normalized = s.replace('/', "-").to_ascii_uppercase();
-        return Some(normalized);
+        return Some(if normalized.contains('-') {
+            normalized
+        } else {
+            format!("{normalized}-USD")
+        });
     }
 
     Some(s.to_ascii_uppercase())
@@ -62,6 +70,14 @@ mod tests {
         assert_eq!(to_yahoo("BTC/USD", Some("crypto")), Some("BTC-USD".into()));
         // Also inferred from the slash when the class is absent.
         assert_eq!(to_yahoo("ETH/USD", None), Some("ETH-USD".into()));
+    }
+
+    #[test]
+    fn bare_crypto_asset_defaults_to_a_usd_pair() {
+        // SnapTrade/Coinbase report crypto as just "BTC", with no quote
+        // currency — Yahoo only has a ticker for the pair.
+        assert_eq!(to_yahoo("BTC", Some("crypto")), Some("BTC-USD".into()));
+        assert_eq!(to_yahoo("sol", Some("crypto")), Some("SOL-USD".into()));
     }
 
     #[test]

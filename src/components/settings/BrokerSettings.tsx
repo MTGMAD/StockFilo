@@ -447,7 +447,9 @@ export function BrokerSettings({
         listBrokerConnections(),
       ]);
       setProviders(p);
-      setConnections(c);
+      // SnapTrade connections have their own picker in SnapTradeSettings —
+      // listing them here too would show the same connection twice.
+      setConnections(c.filter((conn) => conn.provider !== "snaptrade"));
       setLoadError(null);
     } catch (e) {
       setLoadError(String(e));

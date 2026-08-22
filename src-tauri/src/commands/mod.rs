@@ -1,4 +1,5 @@
 pub mod brokers;
+pub mod snaptrade;
 pub mod logos;
 pub mod stocks;
 pub mod browser;

@@ -54,16 +54,22 @@ pub fn now_secs() -> i64 {
 // ── Accounts ───────────────────────────────────────────────────────────────
 
 /// Insert or update an account, returning its local row id.
+///
+/// `default_visible` only takes effect on first insert — an existing row's
+/// `visible` flag is never touched by a resync, so hiding an account (or a
+/// provider that starts an account hidden until the person opts in, e.g.
+/// SnapTrade) survives every subsequent sync.
 pub fn upsert_account(
     conn: &Connection,
     connection_id: &str,
     acct: &RemoteAccount,
+    default_visible: bool,
 ) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO broker_accounts \
            (connection_id, provider_account_id, account_mask, currency, equity, cash, \
-            buying_power, snapshot_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+            buying_power, snapshot_at, visible) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
          ON CONFLICT(connection_id, provider_account_id) DO UPDATE SET \
            account_mask = excluded.account_mask, \
            currency     = excluded.currency, \
@@ -79,7 +85,8 @@ pub fn upsert_account(
             acct.equity,
             acct.cash,
             acct.buying_power,
-            now_secs()
+            now_secs(),
+            default_visible,
         ],
     )?;
 
@@ -272,6 +279,39 @@ pub fn linked_portfolio(
     .optional()
 }
 
+/// Show or hide an account without forgetting it — the account row, its
+/// cached positions, and its provider-side identity all survive either way.
+/// Showing links (or relinks) its portfolio via [`ensure_portfolio`]; hiding
+/// removes that portfolio the same way disconnecting with `keep_portfolio =
+/// false` does, since a hidden account should look like it was never picked,
+/// not like an empty leftover.
+///
+/// This is what lets an aggregator like SnapTrade expose many accounts while
+/// the person chooses only some of them to mirror as portfolios.
+pub fn set_account_visible(
+    conn: &Connection,
+    broker_account_id: i64,
+    visible: bool,
+    provider: &str,
+    portfolio_name: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE broker_accounts SET visible = ?1 WHERE id = ?2",
+        params![visible, broker_account_id],
+    )?;
+
+    if visible {
+        ensure_portfolio(conn, broker_account_id, provider, portfolio_name)?;
+    } else {
+        conn.execute(
+            "DELETE FROM portfolios WHERE broker_account_id = ?1",
+            params![broker_account_id],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Create the portfolio that mirrors a broker account, or return the existing
 /// one. Named for the account so it is recognisable in the sidebar.
 pub fn ensure_portfolio(
@@ -407,6 +447,7 @@ mod tests {
                 cash: Some(50.0),
                 buying_power: None,
             },
+            true,
         )
         .unwrap();
 
@@ -424,7 +465,7 @@ mod tests {
     #[test]
     fn positions_seed_the_reference_cache_but_options_do_not() {
         let conn = db();
-        let acct = upsert_account(&conn, "c1", &acct_dto()).unwrap();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
 
         replace_positions(
             &conn,
@@ -470,7 +511,7 @@ mod tests {
     #[test]
     fn appending_activities_is_idempotent() {
         let conn = db();
-        let acct = upsert_account(&conn, "c1", &acct_dto()).unwrap();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
 
         let acts = vec![
             RemoteActivity {
@@ -508,7 +549,7 @@ mod tests {
     #[test]
     fn linked_portfolio_is_created_once_and_marked_with_its_provider() {
         let conn = db();
-        let acct = upsert_account(&conn, "c1", &acct_dto()).unwrap();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
 
         let p1 = ensure_portfolio(&conn, acct, "alpaca", "Alpaca — Paper (****1234)").unwrap();
         let p2 = ensure_portfolio(&conn, acct, "alpaca", "Alpaca — Paper (****1234)").unwrap();
@@ -526,9 +567,52 @@ mod tests {
     }
 
     #[test]
+    fn hiding_an_account_removes_its_portfolio_but_keeps_the_account() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), false).unwrap();
+
+        // Inserted hidden: no portfolio should exist yet.
+        assert_eq!(linked_portfolio(&conn, acct).unwrap(), None);
+
+        set_account_visible(&conn, acct, true, "alpaca", "Alpaca — Paper").unwrap();
+        let pid = linked_portfolio(&conn, acct).unwrap().expect("now visible");
+
+        set_account_visible(&conn, acct, false, "alpaca", "Alpaca — Paper").unwrap();
+        assert_eq!(linked_portfolio(&conn, acct).unwrap(), None, "hidden again");
+
+        // The account itself, and re-showing it, both survive.
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM broker_accounts WHERE id = ?1",
+                params![acct],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1);
+
+        set_account_visible(&conn, acct, true, "alpaca", "Alpaca — Paper").unwrap();
+        let pid2 = linked_portfolio(&conn, acct).unwrap().expect("visible again");
+        assert_ne!(pid, pid2, "re-showing creates a fresh portfolio, not a dangling reference");
+    }
+
+    #[test]
+    fn resyncing_a_hidden_account_does_not_resurrect_its_portfolio() {
+        // A resync must not silently override a person's choice to hide an
+        // account — visible is only set on first insert.
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), false).unwrap();
+        assert_eq!(linked_portfolio(&conn, acct).unwrap(), None);
+
+        // Re-syncing (same connection_id + provider_account_id) must leave it hidden.
+        let acct2 = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        assert_eq!(acct, acct2);
+        assert_eq!(linked_portfolio(&conn, acct).unwrap(), None);
+    }
+
+    #[test]
     fn disconnecting_can_keep_the_portfolio_as_manual() {
         let conn = db();
-        let acct = upsert_account(&conn, "c1", &acct_dto()).unwrap();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
         let pid = ensure_portfolio(&conn, acct, "alpaca", "Alpaca — Paper").unwrap();
         replace_positions(&conn, acct, &[pos("AAPL", 1.0, "us_equity")]).unwrap();
 
@@ -549,7 +633,7 @@ mod tests {
     #[test]
     fn disconnecting_can_remove_everything() {
         let conn = db();
-        let acct = upsert_account(&conn, "c1", &acct_dto()).unwrap();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
         let pid = ensure_portfolio(&conn, acct, "alpaca", "Alpaca — Paper").unwrap();
 
         delete_connection(&conn, "c1", false).unwrap();
@@ -579,7 +663,7 @@ mod tests {
         )
         .unwrap();
 
-        let acct = upsert_account(&conn, "c1", &acct_dto()).unwrap();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
         ensure_portfolio(&conn, acct, "alpaca", "Alpaca — Paper").unwrap();
         replace_positions(&conn, acct, &[pos("AAPL", 99.0, "us_equity")]).unwrap();
         delete_connection(&conn, "c1", false).unwrap();
@@ -629,6 +713,7 @@ mod isolation_tests {
                 cash: Some(10.0),
                 buying_power: None,
             },
+            true,
         )
         .unwrap()
     }
@@ -741,6 +826,7 @@ mod isolation_tests {
                 cash: Some(1.0),
                 buying_power: None,
             },
+            true,
         )
         .unwrap();
         assert_ne!(paper, margin);
@@ -843,6 +929,7 @@ mod credential_leak_tests {
                 cash: Some(10.0),
                 buying_power: None,
             },
+            true,
         )
         .unwrap();
         ensure_portfolio(&conn, acct, "alpaca", "Alpaca Margin (****4342)").unwrap();

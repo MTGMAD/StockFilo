@@ -88,9 +88,15 @@ impl Alpaca {
         Ok(vec![map::account(&v)])
     }
 
+    /// `_provider_account_id` is unused here — Alpaca exposes exactly one
+    /// account per key pair, so its positions endpoint already returns
+    /// everything the connection can see. The parameter exists because a
+    /// provider like SnapTrade can expose several accounts behind one
+    /// connection and needs it to fetch the right one.
     pub async fn positions(
         creds: &Credentials,
         environment: &str,
+        _provider_account_id: &str,
     ) -> BrokerResult<Vec<RemotePosition>> {
         let client = Self::connect(creds, environment)?;
         let v = client.get_json("/v2/positions", &[]).await?;

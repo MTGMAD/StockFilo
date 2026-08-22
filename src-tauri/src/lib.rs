@@ -150,12 +150,18 @@ pub fn run() {
             commands::brokers::broker_save_connection,
             commands::brokers::broker_add_credentials,
             commands::brokers::broker_list_connections,
+            commands::brokers::broker_set_account_visible,
             commands::brokers::broker_list_positions,
             commands::brokers::broker_list_transactions,
             commands::brokers::broker_update_connection,
             commands::brokers::broker_delete_connection,
             commands::brokers::broker_sync_connection,
             commands::brokers::broker_sync_all,
+            // ── SnapTrade commands ─────────────────────────────────────────
+            commands::snaptrade::snaptrade_save_app_keys,
+            commands::snaptrade::snaptrade_app_keys_configured,
+            commands::snaptrade::snaptrade_connect,
+            commands::snaptrade::snaptrade_sync_authorizations,
         ])
         .setup(|app| {
             // Load config and resolve DB path

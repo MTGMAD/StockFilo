@@ -12,7 +12,13 @@
 //!
 //! 1. **OS keychain** (preferred) — Windows Credential Manager, macOS Keychain,
 //!    or the Secret Service on Linux, via the `keyring` crate.  The platform
-//!    handles encryption at rest and access control.
+//!    handles encryption at rest and access control.  Every secret lives as a
+//!    field of one JSON object under a single Keychain item rather than one
+//!    item per secret — seeing "grant access" prompts scale with the number
+//!    of items, not the number of times an app is opened, so one item keeps
+//!    that down to once instead of once per broker connection.  See the
+//!    "Keychain backend" section below for the migration off the old
+//!    one-item-per-secret layout.
 //!
 //! 2. **Encrypted file** (fallback) — for headless Linux boxes with no Secret
 //!    Service available.  A randomly generated 32-byte master key is written to
@@ -42,6 +48,7 @@ use aes_gcm::{
 use base64::Engine as _;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager};
 
 /// Keychain service name.  Matches the bundle identifier in `tauri.conf.json`.
@@ -54,13 +61,12 @@ const KEYFILE: &str = "secrets.key";
 
 /// Store `plaintext` under `reference`, overwriting any existing value.
 pub fn set_secret(app: &AppHandle, reference: &str, plaintext: &str) -> Result<(), String> {
-    match keyring_entry(reference) {
-        Ok(entry) => match entry.set_password(plaintext) {
-            Ok(()) => return Ok(()),
-            Err(e) => log_fallback("store", reference, &e.to_string()),
-        },
-        Err(e) => log_fallback("open", reference, &e),
+    let mut state = vault_state().lock().unwrap();
+    match vault_put(&mut state, reference, Some(plaintext)) {
+        Ok(()) => return Ok(()),
+        Err(e) => log_fallback("store", reference, &e),
     }
+    drop(state);
     file_set(app, reference, plaintext)
 }
 
@@ -71,24 +77,58 @@ pub fn set_secret(app: &AppHandle, reference: &str, plaintext: &str) -> Result<(
 /// whose credentials live in *that* machine's keychain.  Callers must surface
 /// this as "add credentials on this device", never as a failure.
 pub fn get_secret(app: &AppHandle, reference: &str) -> Result<Option<String>, String> {
+    let mut state = vault_state().lock().unwrap();
+
+    if let Err(e) = ensure_vault_loaded(&mut state) {
+        log_fallback("read", reference, &e);
+    }
+    if let Some(v) = state
+        .map
+        .as_ref()
+        .and_then(|m| m.get(reference))
+        .and_then(|v| v.as_str())
+    {
+        return Ok(Some(v.to_string()));
+    }
+
+    // Fall back to this reference's own pre-vault keychain item. Every secret
+    // used to get its own macOS/Windows Keychain entry, which meant one OS
+    // authorization prompt *per credential* on every launch — reference stays
+    // under this old scheme only until it is next read, at which point it
+    // migrates into the single vault item and this branch stops firing for
+    // it. Still holding the lock here (not just for the vault above) so a
+    // second, concurrent lookup of this same reference cannot race this
+    // migration and trigger its own duplicate prompt for the same old item.
     if let Ok(entry) = keyring_entry(reference) {
         match entry.get_password() {
-            Ok(v) => return Ok(Some(v)),
+            Ok(v) => {
+                if vault_put(&mut state, reference, Some(&v)).is_ok() {
+                    let _ = entry.delete_credential();
+                }
+                return Ok(Some(v));
+            }
             Err(keyring::Error::NoEntry) => {} // fall through to the file backend
             Err(e) => log_fallback("read", reference, &e.to_string()),
         }
     }
+    drop(state);
     file_get(app, reference)
 }
 
 /// Remove the secret stored under `reference`.  Succeeds if it was already gone.
 pub fn delete_secret(app: &AppHandle, reference: &str) -> Result<(), String> {
+    let mut state = vault_state().lock().unwrap();
+    if let Err(e) = vault_put(&mut state, reference, None) {
+        log_fallback("delete", reference, &e);
+    }
+    // A pre-migration item may still exist even after the vault write above.
     if let Ok(entry) = keyring_entry(reference) {
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(e) => log_fallback("delete", reference, &e.to_string()),
         }
     }
+    drop(state);
     file_delete(app, reference)
 }
 
@@ -99,9 +139,92 @@ pub fn has_secret(app: &AppHandle, reference: &str) -> bool {
 }
 
 // ── Keychain backend ───────────────────────────────────────────────────────
+//
+// Every secret used to live in its own OS Keychain item (`keyring_entry`,
+// keyed by `reference`). Correct, but each *distinct* item needs its own
+// "Always Allow" grant from the OS the first time an app reads it — so a
+// person with a handful of broker connections got a handful of separate
+// Keychain prompts on every launch, one per credential, instead of one for
+// the app. `VaultState` fixes that by keeping every secret as fields of a
+// single JSON object stored under one Keychain item (`VAULT_ACCOUNT`): one
+// item, one prompt. `get_secret` migrates each reference out of its old
+// standalone item into the vault the first time it is read after upgrading,
+// so nothing already stored is lost.
+//
+// Every public function above holds `vault_state()`'s lock for its *entire*
+// body, including the blocking OS calls — not just around a cached read. An
+// earlier version only cached the read result, which closed the "N accounts
+// means N slow lookups" problem but left a real gap open: two calls landing
+// on an empty cache at the same time (React's StrictMode double-firing the
+// startup effect in dev, plus whatever else asks at launch) would each
+// independently decide the cache was cold and go to the OS in parallel, each
+// capable of popping its own prompt. Holding the lock for the whole operation
+// means a second caller blocks until the first one finishes and warms the
+// cache, instead of racing it.
+
+/// The one account name under which every secret is now stored, as a JSON
+/// object keyed by `reference`. Distinct from any real `reference` string
+/// (`broker:...`, `sync:...`, `snaptrade:...`) so it can never collide with a
+/// legacy per-reference item.
+const VAULT_ACCOUNT: &str = "__vault__";
 
 fn keyring_entry(reference: &str) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, reference).map_err(|e| e.to_string())
+}
+
+fn vault_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(SERVICE, VAULT_ACCOUNT).map_err(|e| e.to_string())
+}
+
+struct VaultState {
+    /// `None` until first loaded this process; distinguishes "not read yet"
+    /// from "read, and it was empty".
+    map: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+fn vault_state() -> &'static Mutex<VaultState> {
+    static STATE: OnceLock<Mutex<VaultState>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(VaultState { map: None }))
+}
+
+/// Populate `state.map` from the OS keychain if this process hasn't already.
+/// Callers must already hold `vault_state()`'s lock — this never locks it
+/// itself, so it can't deadlock when called from inside another locked
+/// section.
+fn ensure_vault_loaded(state: &mut VaultState) -> Result<(), String> {
+    if state.map.is_some() {
+        return Ok(());
+    }
+    let entry = vault_entry()?;
+    let map = match entry.get_password() {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        },
+        Err(keyring::Error::NoEntry) => serde_json::Map::new(),
+        Err(e) => return Err(e.to_string()),
+    };
+    state.map = Some(map);
+    Ok(())
+}
+
+/// Set `reference` to `plaintext` in the vault, or remove it when `plaintext`
+/// is `None`, persisting immediately. Caller must already hold the lock.
+fn vault_put(state: &mut VaultState, reference: &str, plaintext: Option<&str>) -> Result<(), String> {
+    ensure_vault_loaded(state)?;
+    let map = state.map.as_mut().expect("just loaded above");
+    match plaintext {
+        Some(v) => {
+            map.insert(reference.to_string(), serde_json::Value::String(v.to_string()));
+        }
+        None => {
+            map.remove(reference);
+        }
+    }
+
+    let entry = vault_entry()?;
+    let text = serde_json::to_string(map).map_err(|e| e.to_string())?;
+    entry.set_password(&text).map_err(|e| e.to_string())
 }
 
 fn log_fallback(op: &str, reference: &str, err: &str) {
