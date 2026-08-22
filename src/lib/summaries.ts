@@ -77,10 +77,20 @@ export function buildFromPurchases(
  * Turn broker-reported positions into summaries.
  *
  * Ownership of each field is deliberate: the brokerage owns everything about
- * the position and its price, so totals always match what the broker shows.
- * Yahoo supplies only reference data no broker publishes — company name, asset
- * type, analyst target, dividend yield — read from the same `stocks` cache the
- * rest of the app uses.
+ * the position and its price, so totals always match what the broker shows —
+ * whenever the broker actually reports a price. Some brokers (seen with
+ * Alpaca outside market hours, or on certain data plans) omit `current_price`
+ * entirely while still reporting `change_today`; leaving the row blank in
+ * that case is strictly worse than the one case this file otherwise avoids —
+ * so when, and only when, the broker gives no price at all, price *and* its
+ * percent change fall back together to the same Yahoo cache a manual
+ * portfolio already uses, recomputed as one consistent pair rather than
+ * pairing a broker number with a Yahoo one for the same figure. The broker's
+ * own numbers are used exactly as reported the moment it reports any.
+ *
+ * Yahoo also supplies reference data no broker publishes — company name,
+ * asset type, analyst target, dividend yield — read from the same `stocks`
+ * cache regardless of which price source is in play.
  *
  * Extended-hours fields are left null: a positions payload carries no pre- or
  * post-market quote, and filling them from Yahoo would mix two sources inside
@@ -102,17 +112,41 @@ export function buildFromPositions(
       p.cost_basis ??
       (p.avg_entry_price != null ? p.avg_entry_price * p.qty : 0);
 
+    // Only when the broker has nothing — never to second-guess a price it did
+    // report.
+    const usingFallbackPrice = p.current_price == null && stock?.last_price != null;
+    const currentPrice = p.current_price ?? stock?.last_price ?? null;
+
+    const marketValue = usingFallbackPrice
+      ? (currentPrice != null ? currentPrice * p.qty : null)
+      : p.market_value;
+    const pnlDollar = usingFallbackPrice
+      ? (marketValue != null ? marketValue - totalInvested : null)
+      : p.unrealized_pl;
+    const pnlPercent = usingFallbackPrice
+      ? pnlDollar != null && totalInvested > 0
+        ? (pnlDollar / totalInvested) * 100
+        : null
+      : // The broker reports fractions; the app displays percent.
+        p.unrealized_plpc != null
+        ? p.unrealized_plpc * 100
+        : null;
+    const dailyChangePct = usingFallbackPrice
+      ? stock?.daily_change_pct ?? null
+      : p.change_today != null
+        ? p.change_today * 100
+        : null;
+
     return {
       ticker: displayTicker,
       name: stock?.name ?? null,
       totalShares: p.qty,
       totalInvested,
       avgCostBasis: p.avg_entry_price ?? 0,
-      currentPrice: p.current_price,
-      marketValue: p.market_value,
-      pnlDollar: p.unrealized_pl,
-      // The broker reports fractions; the app displays percent.
-      pnlPercent: p.unrealized_plpc != null ? p.unrealized_plpc * 100 : null,
+      currentPrice,
+      marketValue,
+      pnlDollar,
+      pnlPercent,
       // Freshness is the position snapshot, not the Yahoo reference fetch —
       // using stocks.last_fetched_at here would show "stale" while prices are
       // in fact current to the second.
@@ -120,7 +154,7 @@ export function buildFromPositions(
         Math.floor(Date.now() / 1000) - p.snapshot_at > STALE_THRESHOLD_SECONDS,
       lastFetchedAt: p.snapshot_at,
       quoteType: stock?.quote_type ?? assetClassToQuoteType(p.asset_class),
-      dailyChangePct: p.change_today != null ? p.change_today * 100 : null,
+      dailyChangePct,
       market_state: null,
       pre_market_price: null,
       pre_market_change_pct: null,
