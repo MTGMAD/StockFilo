@@ -2,10 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 use tauri::{AppHandle, State};
 
 use crate::commands::config::{load_config, save_config_to_disk, AppConfig, SyncTarget};
 use crate::db::manager::DbManager;
+
+/// A sync makes several sequential requests against the same WebDAV target
+/// (check the lock, acquire it, GET or PUT the database, release the lock) —
+/// with no timeout, one stalled connection anywhere in that chain hangs the
+/// whole sync for however long the OS's own TCP timeout happens to be, often
+/// several minutes, and is indistinguishable from "just a big transfer" while
+/// it's happening. 30 seconds is generous for a database that is realistically
+/// a few hundred KB to a few MB.
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("reqwest client")
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SyncResult {
@@ -20,7 +35,7 @@ pub struct SyncResult {
 // ── WebDAV helpers ─────────────────────────────────────────────────────────
 
 async fn webdav_get(url: &str, username: &str, password: &str) -> Result<Vec<u8>, String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
     let resp = client
         .get(url)
         .basic_auth(username, Some(password))
@@ -38,7 +53,7 @@ async fn webdav_put(url: &str, username: &str, password: &str, body: Vec<u8>) ->
     // Ensure parent collection exists (MKCOL is idempotent — 405 Method Not Allowed
     // is returned when it already exists, which is fine).
     if let Some(parent) = url.rfind('/').map(|i| &url[..i]).filter(|p| !p.is_empty()) {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let _ = client
             .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), parent)
             .basic_auth(username, Some(password))
@@ -46,7 +61,7 @@ async fn webdav_put(url: &str, username: &str, password: &str, body: Vec<u8>) ->
             .await;
     }
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let resp = client
         .put(url)
         .basic_auth(username, Some(password))
@@ -62,7 +77,7 @@ async fn webdav_put(url: &str, username: &str, password: &str, body: Vec<u8>) ->
 }
 
 async fn webdav_head_mtime(url: &str, username: &str, password: &str) -> Option<i64> {
-    let client = reqwest::Client::new();
+    let client = http_client();
     let resp = client
         .head(url)
         .basic_auth(username, Some(password))
