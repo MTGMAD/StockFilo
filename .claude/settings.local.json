@@ -5,7 +5,16 @@
       "Bash(npx tsc *)",
       "Bash(xargs grep *)",
       "Bash(cat)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(npm --version)",
+      "Bash(mkdir -p /private/tmp/claude-501/-Users-aiuser-Development-StockFilo/03db7f98-13db-4bbc-b2ab-5327005b64e1/scratchpad)",
+      "Bash(nohup npm run tauri dev)",
+      "Bash(echo \"PID $!\")",
+      "Bash(lsof -nP -iTCP:1420 -sTCP:LISTEN)",
+      "Bash(ps -p 79481 -o pid,ppid,etime,command)",
+      "Bash(kill 79481)"
     ]
   }
 }
