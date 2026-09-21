@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type {
   BrokerTransaction,
   DividendInfo,
@@ -34,6 +35,7 @@ import {
   Landmark,
   Trophy,
   Lock,
+  Layers,
 } from "lucide-react";
 import { PortfolioRankView } from "./PortfolioRankView";
 import { MountainChart } from "../analysis/MountainChart";
@@ -215,6 +217,17 @@ export function PortfolioView({
   const selectedStock =
     selected != null ? stocks.find((s) => s.ticker === selected) : undefined;
   const tickerPurchases = purchases.filter((p) => p.ticker === selected);
+  const tickerBuyTransactions = (brokerTransactions ?? []).filter(
+    (t): t is BrokerTransaction & { qty: number } =>
+      t.ticker === selected && t.side === "buy" && t.qty != null,
+  );
+  const purchaseLots = readOnly
+    ? groupLotsByDate(
+        tickerBuyTransactions.map((t) => ({ date: t.occurred_at, shares: t.qty })),
+      )
+    : groupLotsByDate(
+        tickerPurchases.map((p) => ({ date: p.purchased_at, shares: p.shares })),
+      );
   const selectedEarningsAt = summary
     ? upcomingEarnings[summary.ticker]
     : undefined;
@@ -1057,6 +1070,7 @@ export function PortfolioView({
                       <StatCard
                         label="Total Shares"
                         value={formatShares(summary.totalShares)}
+                        extra={<PurchaseLotsBadge lots={purchaseLots} />}
                       />
                       <StatCard
                         label="Total Invested"
@@ -1127,26 +1141,52 @@ export function PortfolioView({
                       </tr>
                     </thead>
                     <tbody>
-                      {tickerPurchases.map((p) => (
-                        <tr key={p.id} className="border-b border-border/50">
-                          <td className="px-3 py-2">{p.purchased_at}</td>
-                          <td className="px-3 py-2 text-right">
-                            {isCusip(summary.ticker)
-                              ? formatCurrency(p.shares * p.price_per_share)
-                              : formatShares(p.shares)}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {isCusip(summary.ticker)
-                              ? "at par"
-                              : formatCurrency(p.price_per_share)}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {formatCurrency(p.shares * p.price_per_share)}
-                          </td>
-                        </tr>
-                      ))}
+                      {readOnly
+                        ? tickerBuyTransactions.map((t) => (
+                            <tr
+                              key={t.id}
+                              className="border-b border-border/50"
+                            >
+                              <td className="px-3 py-2">{t.occurred_at}</td>
+                              <td className="px-3 py-2 text-right">
+                                {formatShares(t.qty)}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {formatCurrency(t.price)}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {formatCurrency(
+                                  t.price != null ? t.qty * t.price : null,
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        : tickerPurchases.map((p) => (
+                            <tr key={p.id} className="border-b border-border/50">
+                              <td className="px-3 py-2">{p.purchased_at}</td>
+                              <td className="px-3 py-2 text-right">
+                                {isCusip(summary.ticker)
+                                  ? formatCurrency(p.shares * p.price_per_share)
+                                  : formatShares(p.shares)}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {isCusip(summary.ticker)
+                                  ? "at par"
+                                  : formatCurrency(p.price_per_share)}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {formatCurrency(p.shares * p.price_per_share)}
+                              </td>
+                            </tr>
+                          ))}
                     </tbody>
                   </table>
+                  {readOnly && tickerBuyTransactions.length === 0 && (
+                    <p className="text-sm text-muted-foreground px-3 py-4">
+                      No dated buy transactions yet. Sync this connection from
+                      Settings to pull them in.
+                    </p>
+                  )}
                 </div>
               </>
             ) : (
@@ -1186,6 +1226,79 @@ function StatCard({
         {extra}
       </div>
     </div>
+  );
+}
+
+function groupLotsByDate(
+  lots: { date: string; shares: number }[],
+): { date: string; shares: number }[] {
+  const byDate = new Map<string, number>();
+  for (const l of lots) {
+    byDate.set(l.date, (byDate.get(l.date) ?? 0) + l.shares);
+  }
+  return Array.from(byDate.entries())
+    .map(([date, shares]) => ({ date, shares }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function formatPurchaseDate(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(d);
+}
+
+function PurchaseLotsBadge({
+  lots,
+}: {
+  lots: { date: string; shares: number }[];
+}) {
+  if (lots.length === 0) return null;
+
+  const label =
+    lots.length === 1 ? formatPurchaseDate(lots[0].date) : `${lots.length} purchases`;
+
+  return (
+    <RadixTooltip.Provider delayDuration={150}>
+      <RadixTooltip.Root>
+        <RadixTooltip.Trigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-help"
+          >
+            <Layers className="w-3 h-3" />
+            {label}
+          </button>
+        </RadixTooltip.Trigger>
+        <RadixTooltip.Portal>
+          <RadixTooltip.Content
+            side="top"
+            sideOffset={8}
+            className="z-50 rounded-lg bg-foreground px-3 py-2.5 text-xs font-medium text-background shadow-lg border border-foreground/20 backdrop-blur-sm"
+          >
+            <div className="flex flex-col gap-1">
+              {lots.map((lot) => (
+                <div
+                  key={lot.date}
+                  className="flex items-center justify-between gap-4"
+                >
+                  <span className="opacity-80">
+                    {formatPurchaseDate(lot.date)}
+                  </span>
+                  <span className="font-semibold tabular-nums">
+                    {formatShares(lot.shares)} sh
+                  </span>
+                </div>
+              ))}
+            </div>
+            <RadixTooltip.Arrow className="fill-foreground" />
+          </RadixTooltip.Content>
+        </RadixTooltip.Portal>
+      </RadixTooltip.Root>
+    </RadixTooltip.Provider>
   );
 }
 
