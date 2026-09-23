@@ -168,8 +168,29 @@ export default function App() {
   const refreshing = isBroker ? broker.refreshing : manual.refreshing;
   const error = isBroker ? broker.error : manual.error;
   const refresh = isBroker ? broker.refresh : manual.refresh;
-  const reload = isBroker ? broker.reload : manual.reload;
+  // Manual reload also refreshes the portfolios list — this is the only path
+  // (import/clear) that can change last_import_at, which lives there rather
+  // than in usePortfolio's per-portfolio data.
+  const reload = useCallback(async () => {
+    if (isBroker) {
+      await broker.reload();
+    } else {
+      await manual.reload();
+      await reloadPortfolios();
+    }
+  }, [isBroker, broker.reload, manual.reload, reloadPortfolios]);
   const { add, update, remove: deletePurchase } = manual;
+  const {
+    cashEvents,
+    cashTotal,
+    addCashEvent,
+    updateCashEvent,
+    removeCashEvent,
+    sales,
+    addSale,
+    updateSale,
+    removeSale,
+  } = manual;
 
   const {
     watchlists,
@@ -274,7 +295,9 @@ export default function App() {
     let cost = 0;
     let priced = false;
     for (const s of summaries) {
-      cost += s.totalInvested;
+      // Manual portfolios (the only source here) always report a real
+      // totalInvested — this guard is for TypeScript, not a real case.
+      cost += s.totalInvested ?? 0;
       if (s.marketValue != null) {
         value += s.marketValue;
         priced = true;
@@ -287,8 +310,9 @@ export default function App() {
       value: priced ? value : null,
       cost,
       gain: priced ? value - cost : null,
+      cash: cashTotal,
     };
-  }, [inPortfolio, isBroker, connections, activePortfolio, summaries]);
+  }, [inPortfolio, isBroker, connections, activePortfolio, summaries, cashTotal]);
 
   const headerTitle =
     view === "portfolio" && activePortfolio
@@ -386,11 +410,20 @@ export default function App() {
               readOnly={isBroker}
               brokerTransactions={isBroker ? broker.transactions : undefined}
               purchases={purchases}
+              cashEvents={cashEvents}
+              sales={sales}
+              lastImportAt={activePortfolio?.last_import_at ?? null}
               stocks={stocks}
               summaries={summaries}
               onAdd={add}
               onUpdate={update}
               onDelete={deletePurchase}
+              onAddCashEvent={addCashEvent}
+              onUpdateCashEvent={updateCashEvent}
+              onDeleteCashEvent={removeCashEvent}
+              onAddSale={addSale}
+              onUpdateSale={updateSale}
+              onDeleteSale={removeSale}
               onRefresh={reload}
               linkOpenMode={linkOpenMode}
               onDeletePortfolio={async (id) => {

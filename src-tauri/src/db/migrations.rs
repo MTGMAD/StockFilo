@@ -254,7 +254,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 17);
+        assert_eq!(v, 19);
     }
 
     #[test]
@@ -292,6 +292,122 @@ mod tests {
         );
     }
 
+    #[test]
+    fn v18_creates_cash_events_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        assert!(table_exists(&conn, "cash_events"));
+        // `source_sale_id` arrives later, in V19's rebuild — see that test
+        // for the column list as of the latest schema.
+        let cols = columns(&conn, "cash_events");
+        assert_eq!(
+            cols,
+            vec![
+                "id",
+                "portfolio_id",
+                "kind",
+                "ticker",
+                "amount",
+                "occurred_at",
+                "note",
+                "created_at",
+                "source_sale_id",
+            ]
+        );
+    }
+
+    #[test]
+    fn v19_creates_sales_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        assert!(table_exists(&conn, "sales"));
+        let cols = columns(&conn, "sales");
+        assert_eq!(
+            cols,
+            vec![
+                "id",
+                "portfolio_id",
+                "ticker",
+                "shares",
+                "price_per_share",
+                "sold_at",
+                "created_at",
+            ]
+        );
+    }
+
+    #[test]
+    fn v19_cash_events_allows_sale_kind_and_adds_source_sale_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let cols = columns(&conn, "cash_events");
+        assert!(cols.contains(&"source_sale_id".to_string()));
+
+        conn.execute(
+            "INSERT INTO cash_events (portfolio_id, kind, ticker, amount, occurred_at, created_at) \
+             VALUES (1, 'sale', 'AAPL', 150.0, '2026-01-01', 0)",
+            [],
+        )
+        .expect("'sale' kind must be accepted by the rebuilt CHECK constraint");
+    }
+
+    #[test]
+    fn v19_preserves_existing_cash_events_through_the_rebuild() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Bring the database to V18 only, insert a row, then let run_all finish the rest.
+        for (version, sql) in [
+            (1, MIGRATION_V1),
+            (2, MIGRATION_V2),
+            (3, MIGRATION_V3),
+            (4, MIGRATION_V4),
+            (5, MIGRATION_V5),
+            (6, MIGRATION_V6),
+            (7, MIGRATION_V7),
+            (8, MIGRATION_V8),
+            (9, MIGRATION_V9),
+            (10, MIGRATION_V10),
+            (11, MIGRATION_V11),
+            (12, MIGRATION_V12),
+            (13, MIGRATION_V13),
+            (14, MIGRATION_V14),
+            (15, MIGRATION_V15),
+            (16, MIGRATION_V16),
+            (17, MIGRATION_V17),
+            (18, MIGRATION_V18),
+        ] {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", &version).unwrap();
+        }
+
+        conn.execute(
+            "INSERT INTO cash_events (portfolio_id, kind, ticker, amount, occurred_at, note, created_at) \
+             VALUES (1, 'dividend', 'VTI', 12.5, '2026-01-01', 'test note', 100)",
+            [],
+        )
+        .unwrap();
+
+        run_all(&conn).unwrap();
+
+        let (kind, ticker, amount, note): (String, String, f64, String) = conn
+            .query_row(
+                "SELECT kind, ticker, amount, note FROM cash_events WHERE portfolio_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "dividend");
+        assert_eq!(ticker, "VTI");
+        assert_eq!(amount, 12.5);
+        assert_eq!(note, "test note");
+    }
+
+    #[test]
+    fn v19_adds_last_import_at_to_portfolios() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        assert!(columns(&conn, "portfolios").contains(&"last_import_at".to_string()));
+    }
+
     /// Existing portfolios must come out of the migration already correct,
     /// with no backfill step and no user-visible conversion.
     #[test]
@@ -321,7 +437,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 17);
+        assert_eq!(v, 19);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -376,7 +492,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 17);
+        assert_eq!(after, 19);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -482,6 +598,92 @@ ALTER TABLE watchlist ADD COLUMN notes TEXT;
 ALTER TABLE watchlist ADD COLUMN notes_updated_at INTEGER;
 "#;
 
+/// V18: cash ledger for manual portfolios — cash dividends (paid out, not
+/// reinvested) and fees.
+///
+/// Deliberately independent of `purchases`: buying shares does not deduct
+/// from it, and there is no `amount` sign convention to get backwards —
+/// dividends are stored positive, fees negative, and a portfolio's cash
+/// figure is just `SUM(amount)`. This mirrors how `purchases` already works
+/// (an additive lot history with no sell-tracking to reconcile against), so
+/// adding real double-entry accounting here would be inconsistent with the
+/// rest of the manual-portfolio model rather than more correct.
+///
+/// `ticker` is nullable — a fee usually isn't tied to a holding, and even a
+/// dividend row may arrive without one (e.g. a summarized broker export).
+const MIGRATION_V18: &str = r#"
+CREATE TABLE IF NOT EXISTS cash_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('dividend', 'fee')),
+    ticker       TEXT,
+    amount       REAL NOT NULL,
+    occurred_at  TEXT NOT NULL,
+    note         TEXT,
+    created_at   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cash_events_portfolio ON cash_events(portfolio_id, occurred_at);
+"#;
+
+/// V19: share sales, tied back to cash; and a last-import timestamp.
+///
+/// `sales` mirrors `purchases` — an additive record of shares sold. A
+/// ticker's current position is `SUM(purchases.shares) - SUM(sales.shares)`;
+/// cost basis on what remains uses the same blended-average method this app
+/// already uses everywhere (not FIFO/LIFO lot selection), computed in
+/// `summaries.ts` rather than stored here.
+///
+/// `cash_events.kind` gains `'sale'` — SQLite can't ALTER a CHECK constraint,
+/// so the table is rebuilt the same way V11 rebuilt `watchlist`. Selling
+/// shares credits their proceeds to cash exactly like a dividend does. The
+/// new `source_sale_id` column links a `'sale'` cash event back to the
+/// `sales` row that created it, so editing or deleting a sale can keep its
+/// cash entry in sync instead of it going stale or orphaned; it is NULL for
+/// every other kind.
+///
+/// `portfolios.last_import_at` records when a spreadsheet/Ameriprise import
+/// last completed for that portfolio, so Settings can show it without each
+/// import function keeping its own tracking.
+const MIGRATION_V19: &str = r#"
+CREATE TABLE IF NOT EXISTS sales (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id    INTEGER NOT NULL,
+    ticker          TEXT NOT NULL,
+    shares          REAL NOT NULL,
+    price_per_share REAL NOT NULL,
+    sold_at         TEXT NOT NULL,
+    created_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sales_portfolio ON sales(portfolio_id);
+CREATE INDEX IF NOT EXISTS idx_sales_ticker ON sales(ticker);
+
+CREATE TABLE cash_events_new (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id   INTEGER NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('dividend', 'fee', 'sale')),
+    ticker         TEXT,
+    amount         REAL NOT NULL,
+    occurred_at    TEXT NOT NULL,
+    note           TEXT,
+    created_at     INTEGER NOT NULL,
+    source_sale_id INTEGER
+);
+
+INSERT INTO cash_events_new (id, portfolio_id, kind, ticker, amount, occurred_at, note, created_at)
+    SELECT id, portfolio_id, kind, ticker, amount, occurred_at, note, created_at FROM cash_events;
+
+DROP TABLE cash_events;
+
+ALTER TABLE cash_events_new RENAME TO cash_events;
+
+CREATE INDEX IF NOT EXISTS idx_cash_events_portfolio ON cash_events(portfolio_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_cash_events_source_sale ON cash_events(source_sale_id);
+
+ALTER TABLE portfolios ADD COLUMN last_import_at INTEGER;
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -504,6 +706,8 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (15, MIGRATION_V15),
         (16, MIGRATION_V16),
         (17, MIGRATION_V17),
+        (18, MIGRATION_V18),
+        (19, MIGRATION_V19),
     ];
 
     let user_version: i64 =

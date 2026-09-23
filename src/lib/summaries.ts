@@ -8,35 +8,59 @@
  * Two producers:
  *
  *   buildFromPurchases — manual portfolios. Aggregates the user's purchase
- *                        rows and prices them from the Yahoo cache. This is
- *                        the original logic from usePortfolio.ts, moved here
- *                        unchanged so both callers can share it.
+ *                        (and sale) rows and prices them from the Yahoo
+ *                        cache. This is the original logic from
+ *                        usePortfolio.ts, moved here unchanged so both
+ *                        callers can share it.
  *
  *   buildFromPositions — broker portfolios. Every money figure comes straight
  *                        from the brokerage. Nothing is recomputed, and a
  *                        value the broker omits stays null rather than being
  *                        inferred.
  */
-import type { BrokerPosition, Purchase, Stock, TickerSummary } from "../types";
+import type { BrokerPosition, Purchase, Sale, Stock, TickerSummary } from "../types";
 
 const STALE_THRESHOLD_SECONDS = 3600; // 1 hour
 
-/** Aggregate manual purchase rows into per-ticker summaries. */
+/**
+ * Aggregate manual purchase (and sale) rows into per-ticker summaries.
+ *
+ * A ticker's position is `purchased shares - sold shares`. Cost basis on
+ * what remains uses the blended-average method: the average cost of every
+ * share ever bought, applied to however many are left. This is
+ * order-independent (it doesn't matter which specific lot a sale is thought
+ * of as coming from), consistent with the fact that this app has never done
+ * FIFO/LIFO lot selection for buys either. A ticker fully sold off (or
+ * oversold, shares <= 0) drops out of the list entirely — "remove the
+ * position" rather than show a lingering zero-share row.
+ */
 export function buildFromPurchases(
   purchases: Purchase[],
+  sales: Sale[],
   stocks: Stock[],
 ): TickerSummary[] {
   const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
   const now = Math.floor(Date.now() / 1000);
+  const summaries: TickerSummary[] = [];
 
-  return [...new Set(purchases.map((p) => p.ticker))].map((ticker) => {
+  for (const ticker of new Set(purchases.map((p) => p.ticker))) {
     const tickerPurchases = purchases.filter((p) => p.ticker === ticker);
-    const totalShares = tickerPurchases.reduce((s, p) => s + p.shares, 0);
-    const totalInvested = tickerPurchases.reduce(
+    const purchasedShares = tickerPurchases.reduce((s, p) => s + p.shares, 0);
+    const purchasedInvested = tickerPurchases.reduce(
       (s, p) => s + p.shares * p.price_per_share,
       0,
     );
-    const avgCostBasis = totalShares > 0 ? totalInvested / totalShares : 0;
+    const avgCost = purchasedShares > 0 ? purchasedInvested / purchasedShares : 0;
+
+    const soldShares = sales
+      .filter((s) => s.ticker === ticker)
+      .reduce((s, sale) => s + sale.shares, 0);
+
+    const totalShares = purchasedShares - soldShares;
+    if (totalShares <= 0) continue;
+
+    const totalInvested = totalShares * avgCost;
+    const avgCostBasis = avgCost;
     const stock = stockMap.get(ticker);
     const currentPrice = stock?.last_price ?? null;
     const marketValue = currentPrice != null ? totalShares * currentPrice : null;
@@ -49,7 +73,7 @@ export function buildFromPurchases(
     const isStale =
       lastFetchedAt == null || now - lastFetchedAt > STALE_THRESHOLD_SECONDS;
 
-    return {
+    summaries.push({
       ticker,
       name: stock?.name ?? null,
       totalShares,
@@ -69,8 +93,10 @@ export function buildFromPurchases(
       post_market_price: stock?.post_market_price ?? null,
       post_market_change_pct: stock?.post_market_change_pct ?? null,
       dividendYield: stock?.dividend_yield ?? null,
-    };
-  });
+    });
+  }
+
+  return summaries;
 }
 
 /**
@@ -108,9 +134,13 @@ export function buildFromPositions(
     const displayTicker = p.ticker ?? p.provider_symbol;
     const stock = p.ticker ? stockMap.get(p.ticker) : undefined;
 
+    // Null (not 0) when the broker reports neither — some accounts, seen with
+    // a 401k synced through SnapTrade, report positions with no cost-basis
+    // data at all. Defaulting to 0 there would print "$0.00" and imply a
+    // free position instead of "not reported".
     const totalInvested =
       p.cost_basis ??
-      (p.avg_entry_price != null ? p.avg_entry_price * p.qty : 0);
+      (p.avg_entry_price != null ? p.avg_entry_price * p.qty : null);
 
     // Only when the broker has nothing — never to second-guess a price it did
     // report.
@@ -121,10 +151,10 @@ export function buildFromPositions(
       ? (currentPrice != null ? currentPrice * p.qty : null)
       : p.market_value;
     const pnlDollar = usingFallbackPrice
-      ? (marketValue != null ? marketValue - totalInvested : null)
+      ? (marketValue != null && totalInvested != null ? marketValue - totalInvested : null)
       : p.unrealized_pl;
     const pnlPercent = usingFallbackPrice
-      ? pnlDollar != null && totalInvested > 0
+      ? pnlDollar != null && totalInvested != null && totalInvested > 0
         ? (pnlDollar / totalInvested) * 100
         : null
       : // The broker reports fractions; the app displays percent.
@@ -142,7 +172,7 @@ export function buildFromPositions(
       name: stock?.name ?? null,
       totalShares: p.qty,
       totalInvested,
-      avgCostBasis: p.avg_entry_price ?? 0,
+      avgCostBasis: p.avg_entry_price ?? null,
       currentPrice,
       marketValue,
       pnlDollar,

@@ -16,13 +16,16 @@ pub struct Portfolio {
     pub source: String,
     /// Set only for broker-linked portfolios.
     pub broker_account_id: Option<i64>,
+    /// When a spreadsheet/Ameriprise import last completed for this
+    /// portfolio. Null until the first one runs.
+    pub last_import_at: Option<i64>,
 }
 
 #[tauri::command]
 pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id \
+            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id, last_import_at \
              FROM portfolios ORDER BY sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -34,9 +37,31 @@ pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>,
                 created_at: r.get(4)?,
                 source: r.get(5)?,
                 broker_account_id: r.get(6)?,
+                last_import_at: r.get(7)?,
             })
         })?;
         rows.collect()
+    })
+}
+
+/// Stamps `now` as the portfolio's last successful import time. Called once
+/// per import run, regardless of how many rows it added — a re-import that
+/// found nothing new still counts as "an import happened".
+#[tauri::command]
+pub fn db_touch_portfolio_import(
+    portfolio_id: i64,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "UPDATE portfolios SET last_import_at = ?1 WHERE id = ?2",
+            params![now, portfolio_id],
+        )?;
+        Ok(())
     })
 }
 
@@ -88,6 +113,8 @@ pub fn db_delete_portfolio(id: i64, state: State<'_, DbManager>) -> Result<(), S
 
         conn.execute("DELETE FROM favorites WHERE portfolio_id = ?1", params![id])?;
         conn.execute("DELETE FROM purchases WHERE portfolio_id = ?1", params![id])?;
+        conn.execute("DELETE FROM sales WHERE portfolio_id = ?1", params![id])?;
+        conn.execute("DELETE FROM cash_events WHERE portfolio_id = ?1", params![id])?;
         conn.execute("DELETE FROM portfolios WHERE id = ?1", params![id])?;
         // Clean up orphaned stock cache entries
         conn.execute(

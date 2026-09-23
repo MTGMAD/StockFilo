@@ -108,6 +108,7 @@ pub fn run() {
             commands::db_portfolios::db_delete_portfolio,
             commands::db_portfolios::db_star_portfolio,
             commands::db_portfolios::db_reorder_portfolios,
+            commands::db_portfolios::db_touch_portfolio_import,
             // ── Purchases DB commands ──────────────────────────────────────
             commands::db_purchases::db_list_purchases,
             commands::db_purchases::db_add_purchase,
@@ -116,6 +117,16 @@ pub fn run() {
             commands::db_purchases::db_hint_stock_quote_type,
             commands::db_purchases::db_clear_all_purchases,
             commands::db_purchases::db_clear_portfolio_purchases,
+            // ── Cash events DB commands ────────────────────────────────────
+            commands::db_cash_events::db_list_cash_events,
+            commands::db_cash_events::db_add_cash_event,
+            commands::db_cash_events::db_update_cash_event,
+            commands::db_cash_events::db_delete_cash_event,
+            // ── Sales DB commands ──────────────────────────────────────────
+            commands::db_sales::db_list_sales,
+            commands::db_sales::db_add_sale,
+            commands::db_sales::db_update_sale,
+            commands::db_sales::db_delete_sale,
             // ── Stocks DB commands ─────────────────────────────────────────
             commands::db_stocks::db_get_cached_stocks,
             commands::db_stocks::db_upsert_stock,

@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type {
   BrokerTransaction,
+  CashEvent,
   DividendInfo,
+  Sale,
   TickerSummary,
   Purchase,
   Stock,
@@ -41,10 +43,12 @@ import { PortfolioRankView } from "./PortfolioRankView";
 import { MountainChart } from "../analysis/MountainChart";
 import { TickerNews } from "../analysis/TickerNews";
 import { PurchasesTable } from "./PurchasesTable";
+import { CashEventsTable } from "./CashEventsTable";
 import { BrokerTransactionsTable } from "./BrokerTransactionsTable";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useFavorites } from "../../hooks/useFavorites";
 import { openUrl } from "../../lib/openUrl";
+import type { ImportResult } from "../../lib/db";
 import {
   addEarningsCallToCalendar,
   addDividendToCalendar,
@@ -58,12 +62,21 @@ import {
   clearPortfolioPurchases,
 } from "../../lib/db";
 
-type PortfolioTab = "analysis" | "performance" | "purchases" | "settings";
+type PortfolioTab =
+  | "analysis"
+  | "performance"
+  | "purchases"
+  | "cash"
+  | "settings";
 
 interface PortfolioViewProps {
   portfolioId: number | null;
   portfolioName: string;
   purchases: Purchase[];
+  cashEvents: CashEvent[];
+  sales: Sale[];
+  /** When a spreadsheet/Ameriprise import last completed for this portfolio. */
+  lastImportAt: number | null;
   stocks: Stock[];
   summaries: TickerSummary[];
   onAdd: (
@@ -80,6 +93,36 @@ interface PortfolioViewProps {
     date: string,
   ) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  onAddCashEvent: (
+    kind: CashEvent["kind"],
+    ticker: string | null,
+    amount: number,
+    date: string,
+    note: string | null,
+  ) => Promise<void>;
+  onUpdateCashEvent: (
+    id: number,
+    kind: CashEvent["kind"],
+    ticker: string | null,
+    amount: number,
+    date: string,
+    note: string | null,
+  ) => Promise<void>;
+  onDeleteCashEvent: (id: number) => Promise<void>;
+  onAddSale: (
+    ticker: string,
+    shares: number,
+    price: number,
+    date: string,
+  ) => Promise<void>;
+  onUpdateSale: (
+    id: number,
+    ticker: string,
+    shares: number,
+    price: number,
+    date: string,
+  ) => Promise<void>;
+  onDeleteSale: (id: number) => Promise<void>;
   onRefresh: () => void;
   linkOpenMode: LinkOpenMode;
   onDeletePortfolio: (id: number) => Promise<void>;
@@ -94,11 +137,20 @@ export function PortfolioView({
   portfolioId,
   portfolioName,
   purchases,
+  cashEvents,
+  sales,
+  lastImportAt,
   stocks,
   summaries,
   onAdd,
   onUpdate,
   onDelete,
+  onAddCashEvent,
+  onUpdateCashEvent,
+  onDeleteCashEvent,
+  onAddSale,
+  onUpdateSale,
+  onDeleteSale,
   onRefresh,
   linkOpenMode,
   onDeletePortfolio,
@@ -437,10 +489,10 @@ export function PortfolioView({
   async function handleImportCsv() {
     if (portfolioId == null) return;
     try {
-      const n = await importPurchasesCsv(portfolioId);
+      const result = await importPurchasesCsv(portfolioId);
       setDataOpStatus({
         kind: "success",
-        msg: `Imported ${n} purchase${n === 1 ? "" : "s"}.`,
+        msg: formatImportMessage(result, "purchase"),
       });
       onRefresh();
     } catch (e) {
@@ -451,10 +503,10 @@ export function PortfolioView({
   async function handleImportXlsx() {
     if (portfolioId == null) return;
     try {
-      const n = await importPurchasesXlsx(portfolioId);
+      const result = await importPurchasesXlsx(portfolioId);
       setDataOpStatus({
         kind: "success",
-        msg: `Imported ${n} purchase${n === 1 ? "" : "s"}.`,
+        msg: formatImportMessage(result, "purchase"),
       });
       onRefresh();
     } catch (e) {
@@ -465,10 +517,10 @@ export function PortfolioView({
   async function handleImportAmeriprise() {
     if (portfolioId == null) return;
     try {
-      const n = await importAmeripriseCSV(portfolioId);
+      const result = await importAmeripriseCSV(portfolioId);
       setDataOpStatus({
         kind: "success",
-        msg: `Imported ${n} transaction${n === 1 ? "" : "s"} from Ameriprise.`,
+        msg: formatImportMessage(result, "transaction", "from Ameriprise"),
       });
       onRefresh();
     } catch (e) {
@@ -513,11 +565,42 @@ export function PortfolioView({
 
   const isEmpty = summaries.length === 0;
 
+  // Portfolio-wide dividend income, normalized to a monthly figure regardless
+  // of whether any given holding actually pays monthly, quarterly or
+  // annually — sums each ticker's full-year dividend, held shares included,
+  // then divides by 12. Only counts tickers whose dividend data has already
+  // loaded into dividendInfoByTicker; silently under-counts until it has,
+  // rather than blocking on every ticker's fetch.
+  let estMonthlyDividends: number | null = null;
+  for (const s of summaries) {
+    if (isCusip(s.ticker)) continue;
+    const info = dividendInfoByTicker[s.ticker];
+    if (!info) continue;
+    const annual = annualDividendTotal(
+      s.totalShares,
+      info.dividend_amount_per_share,
+      info.annual_dividend_rate,
+      info.payout_frequency,
+    );
+    if (annual == null) continue;
+    estMonthlyDividends = (estMonthlyDividends ?? 0) + annual / 12;
+  }
+
   return (
     <div className="flex h-full gap-0">
       {/* Ticker selector — left panel (hidden when empty) */}
       {!isEmpty && (
         <div className="w-[15rem] border-r border-border shrink-0 overflow-y-auto">
+          {estMonthlyDividends != null && estMonthlyDividends > 0 && (
+            <div className="px-3 py-2.5 border-b border-border bg-[var(--dividend-bg)]/40">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Est. Monthly Dividends
+              </div>
+              <div className="text-sm font-semibold text-[var(--dividend-fg)]">
+                {formatCurrency(estMonthlyDividends)}
+              </div>
+            </div>
+          )}
           {favorites.length > 0 && <SectionLabel label="Favorites" />}
           {favorites.map((s) => {
             const favIdx = favoriteTickers.indexOf(s.ticker);
@@ -634,6 +717,21 @@ export function PortfolioView({
             <List className="w-4 h-4" />
             Purchases
           </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("cash")}
+              className={cn(
+                "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+                activeTab === "cash"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <PiggyBank className="w-4 h-4" />
+              Cash
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setActiveTab("settings")}
@@ -715,6 +813,14 @@ export function PortfolioView({
                 </div>
               ) : (
               <div className="flex flex-col gap-4">
+                {lastImportAt != null && (
+                  <p className="text-xs text-muted-foreground">
+                    Last spreadsheet import:{" "}
+                    <span className="text-foreground font-medium">
+                      {formatDateTime(lastImportAt)}
+                    </span>
+                  </p>
+                )}
                 <div>
                   <h3 className="text-sm font-semibold text-foreground mb-0.5">
                     Export Purchases
@@ -778,8 +884,10 @@ export function PortfolioView({
                     Import from Ameriprise
                   </h3>
                   <p className="text-xs text-muted-foreground mb-3">
-                    Import BUY transactions and dividend reinvestments directly
-                    from an Ameriprise account activity CSV export.
+                    Import buys, sells, dividends (reinvested or paid out in
+                    cash) and fees directly from an Ameriprise account
+                    activity CSV export. Pending (unsettled) rows are named in
+                    the result but not imported.
                   </p>
                   <button
                     type="button"
@@ -928,12 +1036,24 @@ export function PortfolioView({
           ) : (
             <PurchasesTable
               purchases={purchases}
+              sales={sales}
               stocks={stocks}
               onAdd={onAdd}
               onUpdate={onUpdate}
               onDelete={onDelete}
+              onAddSale={onAddSale}
+              onUpdateSale={onUpdateSale}
+              onDeleteSale={onDeleteSale}
             />
           )
+        ) : activeTab === "cash" ? (
+          <CashEventsTable
+            cashEvents={cashEvents}
+            tickers={[...new Set(purchases.map((p) => p.ticker))].sort()}
+            onAdd={onAddCashEvent}
+            onUpdate={onUpdateCashEvent}
+            onDelete={onDeleteCashEvent}
+          />
         ) : isEmpty ? (
           <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">
             <p className="text-sm">No purchases yet.</p>
@@ -1229,6 +1349,33 @@ function StatCard({
   );
 }
 
+function formatImportMessage(
+  { imported, skipped, unhandled }: ImportResult,
+  noun: string,
+  suffix?: string,
+): string {
+  const plural = (n: number) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+  const tail = suffix ? ` ${suffix}` : "";
+
+  let msg: string;
+  if (imported === 0 && skipped > 0) {
+    msg = `Nothing new to import — ${plural(skipped)} already in the system.`;
+  } else if (skipped > 0) {
+    msg = `Imported ${plural(imported)}${tail} (${skipped} already in the system, skipped).`;
+  } else {
+    msg = `Imported ${plural(imported)}${tail}.`;
+  }
+
+  if (unhandled && Object.keys(unhandled).length > 0) {
+    const parts = Object.entries(unhandled).map(
+      ([label, count]) => `${count} ${label}${count === 1 ? "" : "s"}`,
+    );
+    msg += ` Not imported — this app doesn't track these yet: ${parts.join(", ")}.`;
+  }
+
+  return msg;
+}
+
 function groupLotsByDate(
   lots: { date: string; shares: number }[],
 ): { date: string; shares: number }[] {
@@ -1393,6 +1540,22 @@ function dividendPayoutTotal(
       : null);
 
   return perPeriodAmount != null ? shares * perPeriodAmount : null;
+}
+
+/** Full-year dividend $ for the shares held, regardless of how often it's
+ *  actually paid out. An unknown frequency is treated as one payment a
+ *  year, matching the convention `dividendPayoutTotal` already uses. */
+function annualDividendTotal(
+  shares: number,
+  amountPerShare: number | null | undefined,
+  annualRate: number | null | undefined,
+  frequency: string | null | undefined,
+): number | null {
+  if (annualRate != null) return shares * annualRate;
+  if (amountPerShare != null) {
+    return shares * amountPerShare * (paymentsPerYear(frequency) ?? 1);
+  }
+  return null;
 }
 
 function dividendPerShareAmount(

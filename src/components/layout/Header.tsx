@@ -20,7 +20,15 @@ export type HeaderFigures =
       buyingPower: number | null;
       gain: number | null;
     }
-  | { kind: "manual"; value: number | null; cost: number | null; gain: number | null };
+  | {
+      kind: "manual";
+      value: number | null;
+      cost: number | null;
+      gain: number | null;
+      /** Sum of the portfolio's cash_events — omitted (not zero) when the
+       *  portfolio has none, so an untouched portfolio doesn't show "Cash $0". */
+      cash: number | null;
+    };
 
 interface HeaderProps {
   title: string;
@@ -131,6 +139,7 @@ export function Header({
                   <>
                     <Figure label="Value" value={figures.value} />
                     <Figure label="Cost" value={figures.cost} separator />
+                    <Figure label="Cash" value={figures.cash} separator />
                     <GainFigure gain={figures.gain} />
                   </>
                 )}

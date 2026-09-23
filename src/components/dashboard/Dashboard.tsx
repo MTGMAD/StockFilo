@@ -145,7 +145,7 @@ function StatCard({
 type HoldingsRow = {
   ticker: string;
   name: string | null;
-  invested: number;
+  invested: number | null;
   value?: number;
   pnl: number | null;
 };
@@ -443,7 +443,7 @@ function AssetAllocation({
   let excludedShorts = 0;
 
   for (const s of summaries) {
-    const val = s.marketValue ?? s.totalInvested;
+    const val = s.marketValue ?? s.totalInvested ?? 0;
     if (val <= 0) {
       if (s.totalShares < 0) excludedShorts += 1;
       continue;
@@ -614,7 +614,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
   }
 
   // ── Aggregates ──────────────────────────────────────────────────────────────
-  const totalInvested = summaries.reduce((s, t) => s + t.totalInvested, 0);
+  const totalInvested = summaries.reduce((s, t) => s + (t.totalInvested ?? 0), 0);
   const pricedSummaries = summaries.filter((s) => s.marketValue != null);
   const totalValue = pricedSummaries.reduce((s, t) => s + t.marketValue!, 0);
   const totalPnlDollar = pricedSummaries.reduce((s, t) => s + (t.pnlDollar ?? 0), 0);
@@ -648,7 +648,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
   const holdingsChartData: HoldingsRow[] = [...summaries]
     .sort(
       (a, b) =>
-        (b.marketValue ?? b.totalInvested) - (a.marketValue ?? a.totalInvested)
+        (b.marketValue ?? b.totalInvested ?? 0) - (a.marketValue ?? a.totalInvested ?? 0)
     )
     .slice(0, TOP_N)
     .map((s) => ({
@@ -911,7 +911,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
                   {[...summaries]
                     .sort(
                       (a, b) =>
-                        (b.marketValue ?? b.totalInvested) - (a.marketValue ?? a.totalInvested)
+                        (b.marketValue ?? b.totalInvested ?? 0) - (a.marketValue ?? a.totalInvested ?? 0)
                     )
                     .map((s) => {
                       const portPct =

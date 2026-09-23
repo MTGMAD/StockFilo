@@ -8,6 +8,40 @@ export interface Purchase {
   portfolio_id: number;
 }
 
+/** A cash event on a manual portfolio — a dividend paid out (not reinvested),
+ *  a fee charged against the account, or the proceeds of a sale.
+ *
+ *  `amount` is signed: dividends and sale proceeds positive, fees negative. A
+ *  portfolio's cash balance is just the sum of these rows — see the V18
+ *  migration for why dividends/fees are kept independent of `purchases`
+ *  rather than reconciled against it. Sales are the one exception: selling
+ *  shares does credit cash (see V19), via a `'sale'` row whose
+ *  `source_sale_id` points back at the `Sale` that created it. */
+export interface CashEvent {
+  id: number;
+  portfolio_id: number;
+  kind: "dividend" | "fee" | "sale";
+  ticker: string | null;
+  amount: number;
+  occurred_at: string; // ISO date string YYYY-MM-DD
+  note: string | null;
+  created_at: number; // unix timestamp
+  source_sale_id: number | null;
+}
+
+/** Shares sold from a manual portfolio's position. Combined with `Purchase`,
+ *  a ticker's current position is `SUM(purchases.shares) - SUM(sales.shares)`.
+ *  Every sale credits its proceeds to cash as a linked `CashEvent`. */
+export interface Sale {
+  id: number;
+  portfolio_id: number;
+  ticker: string;
+  shares: number;
+  price_per_share: number;
+  sold_at: string; // ISO date string YYYY-MM-DD
+  created_at: number; // unix timestamp
+}
+
 export interface Stock {
   ticker: string;
   name: string | null;
@@ -43,8 +77,11 @@ export interface TickerSummary {
   ticker: string;
   name: string | null;
   totalShares: number;
-  totalInvested: number;
-  avgCostBasis: number;
+  /** Null when the source reports neither a cost basis nor an average entry
+   *  price for this position — "not reported", not "free". Seen with some
+   *  broker-synced retirement accounts (e.g. a 401k via SnapTrade). */
+  totalInvested: number | null;
+  avgCostBasis: number | null;
   currentPrice: number | null;
   marketValue: number | null;
   pnlDollar: number | null;
@@ -94,6 +131,9 @@ export interface Portfolio {
   source: string;
   /** Set only for broker-linked portfolios. */
   broker_account_id: number | null;
+  /** When a spreadsheet/Ameriprise import last completed for this portfolio.
+   *  Null until the first one runs. */
+  last_import_at: number | null;
 }
 
 /** True when this portfolio mirrors a brokerage account and is read-only. */

@@ -39,7 +39,7 @@ export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankVi
     0,
   );
   const totalInvested = pricedSummaries.reduce(
-    (acc, s) => acc + s.totalInvested,
+    (acc, s) => acc + (s.totalInvested ?? 0),
     0,
   );
   const totalPnlDollar = totalMarketValue - totalInvested;

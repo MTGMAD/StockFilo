@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
-import type { Purchase, Stock } from "../../types";
+import type { Purchase, Sale, Stock } from "../../types";
 import {
   formatCurrency,
   formatPercent,
@@ -9,7 +9,8 @@ import {
   cn,
 } from "../../lib/utils";
 import { PurchaseDialog } from "./PurchaseDialog";
-import { Pencil, Trash2, Plus, ExternalLink } from "lucide-react";
+import { SellDialog } from "./SellDialog";
+import { Pencil, Trash2, Plus, Minus, ExternalLink } from "lucide-react";
 import { TickerLogo } from "../shared/TickerLogo";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 
@@ -17,6 +18,7 @@ import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 
 interface PurchasesTableProps {
   purchases: Purchase[];
+  sales: Sale[];
   stocks: Stock[];
   onAdd: (
     ticker: string,
@@ -32,22 +34,56 @@ interface PurchasesTableProps {
     date: string,
   ) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
+  onAddSale: (
+    ticker: string,
+    shares: number,
+    price: number,
+    date: string,
+  ) => Promise<void>;
+  onUpdateSale: (
+    id: number,
+    ticker: string,
+    shares: number,
+    price: number,
+    date: string,
+  ) => Promise<void>;
+  onDeleteSale: (id: number) => Promise<void>;
 }
+
+type Row =
+  | { kind: "buy"; date: string; purchase: Purchase }
+  | { kind: "sell"; date: string; sale: Sale };
 
 export function PurchasesTable({
   purchases,
+  sales,
   stocks,
   onAdd,
   onUpdate,
   onDelete,
+  onAddSale,
+  onUpdateSale,
+  onDeleteSale,
 }: PurchasesTableProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Purchase | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [sellDialogOpen, setSellDialogOpen] = useState(false);
+  const [editingSale, setEditingSale] = useState<Sale | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    kind: "buy" | "sell";
+    id: number;
+  } | null>(null);
 
   const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
   const now = Math.floor(Date.now() / 1000);
   const STALE_THRESHOLD = 3600;
+
+  const heldTickers = [...new Set(purchases.map((p) => p.ticker))].sort();
+
+  const rows: Row[] = [
+    ...purchases.map((p): Row => ({ kind: "buy", date: p.purchased_at, purchase: p })),
+    ...sales.map((s): Row => ({ kind: "sell", date: s.sold_at, sale: s })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
 
   async function openGoogleFinance(ticker: string) {
     await open(`https://finance.yahoo.com/quote/${ticker}`);
@@ -56,6 +92,22 @@ export function PurchasesTable({
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-end px-6 py-3 border-b border-border gap-2">
+        <button
+          onClick={() => {
+            setEditingSale(null);
+            setSellDialogOpen(true);
+          }}
+          className="btn-secondary flex items-center gap-2"
+          disabled={heldTickers.length === 0}
+          title={
+            heldTickers.length === 0
+              ? "Add a purchase first — nothing to sell yet"
+              : undefined
+          }
+        >
+          <Minus className="w-4 h-4" />
+          Sell Shares
+        </button>
         <button
           onClick={() => {
             setEditing(null);
@@ -69,7 +121,7 @@ export function PurchasesTable({
       </div>
 
       <div className="flex-1 overflow-auto">
-        {purchases.length === 0 ? (
+        {rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
             <p className="text-sm">No purchases yet.</p>
             <button
@@ -87,10 +139,11 @@ export function PurchasesTable({
             <thead className="sticky top-0 z-10">
               <tr className="border-b border-border bg-muted">
                 <Th>Date</Th>
+                <Th>Type</Th>
                 <Th>Ticker</Th>
                 <Th align="right">Shares</Th>
-                <Th align="right">Price Paid</Th>
-                <Th align="right">Total Cost</Th>
+                <Th align="right">Price</Th>
+                <Th align="right">Total</Th>
                 <Th align="right">Current Price</Th>
                 <Th align="right">Market Value</Th>
                 <Th align="right">P&L $</Th>
@@ -99,7 +152,77 @@ export function PurchasesTable({
               </tr>
             </thead>
             <tbody>
-              {purchases.map((p) => {
+              {rows.map((row) => {
+                if (row.kind === "sell") {
+                  const s = row.sale;
+                  const proceeds = s.shares * s.price_per_share;
+                  return (
+                    <tr
+                      key={`sell-${s.id}`}
+                      className="border-b border-border hover:bg-muted/30 transition-colors"
+                    >
+                      <Td>{s.sold_at}</Td>
+                      <Td>
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-red-500/10 text-red-600">
+                          <Minus className="w-3 h-3" />
+                          Sell
+                        </span>
+                      </Td>
+                      <Td>
+                        <div className="flex items-center gap-2">
+                          <TickerLogo ticker={s.ticker} />
+                          <button
+                            onClick={() => openGoogleFinance(s.ticker)}
+                            className="flex items-center gap-1 font-semibold text-primary hover:underline"
+                          >
+                            {s.ticker}
+                            <ExternalLink className="w-3 h-3 opacity-60" />
+                          </button>
+                        </div>
+                      </Td>
+                      <Td align="right">-{formatShares(s.shares)}</Td>
+                      <Td align="right">{formatCurrency(s.price_per_share)}</Td>
+                      <Td align="right">
+                        <span className="text-positive">
+                          {formatCurrency(proceeds)}
+                        </span>
+                      </Td>
+                      <Td align="right">
+                        <span className="text-muted-foreground">—</span>
+                      </Td>
+                      <Td align="right">
+                        <span className="text-muted-foreground">—</span>
+                      </Td>
+                      <Td align="right">
+                        <span className="text-muted-foreground">—</span>
+                      </Td>
+                      <Td align="right">
+                        <span className="text-muted-foreground">—</span>
+                      </Td>
+                      <Td align="center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingSale(s);
+                              setSellDialogOpen(true);
+                            }}
+                            className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete({ kind: "sell", id: s.id })}
+                            className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </Td>
+                    </tr>
+                  );
+                }
+
+                const p = row.purchase;
                 const stock = stockMap.get(p.ticker);
                 const totalCost = p.shares * p.price_per_share;
                 const currentPrice = stock?.last_price ?? null;
@@ -115,10 +238,16 @@ export function PurchasesTable({
 
                 return (
                   <tr
-                    key={p.id}
+                    key={`buy-${p.id}`}
                     className="border-b border-border hover:bg-muted/30 transition-colors"
                   >
                     <Td>{p.purchased_at}</Td>
+                    <Td>
+                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-positive/10 text-positive">
+                        <Plus className="w-3 h-3" />
+                        Buy
+                      </span>
+                    </Td>
                     <Td>
                       <div className="flex items-center gap-2">
                         <TickerLogo ticker={p.ticker} />
@@ -180,7 +309,7 @@ export function PurchasesTable({
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => setConfirmDelete(p.id)}
+                          onClick={() => setConfirmDelete({ kind: "buy", id: p.id })}
                           className="p-1 rounded hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -208,11 +337,27 @@ export function PurchasesTable({
         }}
       />
 
+      <SellDialog
+        open={sellDialogOpen}
+        onClose={() => setSellDialogOpen(false)}
+        initial={editingSale}
+        tickers={heldTickers}
+        onSave={async (ticker, shares, price, date) => {
+          if (editingSale) {
+            await onUpdateSale(editingSale.id, ticker, shares, price, date);
+          } else {
+            await onAddSale(ticker, shares, price, date);
+          }
+        }}
+      />
+
       {confirmDelete != null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-background border border-border rounded-lg shadow-xl p-6 w-80">
             <p className="text-sm text-foreground mb-4">
-              Delete this purchase? This cannot be undone.
+              {confirmDelete.kind === "sell"
+                ? "Delete this sale? Its proceeds will be removed from Cash too. This cannot be undone."
+                : "Delete this purchase? This cannot be undone."}
             </p>
             <div className="flex justify-end gap-2">
               <button
@@ -223,7 +368,11 @@ export function PurchasesTable({
               </button>
               <button
                 onClick={async () => {
-                  await onDelete(confirmDelete);
+                  if (confirmDelete.kind === "sell") {
+                    await onDeleteSale(confirmDelete.id);
+                  } else {
+                    await onDelete(confirmDelete.id);
+                  }
                   setConfirmDelete(null);
                 }}
                 className="px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"

@@ -15,6 +15,8 @@ import {
 import * as XLSX from "xlsx";
 import type {
   Purchase,
+  CashEvent,
+  Sale,
   Stock,
   QuoteResult,
   WatchlistItem,
@@ -93,6 +95,99 @@ export async function updatePurchase(
 
 export async function deletePurchase(id: number): Promise<void> {
   return invoke("db_delete_purchase", { id });
+}
+
+// ── Cash events (dividends + fees) ──────────────────────────────────────────
+
+export async function listCashEvents(portfolioId: number): Promise<CashEvent[]> {
+  return invoke<CashEvent[]>("db_list_cash_events", { portfolioId });
+}
+
+export async function addCashEvent(
+  portfolioId: number,
+  kind: CashEvent["kind"],
+  ticker: string | null,
+  amount: number,
+  occurredAt: string,
+  note: string | null,
+): Promise<void> {
+  return invoke("db_add_cash_event", {
+    portfolioId,
+    kind,
+    ticker,
+    amount,
+    occurredAt,
+    note,
+  });
+}
+
+export async function updateCashEvent(
+  id: number,
+  kind: CashEvent["kind"],
+  ticker: string | null,
+  amount: number,
+  occurredAt: string,
+  note: string | null,
+): Promise<void> {
+  return invoke("db_update_cash_event", {
+    id,
+    kind,
+    ticker,
+    amount,
+    occurredAt,
+    note,
+  });
+}
+
+export async function deleteCashEvent(id: number): Promise<void> {
+  return invoke("db_delete_cash_event", { id });
+}
+
+// ── Sales ────────────────────────────────────────────────────────────────
+
+export async function listSales(portfolioId: number): Promise<Sale[]> {
+  return invoke<Sale[]>("db_list_sales", { portfolioId });
+}
+
+export async function addSale(
+  portfolioId: number,
+  ticker: string,
+  shares: number,
+  pricePerShare: number,
+  soldAt: string,
+): Promise<void> {
+  return invoke("db_add_sale", {
+    portfolioId,
+    ticker,
+    shares,
+    pricePerShare,
+    soldAt,
+  });
+}
+
+export async function updateSale(
+  id: number,
+  ticker: string,
+  shares: number,
+  pricePerShare: number,
+  soldAt: string,
+): Promise<void> {
+  return invoke("db_update_sale", {
+    id,
+    ticker,
+    shares,
+    pricePerShare,
+    soldAt,
+  });
+}
+
+export async function deleteSale(id: number): Promise<void> {
+  return invoke("db_delete_sale", { id });
+}
+
+/** Stamps "now" as the portfolio's last successful import time. */
+export async function touchPortfolioImport(portfolioId: number): Promise<void> {
+  return invoke("db_touch_portfolio_import", { portfolioId });
 }
 
 export async function hintStockQuoteType(
@@ -555,23 +650,94 @@ export async function exportPurchasesCsv(
   return true;
 }
 
-export async function importPurchasesCsv(portfolioId: number): Promise<number> {
+export interface ImportResult {
+  imported: number;
+  /** Rows that matched an existing purchase (same ticker/shares/price/date) and were left alone. */
+  skipped: number;
+  /** Rows recognized as a real transaction type this app doesn't capture yet
+   *  (sells, transfers, interest, …), keyed by a human label → count. Absent
+   *  or empty when every row either imported or was an exact duplicate. */
+  unhandled?: Record<string, number>;
+}
+
+/** Identifies a purchase for dedup purposes — same ticker, date, share count and price. */
+function purchaseDedupKey(
+  ticker: string,
+  shares: number,
+  pricePerShare: number,
+  purchasedAt: string,
+): string {
+  return `${ticker}|${purchasedAt}|${shares.toFixed(6)}|${pricePerShare.toFixed(6)}`;
+}
+
+async function existingPurchaseKeys(portfolioId: number): Promise<Set<string>> {
+  const existing = await listPurchases(portfolioId);
+  return new Set(
+    existing.map((p) =>
+      purchaseDedupKey(p.ticker, p.shares, p.price_per_share, p.purchased_at),
+    ),
+  );
+}
+
+/** Identifies a cash event for dedup purposes — same kind, ticker, date and amount. */
+function cashEventDedupKey(
+  kind: CashEvent["kind"],
+  ticker: string | null,
+  amount: number,
+  occurredAt: string,
+): string {
+  return `${kind}|${ticker ?? ""}|${occurredAt}|${amount.toFixed(6)}`;
+}
+
+async function existingCashEventKeys(portfolioId: number): Promise<Set<string>> {
+  const existing = await listCashEvents(portfolioId);
+  return new Set(
+    existing.map((e) =>
+      cashEventDedupKey(e.kind, e.ticker, e.amount, e.occurred_at),
+    ),
+  );
+}
+
+/** Identifies a sale for dedup purposes — same ticker, date, share count and price. */
+function saleDedupKey(
+  ticker: string,
+  shares: number,
+  pricePerShare: number,
+  soldAt: string,
+): string {
+  return `${ticker}|${soldAt}|${shares.toFixed(6)}|${pricePerShare.toFixed(6)}`;
+}
+
+async function existingSaleKeys(portfolioId: number): Promise<Set<string>> {
+  const existing = await listSales(portfolioId);
+  return new Set(
+    existing.map((s) =>
+      saleDedupKey(s.ticker, s.shares, s.price_per_share, s.sold_at),
+    ),
+  );
+}
+
+export async function importPurchasesCsv(
+  portfolioId: number,
+): Promise<ImportResult> {
   const path = await openDialog({
     title: "Import Purchases",
     multiple: false,
     filters: [{ name: "CSV", extensions: ["csv"] }],
   });
-  if (!path) return 0;
+  if (!path) return { imported: 0, skipped: 0 };
 
   const csv = await readTextFile(path as string);
   const lines = csv.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return 0;
+  if (lines.length === 0) return { imported: 0, skipped: 0 };
 
   // Detect and skip header row
   const firstLine = lines[0].toLowerCase();
   const startIdx = firstLine.includes("ticker") ? 1 : 0;
 
+  const seen = await existingPurchaseKeys(portfolioId);
   let imported = 0;
+  let skipped = 0;
   const dataLines = lines.length - startIdx;
   for (let i = startIdx; i < lines.length; i++) {
     const cols = parseCsvLine(lines[i]);
@@ -586,18 +752,26 @@ export async function importPurchasesCsv(portfolioId: number): Promise<number> {
     // Basic date format validation (YYYY-MM-DD)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
 
+    const key = purchaseDedupKey(ticker, shares, price, date);
+    if (seen.has(key)) {
+      skipped++;
+      continue;
+    }
+
     await addPurchase(portfolioId, ticker, shares, price, date);
+    seen.add(key);
     imported++;
   }
 
-  if (imported === 0 && dataLines > 0) {
+  if (imported === 0 && skipped === 0 && dataLines > 0) {
     throw new Error(
       `No rows could be imported. Expected format: ticker,shares,price_per_share,purchased_at (YYYY-MM-DD). ` +
         `Found ${dataLines} data row${dataLines === 1 ? "" : "s"} but none matched the required format.`,
     );
   }
 
-  return imported;
+  await touchPortfolioImport(portfolioId);
+  return { imported, skipped };
 }
 
 function parseCsvLine(line: string): string[] {
@@ -665,24 +839,24 @@ export async function exportPurchasesXlsx(
 
 export async function importPurchasesXlsx(
   portfolioId: number,
-): Promise<number> {
+): Promise<ImportResult> {
   const path = await openDialog({
     title: "Import Purchases",
     multiple: false,
     filters: [{ name: "Excel Workbook", extensions: ["xlsx", "xls"] }],
   });
-  if (!path) return 0;
+  if (!path) return { imported: 0, skipped: 0 };
 
   const data = await readFile(path as string);
   const wb = XLSX.read(data, { type: "array" });
 
   const wsName = wb.SheetNames[0];
-  if (!wsName) return 0;
+  if (!wsName) return { imported: 0, skipped: 0 };
 
   const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wsName], {
     header: 1,
   });
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) return { imported: 0, skipped: 0 };
 
   // Detect and skip header row
   const firstRow = rows[0] as unknown[];
@@ -690,7 +864,9 @@ export async function importPurchasesXlsx(
     ? 1
     : 0;
 
+  const seen = await existingPurchaseKeys(portfolioId);
   let imported = 0;
+  let skipped = 0;
   for (let i = startIdx; i < rows.length; i++) {
     const cols = rows[i] as unknown[];
     if (cols.length < 4) continue;
@@ -714,27 +890,42 @@ export async function importPurchasesXlsx(
     if (!ticker || isNaN(shares) || isNaN(price) || !date) continue;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
 
+    const key = purchaseDedupKey(ticker, shares, price, date);
+    if (seen.has(key)) {
+      skipped++;
+      continue;
+    }
+
     await addPurchase(portfolioId, ticker, shares, price, date);
+    seen.add(key);
     imported++;
   }
 
-  return imported;
+  await touchPortfolioImport(portfolioId);
+  return { imported, skipped };
 }
 
 // ── Ameriprise CSV Import ─────────────────────────────────────────────────
 // Handles the "Account Activity" CSV exported from Ameriprise SPS accounts.
-// Imports BUY transactions and dividend/capital-gain reinvestments (all of
-// which represent real share acquisitions).
+// Imports five kinds of completed rows:
+//   - BUY and dividend/capital-gain REINVESTMENTS → purchases (share acquisitions)
+//   - SELL → sales (reduces the position, credits proceeds to cash)
+//   - cash DIVIDEND / CAP GAIN payouts (not reinvested) → cash_events (kind: dividend)
+//   - FEE rows (advisory, account, etc.) → cash_events (kind: fee)
+// Rows under a "Pending Transactions" section are never imported (they
+// haven't settled and can still change or cancel) — they're only counted for
+// the result summary, same as JOURNAL transfers and INTEREST payments, which
+// this app doesn't track anywhere yet.
 
 export async function importAmeripriseCSV(
   portfolioId: number,
-): Promise<number> {
+): Promise<ImportResult> {
   const path = await openDialog({
     title: "Import from Ameriprise",
     multiple: false,
     filters: [{ name: "CSV", extensions: ["csv"] }],
   });
-  if (!path) return 0;
+  if (!path) return { imported: 0, skipped: 0 };
 
   const csv = await readTextFile(path as string);
   const lines = csv.split(/\r?\n/);
@@ -754,75 +945,197 @@ export async function importAmeripriseCSV(
     );
   }
 
+  const seen = await existingPurchaseKeys(portfolioId);
+  const cashSeen = await existingCashEventKeys(portfolioId);
+  const saleSeen = await existingSaleKeys(portfolioId);
   let imported = 0;
+  let skipped = 0;
+  const unhandled: Record<string, number> = {};
+  const bump = (label: string) => {
+    unhandled[label] = (unhandled[label] ?? 0) + 1;
+  };
+
+  // Ameriprise exports section their own rows under "Pending Transactions"
+  // and "Completed Transactions" labels (each with its own repeated header
+  // row). A pending row hasn't settled — it can still change price or
+  // cancel — so it is never imported as if it were final; it's only counted
+  // for the summary. Defaults to "completed" so a file with no section
+  // labels at all still imports normally.
+  let section: "pending" | "completed" = "completed";
+
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
 
     const cols = parseCsvLine(line);
+
+    if (cols.length === 1) {
+      const label = cols[0].trim().toLowerCase();
+      if (label === "pending transactions") section = "pending";
+      else if (label === "completed transactions") section = "completed";
+      continue;
+    }
     if (cols.length < 7) continue;
 
     // Columns: 0=Transaction Date, 1=Account, 2=Description, 3=Amount,
     //          4=Quantity, 5=Price, 6=Symbol
     const rawDate = cols[0].trim(); // MM/DD/YYYY
+    // Each section repeats its own header row — skip it rather than
+    // misclassify "Description" as a transaction description.
+    if (rawDate.toLowerCase() === "transaction date") continue;
+
     const description = cols[2].trim();
     const rawAmount = cols[3].trim();
     const rawQty = cols[4].trim();
     const rawPrice = cols[5].trim();
     const symbol = cols[6].trim().toUpperCase();
 
-    // Skip rows with no usable symbol (money market, fees, blank, etc.)
-    if (!symbol || symbol === "9999840") continue;
+    // The pseudo-symbol Ameriprise uses for the cash sweep — not a real
+    // holding, so treat it the same as a blank symbol.
+    const hasSymbol = Boolean(symbol) && symbol !== "9999840";
 
     const isBuy = /^BUY\s+-\s+/i.test(description);
     const isReinvest = /REINVEST AT ([\d.]+)/i.test(description);
+    // Checked after isReinvest so a reinvested dividend isn't double-counted
+    // as a cash payout too — it already becomes a purchase below.
+    const isCashDividend =
+      !isReinvest && /DIVIDEND|CAP(?:ITAL)?\s*GAIN/i.test(description);
+    const isFee = /\bFEE\b/i.test(description);
+    const isSell = /^SELL\s+-\s+/i.test(description);
+    const isJournal = /^JOURNAL\b/i.test(description);
+    const isInterest = /^INTEREST PAYMENT/i.test(description);
 
-    if (!isBuy && !isReinvest) continue;
+    // Convert MM/DD/YYYY → YYYY-MM-DD (shared by every branch below).
+    const dateParts = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!dateParts) continue;
+    const date = `${dateParts[3]}-${dateParts[1]}-${dateParts[2]}`;
 
-    // Quantity — strip thousands separators
-    const shares = parseFloat(rawQty.replace(/,/g, ""));
-    if (isNaN(shares) || shares <= 0) continue;
+    if (section === "pending") {
+      // Not imported — see the comment on `section` above — but still
+      // named in the summary instead of vanishing silently.
+      const label = isSell
+        ? "pending sell order"
+        : isBuy
+          ? "pending buy order"
+          : isReinvest || isCashDividend
+            ? "pending dividend"
+            : isFee
+              ? "pending fee"
+              : "pending transaction";
+      bump(label);
+      continue;
+    }
 
-    // Price — derived from Amount/Quantity for BUY rows (handles bonds where the
-    // price column is per-$100-face-value, which would otherwise cause a 100x
-    // overstatement); extracted from description for reinvests.
-    let price: number;
-    if (isBuy) {
+    if (isBuy || isReinvest) {
+      if (!hasSymbol) continue;
+
+      // Quantity — strip thousands separators
+      const shares = parseFloat(rawQty.replace(/,/g, ""));
+      if (isNaN(shares) || shares <= 0) continue;
+
+      // Price — derived from Amount/Quantity for BUY rows (handles bonds where
+      // the price column is per-$100-face-value, which would otherwise cause a
+      // 100x overstatement); extracted from description for reinvests.
+      let price: number;
+      if (isBuy) {
+        const amount = parseFloat(rawAmount.replace(/[$,()\-]/g, ""));
+        if (!isNaN(amount) && amount > 0 && shares > 0) {
+          price = amount / shares;
+        } else {
+          price = parseFloat(rawPrice.replace(/[$,]/g, ""));
+        }
+        if (isNaN(price) || price <= 0) continue;
+      } else {
+        const m = description.match(/REINVEST AT ([\d.]+)/i);
+        if (!m) continue;
+        price = parseFloat(m[1]);
+        if (isNaN(price) || price <= 0) continue;
+      }
+
+      const key = purchaseDedupKey(symbol, shares, price, date);
+      if (seen.has(key)) {
+        skipped++;
+        continue;
+      }
+
+      await addPurchase(portfolioId, symbol, shares, price, date);
+      seen.add(key);
+
+      // Dividend reinvestments are always mutual funds — hint the type so the
+      // ticker appears in the right sidebar section even before Yahoo fetches it.
+      if (isReinvest) {
+        await hintStockQuoteType(symbol, "MUTUALFUND");
+      }
+
+      imported++;
+    } else if (isCashDividend || isFee) {
+      // Fees and cash dividends have no share count — usually no ticker at
+      // all — so only the amount and description classify the row.
+      const magnitude = parseFloat(rawAmount.replace(/[$,()\-]/g, ""));
+      if (isNaN(magnitude) || magnitude <= 0) continue;
+
+      const kind: CashEvent["kind"] = isFee ? "fee" : "dividend";
+      const amount = kind === "fee" ? -magnitude : magnitude;
+      const ticker = hasSymbol ? symbol : null;
+
+      const key = cashEventDedupKey(kind, ticker, amount, date);
+      if (cashSeen.has(key)) {
+        skipped++;
+        continue;
+      }
+
+      await addCashEvent(portfolioId, kind, ticker, amount, date, null);
+      cashSeen.add(key);
+      imported++;
+    } else if (isSell) {
+      if (!hasSymbol) continue;
+
+      const shares = Math.abs(parseFloat(rawQty.replace(/,/g, "")));
+      if (isNaN(shares) || shares <= 0) continue;
+
+      // Price — same preference as BUY rows: derive from Amount/Quantity
+      // when possible, falling back to the Price column.
       const amount = parseFloat(rawAmount.replace(/[$,()\-]/g, ""));
+      let price: number;
       if (!isNaN(amount) && amount > 0 && shares > 0) {
         price = amount / shares;
       } else {
         price = parseFloat(rawPrice.replace(/[$,]/g, ""));
       }
       if (isNaN(price) || price <= 0) continue;
-    } else {
-      const m = description.match(/REINVEST AT ([\d.]+)/i);
-      if (!m) continue;
-      price = parseFloat(m[1]);
-      if (isNaN(price) || price <= 0) continue;
+
+      const key = saleDedupKey(symbol, shares, price, date);
+      if (saleSeen.has(key)) {
+        skipped++;
+        continue;
+      }
+
+      // Reduces the position and credits its proceeds to cash in one step
+      // (see db_add_sale in the Rust layer).
+      await addSale(portfolioId, symbol, shares, price, date);
+      saleSeen.add(key);
+      imported++;
+    } else if (isJournal) {
+      bump("deposit/transfer");
+    } else if (isInterest) {
+      bump("interest payment");
+    } else if (rawAmount) {
+      // Has a real amount but matched none of the known patterns — still
+      // worth naming instead of vanishing.
+      bump("other transaction");
     }
-
-    // Convert MM/DD/YYYY → YYYY-MM-DD
-    const dateParts = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (!dateParts) continue;
-    const date = `${dateParts[3]}-${dateParts[1]}-${dateParts[2]}`;
-
-    await addPurchase(portfolioId, symbol, shares, price, date);
-
-    // Dividend reinvestments are always mutual funds — hint the type so the
-    // ticker appears in the right sidebar section even before Yahoo fetches it.
-    if (isReinvest) {
-      await hintStockQuoteType(symbol, "MUTUALFUND");
-    }
-
-    imported++;
   }
 
-  if (imported === 0) {
+  if (imported === 0 && skipped === 0 && Object.keys(unhandled).length === 0) {
     throw new Error(
-      "No importable transactions found. Expected BUY or DIVIDEND REINVEST rows with a ticker symbol.",
+      "No importable transactions found. Expected BUY, SELL, DIVIDEND REINVEST, DIVIDEND, or FEE rows.",
     );
   }
 
-  return imported;
+  await touchPortfolioImport(portfolioId);
+  return {
+    imported,
+    skipped,
+    unhandled: Object.keys(unhandled).length > 0 ? unhandled : undefined,
+  };
 }
