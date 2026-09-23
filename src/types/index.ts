@@ -153,6 +153,18 @@ export type Theme = "system" | "light" | "dark" | "warm";
 export type InvestorMode = "novice" | "advanced";
 export type LinkOpenMode = "browser" | "inapp";
 
+/** Rich preview for a URL pasted into a note — see `fetch_link_preview`. */
+export interface LinkPreview {
+  url: string;
+  title: string | null;
+  site_name: string | null;
+  description: string | null;
+  /** `data:image/...;base64,…`, or null when no thumbnail could be found. */
+  thumbnail_data_uri: string | null;
+  /** Set only for a recognized video provider (currently YouTube). */
+  embed_url: string | null;
+}
+
 export interface DividendInfo {
   dividend_date: number | null; // Unix timestamp of next payout/ex-dividend date
   dividend_amount_per_share: number | null; // Most recent dividend payment amount per share

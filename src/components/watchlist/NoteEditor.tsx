@@ -3,10 +3,16 @@ import {
   $getRoot,
   $createParagraphNode,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $setSelection,
+  BLUR_COMMAND,
+  KEY_ENTER_COMMAND,
+  PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
   COMMAND_PRIORITY_LOW,
+  mergeRegister,
+  type LexicalNode,
   type RangeSelection,
   type TextFormatType,
 } from "lexical";
@@ -27,6 +33,8 @@ import { CodeNode } from "@lexical/code";
 import {
   LinkNode,
   AutoLinkNode,
+  $isAutoLinkNode,
+  $isLinkNode,
   $toggleLink,
   autoLinkUrlMatcher,
   autoLinkEmailMatcher,
@@ -35,6 +43,7 @@ import {
   $convertFromMarkdownString,
   $convertToMarkdownString,
   TRANSFORMERS,
+  type ElementTransformer,
 } from "@lexical/markdown";
 import { $setBlocksType } from "@lexical/selection";
 import {
@@ -47,8 +56,14 @@ import {
   Quote as QuoteIcon,
 } from "lucide-react";
 import { openUrl } from "../../lib/openUrl";
+import { LinkOpenModeContext } from "../../lib/linkOpenModeContext";
 import type { LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
+import {
+  LinkPreviewNode,
+  $createLinkPreviewNode,
+  $isLinkPreviewNode,
+} from "./LinkPreviewNode";
 
 interface NoteEditorProps {
   initialText: string;
@@ -310,13 +325,154 @@ function ChangeTracker({
     <OnChangePlugin
       onChange={(editorState) => {
         editorState.read(() => {
-          const markdown = $convertToMarkdownString(TRANSFORMERS);
+          const markdown = $convertToMarkdownString(MARKDOWN_TRANSFORMERS);
           const plainText = $getRoot().getTextContent();
           onText(markdown, plainText);
         });
       }}
     />
   );
+}
+
+/**
+ * Serializes a `LinkPreviewNode` back to the bare URL it was created from, so
+ * a note with a rich card round-trips through the plain-markdown DB column as
+ * just that URL on its own line — indistinguishable from a note nobody has
+ * opened in this newer editor yet. Import is deliberately not wired through
+ * this transformer's regex; see `loneLinkUrl`/`AutoEmbedPlugin` below for why.
+ */
+const LINK_PREVIEW_TRANSFORMER: ElementTransformer = {
+  dependencies: [LinkPreviewNode],
+  export: (node) => ($isLinkPreviewNode(node) ? node.getURL() : null),
+  regExp: /$^/,
+  replace: () => false,
+  type: "element",
+};
+
+const MARKDOWN_TRANSFORMERS = [LINK_PREVIEW_TRANSFORMER, ...TRANSFORMERS];
+
+/**
+ * A block whose only content is a link whose visible text is exactly its URL
+ * — i.e. a bare pasted/typed link with nothing else on the line — is what
+ * qualifies for the rich-card treatment. A link with custom display text (via
+ * the toolbar, over user-written words) or one sharing a line with other
+ * content stays a plain inline link.
+ */
+function loneLinkUrl(block: LexicalNode): string | null {
+  if (!$isElementNode(block)) return null;
+  const children = block.getChildren();
+  if (children.length !== 1) return null;
+  const only = children[0];
+  if (!$isAutoLinkNode(only) && !$isLinkNode(only)) return null;
+  const url = only.getURL();
+  return only.getTextContent().trim() === url.trim() ? url : null;
+}
+
+/**
+ * Promotes a bare URL that ends up alone on its own line into a rich
+ * `LinkPreviewNode` card (see `LinkPreviewNode.tsx`). Deliberately does *not*
+ * convert on every keystroke via a node transform: while the cursor is still
+ * on that line, typing " — more text" right after a just-completed URL would
+ * otherwise need to un-embed a card that was created a moment too early.
+ * Instead it converts once the line is "finished" — pasted onto an empty
+ * line, finalized with Enter, or left via blur — mirroring how Notion/Slack
+ * style link embeds behave.
+ */
+function AutoEmbedPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    function convertLoneLinksAcrossDocument() {
+      editor.update(() => {
+        for (const child of $getRoot().getChildren()) {
+          const url = loneLinkUrl(child);
+          if (url) child.replace($createLinkPreviewNode(url));
+        }
+      });
+    }
+
+    /**
+     * Handles the "reopen a previously-saved note" path. A saved note's bare
+     * URL comes back from markdown as plain text, not yet a link — the
+     * autolink plugin only turns it into an `AutoLinkNode` in its own
+     * (separately mounted) effect, whose timing relative to this one isn't
+     * guaranteed. Rather than race that, this reacts to the `AutoLinkNode`/
+     * `LinkNode` actually appearing, whenever that happens, and promotes it —
+     * unless the caret is still on that line, which is the live-typing case
+     * ("finish the URL, keep typing a sentence after it") already handled by
+     * the Enter/paste/blur handlers below instead.
+     */
+    function maybeEmbedOnCreation(node: LinkNode | AutoLinkNode) {
+      const parent = node.getParent();
+      if (!parent) return;
+      const url = loneLinkUrl(parent);
+      if (!url) return;
+      const selection = $getSelection();
+      if ($isRangeSelection(selection) && selection.anchor.getNode().getTopLevelElementOrThrow().is(parent)) {
+        return;
+      }
+      parent.replace($createLinkPreviewNode(url));
+    }
+
+    return mergeRegister(
+      editor.registerNodeTransform(AutoLinkNode, maybeEmbedOnCreation),
+      editor.registerNodeTransform(LinkNode, maybeEmbedOnCreation),
+      editor.registerCommand(
+        BLUR_COMMAND,
+        () => {
+          convertLoneLinksAcrossDocument();
+          return false;
+        },
+        COMMAND_PRIORITY_LOW,
+      ),
+      editor.registerCommand(
+        KEY_ENTER_COMMAND,
+        (event) => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+          const topBlock = selection.anchor.getNode().getTopLevelElementOrThrow();
+          if (!$isElementNode(topBlock)) return false;
+          const url = loneLinkUrl(topBlock);
+          if (!url) return false;
+          const newParagraph = $createParagraphNode();
+          topBlock.insertAfter(newParagraph);
+          topBlock.replace($createLinkPreviewNode(url));
+          newParagraph.selectStart();
+          event?.preventDefault();
+          return true;
+        },
+        COMMAND_PRIORITY_LOW,
+      ),
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event) => {
+          if (!(event instanceof ClipboardEvent)) return false;
+          const text = event.clipboardData?.getData("text/plain").trim();
+          if (!text || /\s/.test(text) || !/^https?:\/\//i.test(text)) return false;
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) return false;
+          const topBlock = selection.anchor.getNode().getTopLevelElementOrThrow();
+          if (!$isElementNode(topBlock)) return false;
+          // Only auto-embed a paste that replaces the *entire* current line —
+          // dropping a link into the middle of a sentence should stay a
+          // normal inline link, not blow away the surrounding text.
+          const wholeLineSelected = topBlock.getTextContent() === selection.getTextContent();
+          const lineIsEmpty = topBlock.getTextContent().trim() === "";
+          if (!wholeLineSelected && !lineIsEmpty) return false;
+          event.preventDefault();
+          const preview = $createLinkPreviewNode(text);
+          topBlock.replace(preview);
+          const newParagraph = $createParagraphNode();
+          preview.insertAfter(newParagraph);
+          newParagraph.selectStart();
+          return true;
+        },
+        COMMAND_PRIORITY_LOW,
+      ),
+    );
+  }, [editor]);
+
+  return null;
 }
 
 const EDITOR_NODES = [
@@ -327,6 +483,7 @@ const EDITOR_NODES = [
   CodeNode,
   LinkNode,
   AutoLinkNode,
+  LinkPreviewNode,
 ];
 
 /**
@@ -421,10 +578,18 @@ export function NoteEditor({
     onError(error) {
       console.error("[NoteEditor]", error);
     },
-    editorState: () =>
-      initialText.trim()
-        ? $convertFromMarkdownString(initialText, TRANSFORMERS)
-        : $getRoot().append($createParagraphNode()),
+    editorState: () => {
+      if (!initialText.trim()) {
+        $getRoot().append($createParagraphNode());
+        return;
+      }
+      // A bare URL comes back from markdown as plain text, not yet a link —
+      // AutoLinkPlugin (mounted separately, below) turns it into an
+      // AutoLinkNode shortly after, which is what AutoEmbedPlugin's node
+      // transform is watching for to promote it into a card. See
+      // `maybeEmbedOnCreation` for why that happens there and not here.
+      $convertFromMarkdownString(initialText, MARKDOWN_TRANSFORMERS);
+    },
   };
 
   return (
@@ -435,31 +600,34 @@ export function NoteEditor({
         </span>
       </div>
 
-      <LexicalComposer initialConfig={initialConfig}>
-        <Toolbar />
-        <div className="relative">
-          <RichTextPlugin
-            contentEditable={
-              <ContentEditable
-                className="w-full min-h-[6rem] rounded-b-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary leading-relaxed"
-                aria-placeholder="Add your investment thesis, price targets, catalysts to watch…"
-                placeholder={
-                  <div className="pointer-events-none absolute left-3 top-2 text-sm text-muted-foreground">
-                    Add your investment thesis, price targets, catalysts to watch…
-                  </div>
-                }
-              />
-            }
-            ErrorBoundary={LexicalErrorBoundary}
-          />
-          <HistoryPlugin />
-          <ListPlugin />
-          <LinkPlugin />
-          <AutoLinkPlugin matchers={[autoLinkUrlMatcher, autoLinkEmailMatcher]} />
-          <ClickableLinks linkOpenMode={linkOpenMode} />
-          <ChangeTracker onText={handleText} />
-        </div>
-      </LexicalComposer>
+      <LinkOpenModeContext.Provider value={linkOpenMode}>
+        <LexicalComposer initialConfig={initialConfig}>
+          <Toolbar />
+          <div className="relative">
+            <RichTextPlugin
+              contentEditable={
+                <ContentEditable
+                  className="w-full min-h-[6rem] rounded-b-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary leading-relaxed"
+                  aria-placeholder="Add your investment thesis, price targets, catalysts to watch…"
+                  placeholder={
+                    <div className="pointer-events-none absolute left-3 top-2 text-sm text-muted-foreground">
+                      Add your investment thesis, price targets, catalysts to watch…
+                    </div>
+                  }
+                />
+              }
+              ErrorBoundary={LexicalErrorBoundary}
+            />
+            <HistoryPlugin />
+            <ListPlugin />
+            <LinkPlugin />
+            <AutoLinkPlugin matchers={[autoLinkUrlMatcher, autoLinkEmailMatcher]} />
+            <ClickableLinks linkOpenMode={linkOpenMode} />
+            <AutoEmbedPlugin />
+            <ChangeTracker onText={handleText} />
+          </div>
+        </LexicalComposer>
+      </LinkOpenModeContext.Provider>
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>

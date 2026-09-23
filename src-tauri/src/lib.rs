@@ -101,6 +101,7 @@ pub fn run() {
             commands::browser::open_dividend_in_calendar,
             commands::logos::fetch_ticker_logo,
             commands::logos::fetch_brand_logo,
+            commands::link_preview::fetch_link_preview,
             // ── Portfolio DB commands ──────────────────────────────────────
             commands::db_portfolios::db_list_portfolios,
             commands::db_portfolios::db_create_portfolio,
