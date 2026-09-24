@@ -63,8 +63,17 @@ export function usePortfolios() {
 
   const reorder = useCallback(
     async (ids: number[]) => {
-      await dbReorder(ids);
-      await load();
+      // Optimistic, so a dropped row doesn't snap back while the write runs;
+      // the reload afterwards restores the real order if the write failed.
+      setPortfolios((prev) => {
+        const byId = new Map(prev.map((p) => [p.id, p]));
+        return ids.flatMap((id) => byId.get(id) ?? []);
+      });
+      try {
+        await dbReorder(ids);
+      } finally {
+        await load();
+      }
     },
     [load]
   );

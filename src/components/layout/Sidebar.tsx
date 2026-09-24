@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import type { View, Portfolio } from "../../types";
 import { accountKindStyle } from "../../lib/accountTypes";
 import {
@@ -13,8 +13,8 @@ import {
   Trash2,
   Check,
   X,
-  ChevronUp,
   ChevronDown,
+  GripVertical,
   PencilLine,
   Landmark,
 } from "lucide-react";
@@ -26,6 +26,9 @@ const COLLAPSED_WIDTH = 56; // matches w-14
 const DEFAULT_WIDTH = 224; // matches w-56, the pre-resize default
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 480;
+/** Movement before a press on a portfolio row becomes a drag, so a plain
+ *  click still selects the portfolio. */
+const DRAG_THRESHOLD_PX = 4;
 
 interface SidebarProps {
   view: View;
@@ -158,15 +161,79 @@ export function Sidebar({
     }
   }
 
-  async function movePortfolio(id: number, direction: "up" | "down") {
-    const idx = portfolios.findIndex((p) => p.id === id);
-    if (idx < 0) return;
-    const newOrder = [...portfolios];
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= newOrder.length) return;
-    [newOrder[idx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[idx]];
-    await onReorderPortfolios(newOrder.map((p) => p.id));
+  // ── Drag to reorder ──────────────────────────────────────────────────
+  // Pointer events rather than HTML5 drag-and-drop: Tauri's webview can
+  // claim native drag events for its own file-drop handling.
+  const rowRefs = useRef(new Map<number, HTMLDivElement>());
+  const suppressClickRef = useRef(false);
+  const [dragId, setDragId] = useState<number | null>(null);
+  /** Insertion index into `portfolios` (0…length) where the row would land. */
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  function insertionIndex(clientY: number): number {
+    for (let i = 0; i < portfolios.length; i++) {
+      const el = rowRefs.current.get(portfolios[i].id);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      if (clientY < r.top + r.height / 2) return i;
+    }
+    return portfolios.length;
   }
+
+  /** Dropping a row directly above or below itself changes nothing. */
+  function isNoopDrop(id: number, target: number): boolean {
+    const from = portfolios.findIndex((p) => p.id === id);
+    return target === from || target === from + 1;
+  }
+
+  function startRowPress(e: React.PointerEvent, id: number) {
+    if (e.button !== 0 || editingId != null || confirmDeleteId != null) return;
+    const startY = e.clientY;
+    let active = false;
+    let target: number | null = null;
+
+    const move = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.abs(ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
+        active = true;
+        setDragId(id);
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = "grabbing";
+      }
+      target = insertionIndex(ev.clientY);
+      setDropIndex(target);
+    };
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      if (!active) return;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+      setDragId(null);
+      setDropIndex(null);
+      // The click that follows pointerup must not select the dragged row. It
+      // fires before any timer, so clearing on the next tick is enough.
+      suppressClickRef.current = true;
+      setTimeout(() => (suppressClickRef.current = false), 0);
+      if (commit && target != null && !isNoopDrop(id, target)) {
+        const from = portfolios.findIndex((p) => p.id === id);
+        const next = [...portfolios];
+        const [moved] = next.splice(from, 1);
+        next.splice(target > from ? target - 1 : target, 0, moved);
+        void onReorderPortfolios(next.map((p) => p.id));
+      }
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+  }
+
+  const showDropLine = (idx: number) =>
+    dragId != null && dropIndex === idx && !isNoopDrop(dragId, idx);
+  const dropLine = <div className="mx-2 h-0.5 rounded-full bg-primary" />;
 
   return (
     <aside
@@ -243,7 +310,22 @@ export function Sidebar({
         )}
 
         {(collapsed || portfoliosOpen) && portfolios.map((p, idx) => (
-          <div key={p.id} className="group relative">
+          <Fragment key={p.id}>
+          {showDropLine(idx) && dropLine}
+          <div
+            ref={(el) => {
+              if (el) rowRefs.current.set(p.id, el);
+              else rowRefs.current.delete(p.id);
+            }}
+            onPointerDown={(e) => startRowPress(e, p.id)}
+            onClickCapture={(e) => {
+              if (suppressClickRef.current) {
+                e.stopPropagation();
+                e.preventDefault();
+              }
+            }}
+            className={cn("group relative", dragId === p.id && "opacity-40")}
+          >
             {editingId === p.id ? (
               // Inline rename input
               <div className="flex items-center gap-1 px-2 py-1">
@@ -356,34 +438,12 @@ export function Sidebar({
 
                 {/* Action buttons (show on hover) */}
                 <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pr-1 gap-0.5">
-                  <div className="flex flex-col">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); movePortfolio(p.id, "up"); }}
-                      disabled={idx === 0}
-                      className={cn(
-                        "p-0.5 rounded transition-colors disabled:opacity-30",
-                        view === "portfolio" && activePortfolioId === p.id
-                          ? "hover:bg-primary-foreground/20"
-                          : "hover:bg-accent"
-                      )}
-                      title="Move up"
-                    >
-                      <ChevronUp className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); movePortfolio(p.id, "down"); }}
-                      disabled={idx === portfolios.length - 1}
-                      className={cn(
-                        "p-0.5 rounded transition-colors disabled:opacity-30",
-                        view === "portfolio" && activePortfolioId === p.id
-                          ? "hover:bg-primary-foreground/20"
-                          : "hover:bg-accent"
-                      )}
-                      title="Move down"
-                    >
-                      <ChevronDown className="w-3 h-3" />
-                    </button>
-                  </div>
+                  <span
+                    className="p-0.5 cursor-grab active:cursor-grabbing"
+                    title="Drag to reorder"
+                  >
+                    <GripVertical className="w-3 h-3" />
+                  </span>
                   <button
                     onClick={(e) => { e.stopPropagation(); startEdit(p); }}
                     className={cn(
@@ -414,7 +474,9 @@ export function Sidebar({
               </div>
             )}
           </div>
+          </Fragment>
         ))}
+        {(collapsed || portfoliosOpen) && showDropLine(portfolios.length) && dropLine}
 
         {/* New portfolio button / input — part of the section, so it hides
             with the list rather than floating under a collapsed header. */}
