@@ -4,7 +4,7 @@
 //! nothing is computed, defaulted, or inferred, so a field Alpaca omits stays
 //! `None` all the way to the UI.
 
-use super::super::types::{RemoteAccount, RemoteActivity, RemotePosition};
+use super::super::types::{RemoteAccount, RemoteActivity, RemoteOrder, RemotePosition};
 use super::client::{num, text};
 use serde_json::Value;
 
@@ -66,6 +66,50 @@ pub fn activity(v: &Value) -> Option<RemoteActivity> {
         price: num(v, "price"),
         occurred_at,
         raw: Some(v.to_string()),
+    })
+}
+
+/// One element of `GET /v2/orders?nested=true`, plus its legs.
+///
+/// A bracket/OCO/OTO order arrives with its take-profit and stop-loss legs
+/// nested under `legs`; each leg has its own status, so they are flattened
+/// into rows of their own (tagged with `parent_id`) rather than hidden inside
+/// the parent — a working stop-loss must show up under "Working" even when
+/// its parent entry order has long since filled.
+pub fn orders(v: &Value, out: &mut Vec<RemoteOrder>) {
+    let Some(parent) = order(v, None) else { return };
+    let parent_id = parent.id.clone();
+    out.push(parent);
+    if let Some(legs) = v.get("legs").and_then(|l| l.as_array()) {
+        out.extend(legs.iter().filter_map(|leg| order(leg, Some(&parent_id))));
+    }
+}
+
+fn order(v: &Value, parent_id: Option<&str>) -> Option<RemoteOrder> {
+    Some(RemoteOrder {
+        id: text(v, "id")?,
+        parent_id: parent_id.map(str::to_string),
+        provider_symbol: text(v, "symbol")?,
+        status: text(v, "status")?.to_ascii_lowercase(),
+        side: text(v, "side").map(|s| s.to_ascii_lowercase()),
+        // Alpaca sends both `type` and the older `order_type`; they agree.
+        order_type: text(v, "type").or_else(|| text(v, "order_type")),
+        order_class: text(v, "order_class"),
+        time_in_force: text(v, "time_in_force"),
+        qty: num(v, "qty"),
+        notional: num(v, "notional"),
+        filled_qty: num(v, "filled_qty"),
+        filled_avg_price: num(v, "filled_avg_price"),
+        limit_price: num(v, "limit_price"),
+        stop_price: num(v, "stop_price"),
+        trail_price: num(v, "trail_price"),
+        trail_percent: num(v, "trail_percent"),
+        extended_hours: v.get("extended_hours").and_then(Value::as_bool).unwrap_or(false),
+        submitted_at: text(v, "submitted_at"),
+        filled_at: text(v, "filled_at"),
+        canceled_at: text(v, "canceled_at"),
+        expired_at: text(v, "expired_at"),
+        updated_at: text(v, "updated_at"),
     })
 }
 
@@ -156,6 +200,43 @@ mod tests {
     fn activity_with_bad_timestamp_is_skipped() {
         let v = json!({ "id": "x", "symbol": "M", "transaction_time": "nonsense" });
         assert!(activity(&v).is_none());
+    }
+
+    #[test]
+    fn bracket_order_legs_become_their_own_rows() {
+        let v = json!({
+            "id": "parent", "symbol": "AAPL", "status": "filled", "side": "buy",
+            "type": "limit", "order_class": "bracket", "qty": "10",
+            "filled_qty": "10", "filled_avg_price": "180.5", "limit_price": "181",
+            "extended_hours": false, "submitted_at": "2026-09-01T14:00:00Z",
+            "legs": [
+                { "id": "tp", "symbol": "AAPL", "status": "new", "side": "sell",
+                  "type": "limit", "limit_price": "200", "qty": "10" },
+                { "id": "sl", "symbol": "AAPL", "status": "HELD", "side": "sell",
+                  "type": "stop", "stop_price": "170", "qty": "10" }
+            ]
+        });
+        let mut out = Vec::new();
+        orders(&v, &mut out);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].id, "parent");
+        assert_eq!(out[0].parent_id, None);
+        assert_eq!(out[0].filled_avg_price, Some(180.5));
+        assert_eq!(out[1].parent_id.as_deref(), Some("parent"));
+        assert_eq!(out[1].status, "new");
+        // Status is normalized to lowercase so the UI can match on it.
+        assert_eq!(out[2].status, "held");
+        assert_eq!(out[2].stop_price, Some(170.0));
+    }
+
+    #[test]
+    fn notional_order_keeps_qty_absent() {
+        let v = json!({ "id": "n", "symbol": "SPY", "status": "accepted",
+                        "type": "market", "notional": "250" });
+        let mut out = Vec::new();
+        orders(&v, &mut out);
+        assert_eq!(out[0].qty, None);
+        assert_eq!(out[0].notional, Some(250.0));
     }
 
     #[test]

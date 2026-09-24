@@ -150,10 +150,11 @@ export default function App() {
   const manual = usePortfolio(isBroker ? null : resolvedPortfolioId);
 
   const { connections, reload: reloadBrokers } = useBrokerConnections();
-  const brokerConnectionId =
+  const brokerConnection =
     connections.find((c) =>
       c.accounts.some((a) => a.id === activePortfolio?.broker_account_id),
-    )?.id ?? null;
+    ) ?? null;
+  const brokerConnectionId = brokerConnection?.id ?? null;
   const broker = useBrokerPortfolio(
     isBroker ? (activePortfolio?.broker_account_id ?? null) : null,
     isBroker ? brokerConnectionId : null,
@@ -409,6 +410,11 @@ export default function App() {
               portfolioName={activePortfolio?.name ?? ""}
               readOnly={isBroker}
               brokerTransactions={isBroker ? broker.transactions : undefined}
+              ordersConnectionId={
+                isBroker && brokerConnection?.supports_orders
+                  ? brokerConnection.id
+                  : null
+              }
               purchases={purchases}
               cashEvents={cashEvents}
               sales={sales}

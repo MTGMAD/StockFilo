@@ -309,6 +309,7 @@ export interface ProviderDescriptor {
   credential_fields: CredentialField[];
   supports_positions: boolean;
   supports_activities: boolean;
+  supports_orders: boolean;
   /** When true the broker prices its own holdings and Yahoo supplies only
    *  reference data (name, asset type, analyst target, dividend yield). */
   provides_pricing: boolean;
@@ -362,6 +363,8 @@ export interface BrokerConnectionInfo {
    *  holds nothing. Surface as "add credentials here", never as an error. */
   has_credentials: boolean;
   device_id: string | null;
+  /** Whether the provider exposes order history (drives the Orders tab). */
+  supports_orders: boolean;
   accounts: BrokerAccountInfo[];
 }
 
@@ -406,4 +409,32 @@ export interface BrokerTransaction {
   qty: number | null;
   price: number | null;
   occurred_at: string; // YYYY-MM-DD
+}
+
+/** An order exactly as the broker reports it, fetched live — never stored. */
+export interface BrokerOrder {
+  id: string;
+  /** Set on the take-profit / stop-loss legs of a bracket, OCO or OTO order. */
+  parent_id: string | null;
+  provider_symbol: string;
+  /** Broker's status, lowercased verbatim, e.g. "partially_filled". */
+  status: string;
+  side: string | null;
+  order_type: string | null;
+  order_class: string | null;
+  time_in_force: string | null;
+  qty: number | null;
+  notional: number | null;
+  filled_qty: number | null;
+  filled_avg_price: number | null;
+  limit_price: number | null;
+  stop_price: number | null;
+  trail_price: number | null;
+  trail_percent: number | null;
+  extended_hours: boolean;
+  submitted_at: string | null;
+  filled_at: string | null;
+  canceled_at: string | null;
+  expired_at: string | null;
+  updated_at: string | null;
 }

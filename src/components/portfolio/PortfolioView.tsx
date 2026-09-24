@@ -38,6 +38,7 @@ import {
   Trophy,
   Lock,
   Layers,
+  ClipboardList,
 } from "lucide-react";
 import { PortfolioRankView } from "./PortfolioRankView";
 import { MountainChart } from "../analysis/MountainChart";
@@ -45,6 +46,7 @@ import { TickerNews } from "../analysis/TickerNews";
 import { PurchasesTable } from "./PurchasesTable";
 import { CashEventsTable } from "./CashEventsTable";
 import { BrokerTransactionsTable } from "./BrokerTransactionsTable";
+import { BrokerOrdersView } from "./BrokerOrdersView";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useFavorites } from "../../hooks/useFavorites";
 import { openUrl } from "../../lib/openUrl";
@@ -66,6 +68,7 @@ type PortfolioTab =
   | "analysis"
   | "performance"
   | "purchases"
+  | "orders"
   | "cash"
   | "settings";
 
@@ -131,6 +134,9 @@ interface PortfolioViewProps {
   readOnly?: boolean;
   /** Dated transaction history from the broker, shown instead of purchases. */
   brokerTransactions?: BrokerTransaction[];
+  /** Broker connection to show live orders for; null hides the Orders tab
+   *  (manual portfolios, and brokers that don't expose orders). */
+  ordersConnectionId?: string | null;
 }
 
 export function PortfolioView({
@@ -156,6 +162,7 @@ export function PortfolioView({
   onDeletePortfolio,
   readOnly = false,
   brokerTransactions,
+  ordersConnectionId = null,
 }: PortfolioViewProps) {
   const [activeTab, setActiveTab] = useState<PortfolioTab>("analysis");
 
@@ -717,6 +724,21 @@ export function PortfolioView({
             <List className="w-4 h-4" />
             Purchases
           </button>
+          {ordersConnectionId && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("orders")}
+              className={cn(
+                "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+                activeTab === "orders"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <ClipboardList className="w-4 h-4" />
+              Orders
+            </button>
+          )}
           {!readOnly && (
             <button
               type="button"
@@ -748,7 +770,9 @@ export function PortfolioView({
         </div>
 
         {/* Tab content */}
-        {activeTab === "performance" ? (
+        {activeTab === "orders" && ordersConnectionId ? (
+          <BrokerOrdersView connectionId={ordersConnectionId} />
+        ) : activeTab === "performance" ? (
           isEmpty ? (
             <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">
               <p className="text-sm">No purchases yet.</p>

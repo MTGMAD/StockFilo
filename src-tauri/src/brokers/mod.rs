@@ -29,7 +29,9 @@ pub mod symbols;
 pub mod types;
 
 use error::{BrokerError, BrokerResult};
-use types::{Credentials, ProviderDescriptor, RemoteAccount, RemoteActivity, RemotePosition};
+use types::{
+    Credentials, ProviderDescriptor, RemoteAccount, RemoteActivity, RemoteOrder, RemotePosition,
+};
 
 #[derive(Debug)]
 pub enum Provider {
@@ -102,6 +104,18 @@ impl Provider {
             Provider::Alpaca => alpaca::Alpaca::activities(creds, environment, since).await,
             // Not implemented yet — descriptor.supports_activities is false,
             // so the generic sync path never calls this.
+            Provider::SnapTrade => Ok(Vec::new()),
+        }
+    }
+
+    pub async fn orders(
+        &self,
+        creds: &Credentials,
+        environment: &str,
+    ) -> BrokerResult<Vec<RemoteOrder>> {
+        match self {
+            Provider::Alpaca => alpaca::Alpaca::orders(creds, environment).await,
+            // descriptor.supports_orders is false, so the UI never asks.
             Provider::SnapTrade => Ok(Vec::new()),
         }
     }

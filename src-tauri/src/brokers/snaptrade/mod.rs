@@ -89,6 +89,7 @@ impl SnapTrade {
             // core ask; transaction history can follow once the basic sync
             // path has run against a real account.
             supports_activities: false,
+            supports_orders: false,
             provides_pricing: true,
             docs_url: Some("https://snaptrade.com/".to_string()),
             logo_domain: Some("snaptrade.com".to_string()),

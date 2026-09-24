@@ -166,6 +166,7 @@ pub fn run() {
             commands::brokers::broker_set_account_visible,
             commands::brokers::broker_list_positions,
             commands::brokers::broker_list_transactions,
+            commands::brokers::broker_list_orders,
             commands::brokers::broker_update_connection,
             commands::brokers::broker_delete_connection,
             commands::brokers::broker_sync_connection,

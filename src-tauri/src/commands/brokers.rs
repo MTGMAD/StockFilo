@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::brokers::error::BrokerError;
 use crate::brokers::store::{self, StoredPosition, StoredTransaction};
-use crate::brokers::types::{Credentials, ProviderDescriptor, RemoteAccount};
+use crate::brokers::types::{Credentials, ProviderDescriptor, RemoteAccount, RemoteOrder};
 use crate::brokers::Provider;
 use crate::commands::config::load_config;
 use crate::db::manager::DbManager;
@@ -62,6 +62,8 @@ pub struct BrokerConnectionInfo {
     /// on this device", never as an error.
     pub has_credentials: bool,
     pub device_id: Option<String>,
+    /// From the provider's descriptor — whether to offer an Orders view.
+    pub supports_orders: bool,
     pub accounts: Vec<BrokerAccountInfo>,
 }
 
@@ -270,6 +272,9 @@ pub fn broker_list_connections(
             let provider_logo_domain = Provider::from_id(&provider)
                 .ok()
                 .and_then(|p| p.descriptor().logo_domain);
+            let supports_orders = Provider::from_id(&provider)
+                .map(|p| p.descriptor().supports_orders)
+                .unwrap_or(false);
             let environment: String = r.get(2)?;
             let environment_label = env_label(&provider, &environment);
             let environment_kind = env_kind(&provider, &environment);
@@ -288,6 +293,7 @@ pub fn broker_list_connections(
                 disabled: r.get::<_, i64>(7)? != 0,
                 has_credentials: false, // filled in below
                 device_id: r.get(8)?,
+                supports_orders,
                 accounts: Vec::new(),
             })
         })?;
@@ -370,6 +376,26 @@ pub fn broker_list_transactions(
     state: State<'_, DbManager>,
 ) -> Result<Vec<StoredTransaction>, String> {
     state.with_conn(|conn| store::list_transactions(conn, broker_account_id))
+}
+
+/// Every order on the connection's account, fetched live from the broker.
+/// Never cached — see `RemoteOrder`.
+#[tauri::command]
+pub async fn broker_list_orders(
+    app: AppHandle,
+    connection_id: String,
+    state: State<'_, DbManager>,
+) -> Result<Vec<RemoteOrder>, String> {
+    let (provider, environment) = state.with_conn(|conn| {
+        conn.query_row(
+            "SELECT provider, environment FROM broker_connections WHERE id = ?1",
+            rusqlite::params![connection_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+    })?;
+    let p = Provider::from_id(&provider)?;
+    let creds = load_credentials(&app, &connection_id)?;
+    Ok(p.orders(&creds, &environment).await?)
 }
 
 // ── Update / delete ────────────────────────────────────────────────────────

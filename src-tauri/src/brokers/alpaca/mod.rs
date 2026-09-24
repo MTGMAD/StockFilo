@@ -6,10 +6,12 @@
 pub mod client;
 pub mod map;
 
+use std::collections::HashSet;
+
 use super::error::{BrokerError, BrokerResult};
 use super::types::{
     AccountType, CredentialField, Credentials, ProviderDescriptor, RemoteAccount,
-    RemoteActivity, RemotePosition,
+    RemoteActivity, RemoteOrder, RemotePosition,
 };
 use client::AlpacaClient;
 
@@ -25,6 +27,12 @@ const PAGE_SIZE: usize = 100;
 /// far beyond a personal account, and it guarantees a malformed `page_token`
 /// response can never spin forever.
 const MAX_PAGES: usize = 500;
+
+/// Alpaca's maximum for `GET /v2/orders`.
+const ORDER_PAGE_SIZE: usize = 500;
+
+/// 100 pages × 500 = 50,000 orders — a hard stop, same reasoning as MAX_PAGES.
+const MAX_ORDER_PAGES: usize = 100;
 
 pub struct Alpaca;
 
@@ -53,6 +61,7 @@ impl Alpaca {
             ],
             supports_positions: true,
             supports_activities: true,
+            supports_orders: true,
             provides_pricing: true,
             docs_url: Some("https://app.alpaca.markets/paper/dashboard/overview".to_string()),
             logo_domain: Some("alpaca.markets".to_string()),
@@ -157,6 +166,60 @@ impl Alpaca {
             match last_id {
                 Some(id) => page_token = Some(id),
                 // Without a cursor another request would repeat this page.
+                None => break,
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Every order on the account, in every status, newest first.
+    ///
+    /// `GET /v2/orders` has no cursor — it pages by time. Each request asks
+    /// for orders submitted before the oldest one already seen, and ids are
+    /// de-duplicated in case the boundary is inclusive.
+    pub async fn orders(creds: &Credentials, environment: &str) -> BrokerResult<Vec<RemoteOrder>> {
+        let client = Self::connect(creds, environment)?;
+        let mut out: Vec<RemoteOrder> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut until: Option<String> = None;
+
+        for _ in 0..MAX_ORDER_PAGES {
+            let mut query: Vec<(&str, String)> = vec![
+                ("status", "all".to_string()),
+                ("limit", ORDER_PAGE_SIZE.to_string()),
+                ("direction", "desc".to_string()),
+                ("nested", "true".to_string()),
+            ];
+            if let Some(ref u) = until {
+                query.push(("until", u.clone()));
+            }
+
+            let v = client.get_json("/v2/orders", &query).await?;
+            let arr = v
+                .as_array()
+                .ok_or_else(|| BrokerError::Parse("expected an array of orders".into()))?;
+
+            let mut added = 0usize;
+            for o in arr {
+                let Some(id) = o.get("id").and_then(|x| x.as_str()) else { continue };
+                if seen.insert(id.to_string()) {
+                    map::orders(o, &mut out);
+                    added += 1;
+                }
+            }
+
+            // A short page is the last one; a page of nothing but repeats means
+            // the time cursor has stopped moving.
+            if arr.len() < ORDER_PAGE_SIZE || added == 0 {
+                break;
+            }
+            match arr
+                .last()
+                .and_then(|o| o.get("submitted_at"))
+                .and_then(|x| x.as_str())
+            {
+                Some(ts) => until = Some(ts.to_string()),
                 None => break,
             }
         }

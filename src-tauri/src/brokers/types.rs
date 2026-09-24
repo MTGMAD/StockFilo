@@ -99,6 +99,9 @@ pub struct ProviderDescriptor {
     pub credential_fields: Vec<CredentialField>,
     pub supports_positions: bool,
     pub supports_activities: bool,
+    /// True when the broker exposes its order history (working, filled,
+    /// canceled…) for display.
+    pub supports_orders: bool,
     /// True when the broker quotes its own holdings. Holdings in such a
     /// portfolio are priced by the broker; Yahoo is used only for reference
     /// data the broker does not publish. False falls back to Yahoo entirely.
@@ -159,4 +162,39 @@ pub struct RemoteActivity {
     pub occurred_at: String,
     /// Original JSON, so activities can be reprocessed without refetching.
     pub raw: Option<String>,
+}
+
+/// An order, exactly as the broker reports it. Fetched live and never stored —
+/// an order's status changes by the second while it is working, so a cached
+/// copy would be wrong the moment it was written.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteOrder {
+    pub id: String,
+    /// Set on the legs of a bracket/OCO/OTO order; None for a standalone order.
+    pub parent_id: Option<String>,
+    pub provider_symbol: String,
+    /// The broker's own status string, verbatim (e.g. "partially_filled").
+    pub status: String,
+    pub side: Option<String>,
+    /// "market" | "limit" | "stop" | "stop_limit" | "trailing_stop"
+    pub order_type: Option<String>,
+    /// "simple" | "bracket" | "oco" | "oto"
+    pub order_class: Option<String>,
+    pub time_in_force: Option<String>,
+    pub qty: Option<f64>,
+    /// Dollar amount, for notional (fractional) orders that have no qty.
+    pub notional: Option<f64>,
+    pub filled_qty: Option<f64>,
+    pub filled_avg_price: Option<f64>,
+    pub limit_price: Option<f64>,
+    pub stop_price: Option<f64>,
+    pub trail_price: Option<f64>,
+    pub trail_percent: Option<f64>,
+    pub extended_hours: bool,
+    /// RFC3339 timestamps, verbatim.
+    pub submitted_at: Option<String>,
+    pub filled_at: Option<String>,
+    pub canceled_at: Option<String>,
+    pub expired_at: Option<String>,
+    pub updated_at: Option<String>,
 }
