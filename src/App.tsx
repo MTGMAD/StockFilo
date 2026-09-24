@@ -13,6 +13,7 @@ import { Dashboard } from "./components/dashboard/Dashboard";
 import { usePortfolio } from "./hooks/usePortfolio";
 import { useBrokerPortfolio } from "./hooks/useBrokerPortfolio";
 import { useBrokerConnections } from "./hooks/useBrokerConnections";
+import { useBackgroundBrokerSync } from "./hooks/useBackgroundBrokerSync";
 import { usePortfolios } from "./hooks/usePortfolios";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useWatchlists } from "./hooks/useWatchlists";
@@ -150,6 +151,7 @@ export default function App() {
   const manual = usePortfolio(isBroker ? null : resolvedPortfolioId);
 
   const { connections, reload: reloadBrokers } = useBrokerConnections();
+  useBackgroundBrokerSync(reloadBrokers);
   const brokerConnection =
     connections.find((c) =>
       c.accounts.some((a) => a.id === activePortfolio?.broker_account_id),
@@ -410,9 +412,9 @@ export default function App() {
               portfolioName={activePortfolio?.name ?? ""}
               readOnly={isBroker}
               brokerTransactions={isBroker ? broker.transactions : undefined}
-              ordersConnectionId={
+              ordersAccountId={
                 isBroker && brokerConnection?.supports_orders
-                  ? brokerConnection.id
+                  ? (activePortfolio?.broker_account_id ?? null)
                   : null
               }
               purchases={purchases}

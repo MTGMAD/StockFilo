@@ -5,6 +5,7 @@
 //! `None` all the way to the UI.
 
 use super::super::types::{RemoteAccount, RemoteActivity, RemoteOrder, RemotePosition};
+use super::super::date_only;
 use super::client::{num, text};
 use serde_json::Value;
 
@@ -111,27 +112,6 @@ fn order(v: &Value, parent_id: Option<&str>) -> Option<RemoteOrder> {
         expired_at: text(v, "expired_at"),
         updated_at: text(v, "updated_at"),
     })
-}
-
-/// RFC3339 timestamp → `YYYY-MM-DD`, matching `purchases.purchased_at`.
-///
-/// Takes the leading date component directly rather than parsing and
-/// reformatting: Alpaca timestamps are UTC, and shifting them into local time
-/// could move a fill onto the wrong calendar day.
-fn date_only(ts: &str) -> Option<String> {
-    let head: String = ts.chars().take(10).collect();
-    let b = head.as_bytes();
-    if b.len() == 10
-        && b[..4].iter().all(u8::is_ascii_digit)
-        && b[4] == b'-'
-        && b[5..7].iter().all(u8::is_ascii_digit)
-        && b[7] == b'-'
-        && b[8..].iter().all(u8::is_ascii_digit)
-    {
-        Some(head)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]

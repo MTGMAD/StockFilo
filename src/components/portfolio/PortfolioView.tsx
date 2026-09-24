@@ -134,9 +134,9 @@ interface PortfolioViewProps {
   readOnly?: boolean;
   /** Dated transaction history from the broker, shown instead of purchases. */
   brokerTransactions?: BrokerTransaction[];
-  /** Broker connection to show live orders for; null hides the Orders tab
+  /** Broker account to show live orders for; null hides the Orders tab
    *  (manual portfolios, and brokers that don't expose orders). */
-  ordersConnectionId?: string | null;
+  ordersAccountId?: number | null;
 }
 
 export function PortfolioView({
@@ -162,7 +162,7 @@ export function PortfolioView({
   onDeletePortfolio,
   readOnly = false,
   brokerTransactions,
-  ordersConnectionId = null,
+  ordersAccountId = null,
 }: PortfolioViewProps) {
   const [activeTab, setActiveTab] = useState<PortfolioTab>("analysis");
 
@@ -724,7 +724,7 @@ export function PortfolioView({
             <List className="w-4 h-4" />
             Purchases
           </button>
-          {ordersConnectionId && (
+          {ordersAccountId != null && (
             <button
               type="button"
               onClick={() => setActiveTab("orders")}
@@ -770,8 +770,8 @@ export function PortfolioView({
         </div>
 
         {/* Tab content */}
-        {activeTab === "orders" && ordersConnectionId ? (
-          <BrokerOrdersView connectionId={ordersConnectionId} />
+        {activeTab === "orders" && ordersAccountId != null ? (
+          <BrokerOrdersView brokerAccountId={ordersAccountId} />
         ) : activeTab === "performance" ? (
           isEmpty ? (
             <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">

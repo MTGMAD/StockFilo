@@ -20,6 +20,12 @@ pub enum BrokerError {
     #[error("{0}")]
     Api(String),
 
+    /// Throttled — by the brokerage (HTTP 429) or pre-emptively by our own
+    /// limiter. Carries seconds until a request should succeed. Sync treats
+    /// this as "keep what's stored, try next round", not as a failure.
+    #[error("Rate limited by the brokerage — retrying in {0}s.")]
+    RateLimited(u64),
+
     #[error("Could not reach the brokerage: {0}")]
     Network(String),
 

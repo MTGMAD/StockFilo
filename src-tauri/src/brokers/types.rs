@@ -164,6 +164,34 @@ pub struct RemoteActivity {
     pub raw: Option<String>,
 }
 
+/// How one broker's order statuses should be presented. Each broker names its
+/// statuses differently (Alpaca "filled", SnapTrade "executed"), so the UI
+/// takes its tab list from here rather than hardcoding one broker's set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderStatusConfig {
+    /// Every status the broker documents, lowercased, in display order.
+    pub all: Vec<String>,
+    /// Statuses after which the order can never execute again — everything
+    /// else counts as "Working".
+    pub terminal: Vec<String>,
+    /// Shown right after "Working", before "All" (typically filled, canceled).
+    pub pinned: Vec<String>,
+    /// How far back the broker's order history reaches, when it is capped.
+    pub history_days: Option<u32>,
+}
+
+impl OrderStatusConfig {
+    pub fn new(all: &[&str], terminal: &[&str], pinned: &[&str], history_days: Option<u32>) -> Self {
+        let own = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect();
+        OrderStatusConfig {
+            all: own(all),
+            terminal: own(terminal),
+            pinned: own(pinned),
+            history_days,
+        }
+    }
+}
+
 /// An order, exactly as the broker reports it. Fetched live and never stored —
 /// an order's status changes by the second while it is working, so a cached
 /// copy would be wrong the moment it was written.

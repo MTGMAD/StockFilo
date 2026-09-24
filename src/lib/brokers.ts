@@ -8,7 +8,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BrokerConnectionInfo,
-  BrokerOrder,
+  BrokerOrders,
   BrokerPosition,
   BrokerSyncResult,
   BrokerTransaction,
@@ -130,14 +130,14 @@ export async function listBrokerPositions(
   return invoke<BrokerPosition[]>("broker_list_positions", { brokerAccountId });
 }
 
-/** Dated transaction history for one account. */
-/** Every order on the connection's account, fetched live from the broker. */
+/** Every order on one broker account, fetched live, plus the broker's status list. */
 export async function listBrokerOrders(
-  connectionId: string,
-): Promise<BrokerOrder[]> {
-  return invoke<BrokerOrder[]>("broker_list_orders", { connectionId });
+  brokerAccountId: number,
+): Promise<BrokerOrders> {
+  return invoke<BrokerOrders>("broker_list_orders", { brokerAccountId });
 }
 
+/** Dated transaction history for one account. */
 export async function listBrokerTransactions(
   brokerAccountId: number,
 ): Promise<BrokerTransaction[]> {

@@ -44,8 +44,14 @@ pub mod client;
 pub mod map;
 
 use super::error::{BrokerError, BrokerResult};
-use super::types::{AccountType, Credentials, ProviderDescriptor, RemoteAccount, RemotePosition};
+use super::types::{
+    AccountType, Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount,
+    RemoteActivity, RemoteOrder, RemotePosition,
+};
 use client::SnapTradeClient;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub const ID: &str = "snaptrade";
 
@@ -58,6 +64,22 @@ pub const ENVIRONMENT: &str = "read";
 const CLIENT_ID: &str = "client_id";
 const CONSUMER_KEY: &str = "consumer_key";
 const AUTHORIZATION_ID: &str = "authorization_id";
+
+/// SnapTrade caps order history at 90 days.
+const ORDER_HISTORY_DAYS: u32 = 90;
+
+/// How far back to look for real-time fills the daily history may not have
+/// yet. A week comfortably covers a weekend plus a late history refresh.
+const RECENT_FILL_DAYS: u32 = 7;
+
+/// The activity history is Daily data (refreshed once a day by SnapTrade), so
+/// re-reading it on every 30-second sync would only burn rate-limit budget.
+const HISTORY_REFRESH: Duration = Duration::from_secs(30 * 60);
+
+fn history_fetched_at() -> &'static Mutex<HashMap<String, Instant>> {
+    static AT: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    AT.get_or_init(Default::default)
+}
 
 pub struct SnapTrade;
 
@@ -84,12 +106,8 @@ impl SnapTrade {
             .with_description("Read-only, via SnapTrade.")],
             credential_fields: Vec::new(),
             supports_positions: true,
-            // Not implemented yet — SnapTrade's activity/transaction history
-            // API was still settling as of this writing. Positions are the
-            // core ask; transaction history can follow once the basic sync
-            // path has run against a real account.
-            supports_activities: false,
-            supports_orders: false,
+            supports_activities: true,
+            supports_orders: true,
             provides_pricing: true,
             docs_url: Some("https://snaptrade.com/".to_string()),
             logo_domain: Some("snaptrade.com".to_string()),
@@ -130,6 +148,88 @@ impl SnapTrade {
         let raw = client.positions(provider_account_id).await?;
         Ok(raw.iter().filter_map(map::position).collect())
     }
+
+    /// Share trades for one account, from two sources:
+    ///
+    /// 1. The activity history — complete, but SnapTrade's *Daily* data
+    ///    (refreshed once a day on every plan). Re-read at most every 30
+    ///    minutes, or immediately when nothing is stored yet (`since` is None).
+    /// 2. Executed orders from the last week — real-time, so a fill appears
+    ///    within minutes. Stored as provisional rows (`order:` ids) that
+    ///    `store::reconcile_provisional` drops once the history reports them.
+    ///
+    /// A throttled or unsupported order book is not fatal: history still
+    /// lands, and the next sync tries again.
+    pub async fn activities(
+        creds: &Credentials,
+        provider_account_id: &str,
+        since: Option<&str>,
+    ) -> BrokerResult<Vec<RemoteActivity>> {
+        let client = Self::client(creds)?;
+        let mut out = Vec::new();
+
+        let history_due = since.is_none()
+            || history_fetched_at()
+                .lock()
+                .expect("history lock")
+                .get(provider_account_id)
+                .is_none_or(|at| at.elapsed() >= HISTORY_REFRESH);
+        if history_due {
+            match client.activities(provider_account_id, since).await {
+                Ok(raw) => {
+                    out.extend(raw.iter().filter_map(map::activity));
+                    history_fetched_at()
+                        .lock()
+                        .expect("history lock")
+                        .insert(provider_account_id.to_string(), Instant::now());
+                }
+                Err(BrokerError::RateLimited(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        if let Ok(raw) = client
+            .orders(provider_account_id, "executed", RECENT_FILL_DAYS)
+            .await
+        {
+            out.extend(raw.iter().filter_map(map::executed_order_as_activity));
+        }
+
+        Ok(out)
+    }
+
+    /// Every order in the last 90 days (SnapTrade's cap), real-time.
+    pub async fn orders(
+        creds: &Credentials,
+        provider_account_id: &str,
+    ) -> BrokerResult<Vec<RemoteOrder>> {
+        let client = Self::client(creds)?;
+        let raw = client
+            .orders(provider_account_id, "all", ORDER_HISTORY_DAYS)
+            .await?;
+        let mut orders: Vec<RemoteOrder> = raw.iter().filter_map(map::order).collect();
+        // SnapTrade doesn't promise an order; newest first matches Alpaca.
+        orders.sort_by(|a, b| b.submitted_at.cmp(&a.submitted_at));
+        Ok(orders)
+    }
+
+    /// SnapTrade's normalized order statuses (`AccountOrderRecordStatus`).
+    pub fn order_statuses() -> OrderStatusConfig {
+        OrderStatusConfig::new(
+            &[
+                "pending", "accepted", "queued", "triggered", "activated", "partial",
+                "executed", "cancel_pending", "canceled", "partial_canceled",
+                "replace_pending", "replaced", "expired", "rejected", "failed",
+                "stopped", "suspended", "none",
+            ],
+            &[
+                "executed", "canceled", "partial_canceled", "replaced", "expired",
+                "rejected", "failed",
+            ],
+            &["executed", "canceled"],
+            Some(ORDER_HISTORY_DAYS),
+        )
+    }
 }
 
 fn required<'a>(creds: &'a Credentials, key: &str, label: &str) -> BrokerResult<&'a str> {
@@ -161,7 +261,8 @@ mod tests {
         let d = SnapTrade::descriptor();
         assert_eq!(d.auth_kind, "oauth");
         assert!(d.credential_fields.is_empty());
-        assert!(!d.supports_activities);
+        assert!(d.supports_activities);
+        assert!(d.supports_orders);
         assert_eq!(d.account_types.len(), 1);
         assert_eq!(d.account_types[0].kind, "cash");
     }

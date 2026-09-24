@@ -188,6 +188,12 @@ pub fn list_positions(
 
 // ── Transactions ───────────────────────────────────────────────────────────
 
+/// `external_id` prefix for a *provisional* fill: one taken from a broker's
+/// real-time order book because its transaction history lags (SnapTrade's is
+/// refreshed once a day). Replaced by the history row once it arrives — see
+/// [`reconcile_provisional`].
+pub const PROVISIONAL_PREFIX: &str = "order:";
+
 /// Append activities. Idempotent on `(broker_account_id, external_id)`, so
 /// re-syncing an overlapping window never duplicates a row.
 ///
@@ -252,15 +258,47 @@ pub fn list_transactions(
     rows.collect()
 }
 
-/// Most recent activity date already stored, as a sync watermark.
+/// Most recent *history* date already stored, as a sync watermark.
+/// Provisional rows are excluded: a fill from today's order book says nothing
+/// about whether yesterday's history has been fetched.
 pub fn latest_activity_date(
     conn: &Connection,
     broker_account_id: i64,
 ) -> rusqlite::Result<Option<String>> {
     conn.query_row(
-        "SELECT MAX(occurred_at) FROM broker_transactions WHERE broker_account_id = ?1",
-        params![broker_account_id],
+        "SELECT MAX(occurred_at) FROM broker_transactions \
+         WHERE broker_account_id = ?1 AND external_id NOT LIKE ?2 || '%'",
+        params![broker_account_id, PROVISIONAL_PREFIX],
         |r| r.get::<_, Option<String>>(0),
+    )
+}
+
+/// Drop provisional fills the transaction history now covers, so a trade is
+/// never counted twice.
+///
+/// Matched per (day, symbol, side): once the history's share total for that
+/// group reaches the provisional total, the provisional rows go. Matching on
+/// the group rather than row-by-row copes with a broker that reports one
+/// order as several partial fills. Safe to run after every sync — a
+/// provisional row re-inserted from the order book is simply dropped again.
+pub fn reconcile_provisional(conn: &Connection, broker_account_id: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM broker_transactions AS p \
+         WHERE p.broker_account_id = ?1 AND p.external_id LIKE ?2 || '%' \
+           AND (SELECT COALESCE(SUM(ABS(h.qty)), 0) FROM broker_transactions h \
+                WHERE h.broker_account_id = p.broker_account_id \
+                  AND h.external_id NOT LIKE ?2 || '%' \
+                  AND h.occurred_at = p.occurred_at \
+                  AND h.provider_symbol = p.provider_symbol \
+                  AND COALESCE(h.side, '') = COALESCE(p.side, '')) \
+               + 1e-6 >= \
+               (SELECT COALESCE(SUM(ABS(q.qty)), 0) FROM broker_transactions q \
+                WHERE q.broker_account_id = p.broker_account_id \
+                  AND q.external_id LIKE ?2 || '%' \
+                  AND q.occurred_at = p.occurred_at \
+                  AND q.provider_symbol = p.provider_symbol \
+                  AND COALESCE(q.side, '') = COALESCE(p.side, ''))",
+        params![broker_account_id, PROVISIONAL_PREFIX],
     )
 }
 
@@ -506,6 +544,78 @@ mod tests {
             cash: None,
             buying_power: None,
         }
+    }
+
+    fn fill(id: &str, day: &str, sym: &str, side: &str, qty: f64) -> RemoteActivity {
+        RemoteActivity {
+            external_id: id.into(),
+            kind: "fill".into(),
+            side: Some(side.into()),
+            provider_symbol: sym.into(),
+            qty: Some(qty),
+            price: Some(10.0),
+            occurred_at: day.into(),
+            raw: None,
+        }
+    }
+
+    fn ids(conn: &Connection, acct: i64) -> Vec<String> {
+        let mut v: Vec<String> = list_transactions(conn, acct)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.external_id)
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn provisional_fill_is_replaced_once_history_reports_it() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+
+        // Today's fill, from the real-time order book only.
+        append_transactions(&conn, acct, &[fill("order:1", "2026-09-24", "VTI", "buy", 5.0)]).unwrap();
+        reconcile_provisional(&conn, acct).unwrap();
+        assert_eq!(ids(&conn, acct), vec!["order:1"]);
+        // It must not advance the history watermark.
+        assert_eq!(latest_activity_date(&conn, acct).unwrap(), None);
+
+        // Next day the history reports it as two partial fills — then the
+        // order book repeats it, as it will for a week.
+        append_transactions(
+            &conn,
+            acct,
+            &[
+                fill("h1", "2026-09-24", "VTI", "buy", 2.0),
+                fill("h2", "2026-09-24", "VTI", "buy", 3.0),
+                fill("order:1", "2026-09-24", "VTI", "buy", 5.0),
+            ],
+        )
+        .unwrap();
+        reconcile_provisional(&conn, acct).unwrap();
+        assert_eq!(ids(&conn, acct), vec!["h1", "h2"]);
+        assert_eq!(latest_activity_date(&conn, acct).unwrap().as_deref(), Some("2026-09-24"));
+    }
+
+    #[test]
+    fn provisional_fill_stays_while_history_is_incomplete_or_different() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        append_transactions(
+            &conn,
+            acct,
+            &[
+                fill("order:1", "2026-09-24", "VTI", "buy", 5.0),
+                // Only part of it in history so far.
+                fill("h1", "2026-09-24", "VTI", "buy", 2.0),
+                // Same day and symbol, but a sell — not a match.
+                fill("h2", "2026-09-24", "VTI", "sell", 5.0),
+            ],
+        )
+        .unwrap();
+        reconcile_provisional(&conn, acct).unwrap();
+        assert_eq!(ids(&conn, acct), vec!["h1", "h2", "order:1"]);
     }
 
     #[test]

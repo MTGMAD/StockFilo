@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 use crate::brokers::error::BrokerError;
 use crate::brokers::store::{self, StoredPosition, StoredTransaction};
-use crate::brokers::types::{Credentials, ProviderDescriptor, RemoteAccount, RemoteOrder};
+use crate::brokers::types::{
+    Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount, RemoteOrder,
+};
 use crate::brokers::Provider;
 use crate::commands::config::load_config;
 use crate::db::manager::DbManager;
@@ -378,24 +380,42 @@ pub fn broker_list_transactions(
     state.with_conn(|conn| store::list_transactions(conn, broker_account_id))
 }
 
-/// Every order on the connection's account, fetched live from the broker.
-/// Never cached — see `RemoteOrder`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerOrders {
+    pub orders: Vec<RemoteOrder>,
+    /// This broker's status vocabulary — drives the Orders view's tabs.
+    pub statuses: OrderStatusConfig,
+}
+
+/// Every order on one broker account, fetched live from the broker. Never
+/// cached — see `RemoteOrder`. Keyed by account rather than connection, since
+/// a SnapTrade connection (one brokerage login) can hold several accounts.
 #[tauri::command]
 pub async fn broker_list_orders(
     app: AppHandle,
-    connection_id: String,
+    broker_account_id: i64,
     state: State<'_, DbManager>,
-) -> Result<Vec<RemoteOrder>, String> {
-    let (provider, environment) = state.with_conn(|conn| {
+) -> Result<BrokerOrders, String> {
+    let (connection_id, provider, environment, provider_account_id) = state.with_conn(|conn| {
         conn.query_row(
-            "SELECT provider, environment FROM broker_connections WHERE id = ?1",
-            rusqlite::params![connection_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            "SELECT c.id, c.provider, c.environment, a.provider_account_id \
+             FROM broker_accounts a JOIN broker_connections c ON c.id = a.connection_id \
+             WHERE a.id = ?1",
+            rusqlite::params![broker_account_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
         )
     })?;
     let p = Provider::from_id(&provider)?;
     let creds = load_credentials(&app, &connection_id)?;
-    Ok(p.orders(&creds, &environment).await?)
+    let orders = p.orders(&creds, &environment, &provider_account_id).await?;
+    Ok(BrokerOrders { orders, statuses: p.order_statuses() })
 }
 
 // ── Update / delete ────────────────────────────────────────────────────────
@@ -516,13 +536,19 @@ async fn sync_one(
     let mut total_new_tx = 0usize;
 
     for acct in &accounts {
+        // None = throttled this round: keep the positions already stored
+        // rather than wiping them, and pick the account up next round.
         let positions = if descriptor.supports_positions {
-            p.positions(&creds, environment, &acct.id).await?
+            match p.positions(&creds, environment, &acct.id).await {
+                Ok(v) => Some(v),
+                Err(BrokerError::RateLimited(_)) => None,
+                Err(e) => return Err(e),
+            }
         } else {
-            Vec::new()
+            Some(Vec::new())
         };
 
-        let acct_id = state
+        let (acct_id, visible) = state
             .with_txn(|conn| {
                 // New accounts default to visible: every current provider
                 // (Alpaca) auto-imports everything it returns. An aggregator
@@ -544,14 +570,18 @@ async fn sync_one(
                     );
                     store::ensure_portfolio(conn, id, provider, &name)?;
                 }
-                store::replace_positions(conn, id, &positions)?;
-                Ok(id)
+                if let Some(ref positions) = positions {
+                    store::replace_positions(conn, id, positions)?;
+                }
+                Ok((id, visible))
             })
             .map_err(BrokerError::Db)?;
 
-        total_positions += positions.len();
+        total_positions += positions.as_ref().map_or(0, Vec::len);
 
-        if descriptor.supports_activities {
+        // A hidden account has no Purchases view to fill — don't spend its
+        // rate-limited requests on history nobody will see.
+        if descriptor.supports_activities && visible {
             // Re-fetch from the last stored day rather than the day after, so a
             // fill recorded later on a day already seen is not missed. The
             // unique index makes the overlap free.
@@ -559,12 +589,21 @@ async fn sync_one(
                 .with_conn(|conn| store::latest_activity_date(conn, acct_id))
                 .map_err(BrokerError::Db)?;
 
-            let activities = p
-                .activities(&creds, environment, since.as_deref())
-                .await?;
+            let activities = match p
+                .activities(&creds, environment, &acct.id, since.as_deref())
+                .await
+            {
+                Ok(v) => v,
+                Err(BrokerError::RateLimited(_)) => Vec::new(),
+                Err(e) => return Err(e),
+            };
 
             let new_tx = state
-                .with_txn(|conn| store::append_transactions(conn, acct_id, &activities))
+                .with_txn(|conn| {
+                    let n = store::append_transactions(conn, acct_id, &activities)?;
+                    store::reconcile_provisional(conn, acct_id)?;
+                    Ok(n)
+                })
                 .map_err(BrokerError::Db)?;
             total_new_tx += new_tx;
         }

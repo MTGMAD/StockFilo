@@ -1,39 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Lock, RefreshCw, CornerDownRight } from "lucide-react";
-import type { BrokerOrder } from "../../types";
+import type { BrokerOrder, OrderStatusConfig } from "../../types";
 import { listBrokerOrders } from "../../lib/brokers";
 import { cn } from "../../lib/utils";
-
-/**
- * Every status Alpaca documents, in the order its docs list them. Each gets a
- * tab of its own even when empty, so "is anything held?" is answerable at a
- * glance. A status not on this list (Alpaca adding one) still gets a tab —
- * see `statusTabs` below.
- */
-const KNOWN_STATUSES = [
-  "new",
-  "partially_filled",
-  "filled",
-  "done_for_day",
-  "canceled",
-  "expired",
-  "replaced",
-  "pending_cancel",
-  "pending_replace",
-  "accepted",
-  "pending_new",
-  "accepted_for_bidding",
-  "stopped",
-  "rejected",
-  "suspended",
-  "calculated",
-  "held",
-] as const;
-
-/** Statuses after which an order can never execute again. Everything else is working. */
-const TERMINAL = new Set(["filled", "canceled", "expired", "replaced", "rejected"]);
-
-const PINNED_STATUSES = ["filled", "canceled"];
 
 type Filter = "working" | "all" | string;
 
@@ -44,12 +13,13 @@ function label(status: string): string {
     .join(" ");
 }
 
-function statusTone(status: string): string {
-  if (status === "filled") return "bg-positive/10 text-positive";
-  if (status === "partially_filled") return "bg-positive/10 text-positive";
-  if (status === "rejected" || status === "suspended")
-    return "bg-negative/10 text-negative";
-  if (TERMINAL.has(status)) return "bg-muted text-muted-foreground";
+const FILLED = new Set(["filled", "executed", "partially_filled", "partial"]);
+const FAILED = new Set(["rejected", "failed", "suspended"]);
+
+function statusTone(status: string, terminal: Set<string>): string {
+  if (FILLED.has(status)) return "bg-positive/10 text-positive";
+  if (FAILED.has(status)) return "bg-negative/10 text-negative";
+  if (terminal.has(status)) return "bg-muted text-muted-foreground";
   return "bg-primary/10 text-primary";
 }
 
@@ -109,9 +79,13 @@ function lastEvent(o: BrokerOrder): string | null {
  * Orders for a broker-linked portfolio, fetched live from the brokerage every
  * time the tab opens (and on Refresh). Read-only: nothing here can place,
  * change, or cancel an order.
+ *
+ * Status tabs come from the broker (see `OrderStatusConfig`) — Alpaca says
+ * "filled", SnapTrade says "executed", and each has statuses the other lacks.
  */
-export function BrokerOrdersView({ connectionId }: { connectionId: string }) {
+export function BrokerOrdersView({ brokerAccountId }: { brokerAccountId: number }) {
   const [orders, setOrders] = useState<BrokerOrder[] | null>(null);
+  const [config, setConfig] = useState<OrderStatusConfig | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
@@ -121,14 +95,16 @@ export function BrokerOrdersView({ connectionId }: { connectionId: string }) {
     setLoading(true);
     setError(null);
     try {
-      setOrders(await listBrokerOrders(connectionId));
+      const r = await listBrokerOrders(brokerAccountId);
+      setOrders(r.orders);
+      setConfig(r.statuses);
       setFetchedAt(new Date());
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [connectionId]);
+  }, [brokerAccountId]);
 
   useEffect(() => {
     setOrders(null);
@@ -136,32 +112,34 @@ export function BrokerOrdersView({ connectionId }: { connectionId: string }) {
     void load();
   }, [load]);
 
+  const terminal = useMemo(() => new Set(config?.terminal ?? []), [config]);
+
   const counts = useMemo(() => {
     const byStatus: Record<string, number> = {};
     let working = 0;
     for (const o of orders ?? []) {
       byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
-      if (!TERMINAL.has(o.status)) working++;
+      if (!terminal.has(o.status)) working++;
     }
     return { byStatus, working, all: orders?.length ?? 0 };
-  }, [orders]);
+  }, [orders, terminal]);
 
-  // Known statuses first (Filled and Canceled pinned to the front), then any
-  // status the broker returned that isn't on the documented list.
+  // The broker's documented statuses (pinned ones first), then any status it
+  // returned that isn't on its documented list, so nothing is ever hidden.
   const statusTabs = useMemo(() => {
-    const rest = KNOWN_STATUSES.filter((s) => !PINNED_STATUSES.includes(s));
-    const unknown = Object.keys(counts.byStatus).filter(
-      (s) => !(KNOWN_STATUSES as readonly string[]).includes(s),
-    );
-    return { pinned: PINNED_STATUSES, rest: [...rest, ...unknown] };
-  }, [counts]);
+    const all = config?.all ?? [];
+    const pinned = config?.pinned ?? [];
+    const rest = all.filter((s) => !pinned.includes(s));
+    const unknown = Object.keys(counts.byStatus).filter((s) => !all.includes(s));
+    return { pinned, rest: [...rest, ...unknown] };
+  }, [config, counts]);
 
   const visible = useMemo(() => {
     const list = orders ?? [];
     if (filter === "all") return list;
-    if (filter === "working") return list.filter((o) => !TERMINAL.has(o.status));
+    if (filter === "working") return list.filter((o) => !terminal.has(o.status));
     return list.filter((o) => o.status === filter);
-  }, [orders, filter]);
+  }, [orders, filter, terminal]);
 
   function tab(id: Filter, text: string, count: number) {
     const active = filter === id;
@@ -199,6 +177,8 @@ export function BrokerOrdersView({ connectionId }: { connectionId: string }) {
         <span className="flex-1">
           Live from your broker — read-only. Stockfolio cannot place, change, or
           cancel orders.
+          {config?.history_days != null &&
+            ` This broker reports the last ${config.history_days} days.`}
         </span>
         {fetchedAt && (
           <span className="tabular-nums">
@@ -320,7 +300,7 @@ export function BrokerOrdersView({ connectionId }: { connectionId: string }) {
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-                        statusTone(o.status),
+                        statusTone(o.status, terminal),
                       )}
                     >
                       {label(o.status)}

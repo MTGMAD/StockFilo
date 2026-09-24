@@ -411,6 +411,23 @@ export interface BrokerTransaction {
   occurred_at: string; // YYYY-MM-DD
 }
 
+/** One broker's order-status vocabulary — drives the Orders view's tabs. */
+export interface OrderStatusConfig {
+  /** Every documented status, lowercased, in display order. */
+  all: string[];
+  /** Statuses after which the order can't execute; the rest are "Working". */
+  terminal: string[];
+  /** Tabs shown right after "Working", before "All". */
+  pinned: string[];
+  /** How far back the broker's order history reaches, when capped. */
+  history_days: number | null;
+}
+
+export interface BrokerOrders {
+  orders: BrokerOrder[];
+  statuses: OrderStatusConfig;
+}
+
 /** An order exactly as the broker reports it, fetched live — never stored. */
 export interface BrokerOrder {
   id: string;

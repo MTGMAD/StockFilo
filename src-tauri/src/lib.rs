@@ -188,11 +188,11 @@ pub fn run() {
                 .expect("Failed to open database");
             app.manage(db_manager);
 
-            #[cfg(debug_assertions)]
-            {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
-            }
+            // Web Inspector is deliberately NOT auto-opened in debug builds.
+            // Attaching its debugger while the page is still JIT-compiling at
+            // startup crashes WebKit's WebContent process on macOS 27.0
+            // (FTL compile assertion racing Debugger::attach), leaving a blank
+            // window. Open it on demand instead: right-click → Inspect Element.
             Ok(())
         })
         .run(tauri::generate_context!())

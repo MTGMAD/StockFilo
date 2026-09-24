@@ -76,8 +76,19 @@ export function BrokerTransactionsTable({
                 key={t.id}
                 className="border-b border-border/60 hover:bg-accent/40 transition-colors"
               >
-                <td className="px-6 py-2 tabular-nums text-muted-foreground">
+                <td className="px-6 py-2 tabular-nums text-muted-foreground whitespace-nowrap">
                   {t.occurred_at}
+                  {/* Provisional: taken from the broker's real-time order book
+                      because its transaction history is only refreshed daily.
+                      Replaced by the history row once that arrives. */}
+                  {t.external_id.startsWith("order:") && (
+                    <span
+                      className="ml-2 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase text-primary"
+                      title="From today's order fills. The brokerage's transaction history confirms it within a day."
+                    >
+                      Live
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2 font-medium text-foreground">
                   {t.provider_symbol}

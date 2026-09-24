@@ -30,8 +30,30 @@ pub mod types;
 
 use error::{BrokerError, BrokerResult};
 use types::{
-    Credentials, ProviderDescriptor, RemoteAccount, RemoteActivity, RemoteOrder, RemotePosition,
+    Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount, RemoteActivity, RemoteOrder,
+    RemotePosition,
 };
+
+/// RFC3339 timestamp → `YYYY-MM-DD`, matching `purchases.purchased_at`.
+///
+/// Takes the leading date component directly rather than parsing and
+/// reformatting: Broker timestamps are UTC, and shifting them into local time
+/// could move a fill onto the wrong calendar day.
+pub(crate) fn date_only(ts: &str) -> Option<String> {
+    let head: String = ts.chars().take(10).collect();
+    let b = head.as_bytes();
+    if b.len() == 10
+        && b[..4].iter().all(u8::is_ascii_digit)
+        && b[4] == b'-'
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && b[7] == b'-'
+        && b[8..].iter().all(u8::is_ascii_digit)
+    {
+        Some(head)
+    } else {
+        None
+    }
+}
 
 #[derive(Debug)]
 pub enum Provider {
@@ -94,17 +116,21 @@ impl Provider {
         }
     }
 
+    /// `provider_account_id` scopes the request for providers with several
+    /// accounts per connection (SnapTrade); Alpaca has one per key and
+    /// ignores it.
     pub async fn activities(
         &self,
         creds: &Credentials,
         environment: &str,
+        provider_account_id: &str,
         since: Option<&str>,
     ) -> BrokerResult<Vec<RemoteActivity>> {
         match self {
             Provider::Alpaca => alpaca::Alpaca::activities(creds, environment, since).await,
-            // Not implemented yet — descriptor.supports_activities is false,
-            // so the generic sync path never calls this.
-            Provider::SnapTrade => Ok(Vec::new()),
+            Provider::SnapTrade => {
+                snaptrade::SnapTrade::activities(creds, provider_account_id, since).await
+            }
         }
     }
 
@@ -112,11 +138,18 @@ impl Provider {
         &self,
         creds: &Credentials,
         environment: &str,
+        provider_account_id: &str,
     ) -> BrokerResult<Vec<RemoteOrder>> {
         match self {
             Provider::Alpaca => alpaca::Alpaca::orders(creds, environment).await,
-            // descriptor.supports_orders is false, so the UI never asks.
-            Provider::SnapTrade => Ok(Vec::new()),
+            Provider::SnapTrade => snaptrade::SnapTrade::orders(creds, provider_account_id).await,
+        }
+    }
+
+    pub fn order_statuses(&self) -> OrderStatusConfig {
+        match self {
+            Provider::Alpaca => alpaca::Alpaca::order_statuses(),
+            Provider::SnapTrade => snaptrade::SnapTrade::order_statuses(),
         }
     }
 }

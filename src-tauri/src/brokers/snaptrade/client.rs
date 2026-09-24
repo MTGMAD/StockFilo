@@ -41,9 +41,102 @@ use base64::Engine as _;
 use hmac::{Hmac, Mac};
 use serde_json::Value;
 use sha2::Sha256;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const BASE_URL: &str = "https://api.snaptrade.com/api/v1";
+
+// ── Rate limiting ──────────────────────────────────────────────────────────
+//
+// Personal keys get 10 requests per minute *per account* on the account-level
+// endpoints (positions, balances, orders, activities…), rolling 60s window,
+// separate bucket per account (<https://docs.snaptrade.com/docs/ratelimiting>).
+// Several things poll the same account — the on-screen portfolio, the
+// background refresh, a manual Sync — so the budget is enforced here, in one
+// process-wide place, rather than hoping the callers' timers never overlap.
+
+/// Deliberately under SnapTrade's 10, leaving headroom for clock skew
+/// between our window and theirs.
+const ACCOUNT_BUDGET: usize = 8;
+const ACCOUNT_WINDOW: Duration = Duration::from_secs(60);
+/// Activity types that change a share count — everything the Purchases view
+/// shows. REI (dividend reinvestment) is a buy of shares.
+const ACTIVITY_TYPES: &str = "BUY,SELL,REI";
+
+/// Used when a 429 arrives without a parseable wait.
+const DEFAULT_RETRY_SECS: u64 = 60;
+
+#[derive(Default)]
+struct AccountLimiter {
+    recent: HashMap<String, VecDeque<Instant>>,
+    /// Set from a 429 — SnapTrade told us when it will accept again.
+    blocked_until: HashMap<String, Instant>,
+}
+
+fn limiter() -> &'static Mutex<AccountLimiter> {
+    static LIMITER: OnceLock<Mutex<AccountLimiter>> = OnceLock::new();
+    LIMITER.get_or_init(Default::default)
+}
+
+fn ceil_secs(d: Duration) -> u64 {
+    d.as_secs() + u64::from(d.subsec_nanos() > 0)
+}
+
+impl AccountLimiter {
+    /// Reserve one request for `account_id` at `now`, or return the seconds
+    /// until one is free. Never sleeps — a throttled sync just skips the
+    /// account until its next round.
+    fn acquire(&mut self, account_id: &str, now: Instant) -> Result<(), u64> {
+        if let Some(until) = self.blocked_until.get(account_id) {
+            if *until > now {
+                return Err(ceil_secs(*until - now).max(1));
+            }
+            self.blocked_until.remove(account_id);
+        }
+        let q = self.recent.entry(account_id.to_string()).or_default();
+        while q.front().is_some_and(|t| now.duration_since(*t) >= ACCOUNT_WINDOW) {
+            q.pop_front();
+        }
+        if q.len() >= ACCOUNT_BUDGET {
+            let oldest = *q.front().expect("len >= budget > 0");
+            return Err(ceil_secs(ACCOUNT_WINDOW - now.duration_since(oldest)).max(1));
+        }
+        q.push_back(now);
+        Ok(())
+    }
+
+    fn block(&mut self, account_id: &str, secs: u64, now: Instant) {
+        self.blocked_until
+            .insert(account_id.to_string(), now + Duration::from_secs(secs));
+    }
+}
+
+/// Seconds to wait after a 429: the account-level reset header, then the
+/// customer-level one, then the body's "Expected available in N seconds".
+fn retry_after_secs(headers: &reqwest::header::HeaderMap, body: &str) -> u64 {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<f64>().ok())
+    };
+    header("X-RateLimit-Account-Reset")
+        .or_else(|| header("X-RateLimit-Reset"))
+        .or_else(|| parse_expected_available(body))
+        .map(|s| s.ceil().max(1.0) as u64)
+        .unwrap_or(DEFAULT_RETRY_SECS)
+}
+
+fn parse_expected_available(body: &str) -> Option<f64> {
+    let rest = &body[body.find("available in")? + "available in".len()..];
+    let num: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    num.parse().ok()
+}
 
 #[derive(Debug)]
 pub struct SnapTradeClient {
@@ -100,14 +193,89 @@ impl SnapTradeClient {
     /// Every position currently held in one account. The response is
     /// `AllAccountPositionsResponse` — `{"results": [AccountPosition, ...],
     /// "data_freshness": {...}}`, confirmed against SnapTrade's published
-    /// OpenAPI spec — not a bare array.
+    /// OpenAPI spec — not a bare array. Real-time on Personal keys.
     pub async fn positions(&self, account_id: &str) -> BrokerResult<Vec<Value>> {
         let subpath = format!("/accounts/{account_id}/positions/all");
-        let v = self.get(&subpath, &[]).await?;
+        let v = self.account_get(account_id, &subpath, &[]).await?;
         v.get("results")
             .and_then(|r| r.as_array())
             .cloned()
             .ok_or_else(|| BrokerError::Parse("expected a `results` array of positions".into()))
+    }
+
+    /// Trade history (`GET /accounts/{id}/activities`), newest first, limited
+    /// to the types that move shares. SnapTrade documents this endpoint as
+    /// *Daily* data on every plan — cached, refreshed once a day — which is why
+    /// the caller supplements it with executed orders (real-time).
+    ///
+    /// `start_date` is an inclusive `YYYY-MM-DD` lower bound. Pages by
+    /// `offset`, 1000 per page.
+    pub async fn activities(&self, account_id: &str, start_date: Option<&str>) -> BrokerResult<Vec<Value>> {
+        const PAGE: usize = 1000;
+        const MAX_PAGES: usize = 20;
+        let subpath = format!("/accounts/{account_id}/activities");
+        let mut out = Vec::new();
+        for page in 0..MAX_PAGES {
+            let offset = (page * PAGE).to_string();
+            let limit = PAGE.to_string();
+            let mut query: Vec<(&str, &str)> = vec![
+                ("limit", &limit),
+                ("offset", &offset),
+                ("type", ACTIVITY_TYPES),
+            ];
+            if let Some(d) = start_date {
+                query.push(("startDate", d));
+            }
+            let v = self.account_get(account_id, &subpath, &query).await?;
+            let data = v
+                .get("data")
+                .and_then(|d| d.as_array())
+                .ok_or_else(|| BrokerError::Parse("expected a `data` array of activities".into()))?;
+            out.extend(data.iter().cloned());
+            if data.len() < PAGE {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Orders placed in the last `days` days (SnapTrade caps this at 90),
+    /// `state` = "all" | "open" | "executed". Real-time on Personal keys.
+    pub async fn orders(&self, account_id: &str, state: &str, days: u32) -> BrokerResult<Vec<Value>> {
+        let subpath = format!("/accounts/{account_id}/orders");
+        let days = days.to_string();
+        let v = self
+            .account_get(account_id, &subpath, &[("state", state), ("days", &days)])
+            .await?;
+        v.as_array()
+            .cloned()
+            .ok_or_else(|| BrokerError::Parse("expected an array of orders".into()))
+    }
+
+    /// GET an account-level endpoint, which on Personal keys draws on that
+    /// account's 10-per-minute bucket — see `AccountLimiter`.
+    async fn account_get(
+        &self,
+        account_id: &str,
+        subpath: &str,
+        query: &[(&str, &str)],
+    ) -> BrokerResult<Value> {
+        limiter()
+            .lock()
+            .expect("limiter lock")
+            .acquire(account_id, Instant::now())
+            .map_err(BrokerError::RateLimited)?;
+
+        match self.get(subpath, query).await {
+            Err(BrokerError::RateLimited(secs)) => {
+                limiter()
+                    .lock()
+                    .expect("limiter lock")
+                    .block(account_id, secs, Instant::now());
+                Err(BrokerError::RateLimited(secs))
+            }
+            other => other,
+        }
     }
 
     // ── Transport ────────────────────────────────────────────────────────
@@ -163,8 +331,12 @@ impl SnapTradeClient {
 
         let resp = req.send().await.map_err(|e| BrokerError::Network(e.to_string()))?;
         let status = resp.status();
+        let headers = resp.headers().clone();
         let text = resp.text().await.unwrap_or_default();
 
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(BrokerError::RateLimited(retry_after_secs(&headers, &text)));
+        }
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(BrokerError::Unauthorized);
         }
@@ -241,6 +413,43 @@ mod tests {
             canonical_json(&v),
             r#"{"content":{"substring":"AAPL"},"path":"/api/v1/symbols","query":"clientId=YOUR_CLIENT_ID&timestamp=1715123456"}"#
         );
+    }
+
+    #[test]
+    fn limiter_allows_the_budget_then_reports_the_wait() {
+        let mut l = AccountLimiter::default();
+        let t0 = Instant::now();
+        for i in 0..ACCOUNT_BUDGET {
+            assert!(l.acquire("acct", t0 + Duration::from_secs(i as u64)).is_ok());
+        }
+        // Next request at t0+10s: the oldest (t0) frees up at t0+60s.
+        assert_eq!(l.acquire("acct", t0 + Duration::from_secs(10)), Err(50));
+        // Other accounts have their own bucket.
+        assert!(l.acquire("other", t0 + Duration::from_secs(10)).is_ok());
+        // Once the window has rolled past the oldest request, it's free again.
+        assert!(l.acquire("acct", t0 + Duration::from_secs(60)).is_ok());
+    }
+
+    #[test]
+    fn limiter_honours_a_block_from_a_429() {
+        let mut l = AccountLimiter::default();
+        let t0 = Instant::now();
+        l.block("acct", 30, t0);
+        assert_eq!(l.acquire("acct", t0 + Duration::from_secs(5)), Err(25));
+        assert!(l.acquire("acct", t0 + Duration::from_secs(30)).is_ok());
+    }
+
+    #[test]
+    fn retry_after_prefers_the_account_header_then_the_body() {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let mut h = HeaderMap::new();
+        h.insert("X-RateLimit-Account-Reset", HeaderValue::from_static("12"));
+        h.insert("X-RateLimit-Reset", HeaderValue::from_static("40"));
+        assert_eq!(retry_after_secs(&h, ""), 12);
+
+        let body = r#""Request was throttled. Expected available in 7.2 seconds.""#;
+        assert_eq!(retry_after_secs(&HeaderMap::new(), body), 8);
+        assert_eq!(retry_after_secs(&HeaderMap::new(), "nope"), DEFAULT_RETRY_SECS);
     }
 
     #[test]

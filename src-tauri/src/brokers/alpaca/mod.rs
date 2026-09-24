@@ -10,8 +10,8 @@ use std::collections::HashSet;
 
 use super::error::{BrokerError, BrokerResult};
 use super::types::{
-    AccountType, CredentialField, Credentials, ProviderDescriptor, RemoteAccount,
-    RemoteActivity, RemoteOrder, RemotePosition,
+    AccountType, CredentialField, Credentials, OrderStatusConfig, ProviderDescriptor,
+    RemoteAccount, RemoteActivity, RemoteOrder, RemotePosition,
 };
 use client::AlpacaClient;
 
@@ -171,6 +171,20 @@ impl Alpaca {
         }
 
         Ok(out)
+    }
+
+    /// Alpaca's documented order statuses.
+    pub fn order_statuses() -> OrderStatusConfig {
+        OrderStatusConfig::new(
+            &[
+                "new", "partially_filled", "filled", "done_for_day", "canceled", "expired",
+                "replaced", "pending_cancel", "pending_replace", "accepted", "pending_new",
+                "accepted_for_bidding", "stopped", "rejected", "suspended", "calculated", "held",
+            ],
+            &["filled", "canceled", "expired", "replaced", "rejected"],
+            &["filled", "canceled"],
+            None,
+        )
     }
 
     /// Every order on the account, in every status, newest first.
