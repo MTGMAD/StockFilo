@@ -161,11 +161,29 @@ export function buildFromPositions(
         p.unrealized_plpc != null
         ? p.unrealized_plpc * 100
         : null;
+    // Outside a live session (weekend, holiday, or simply before Yahoo's
+    // cache has been asked in a while) brokers seen in the wild — Alpaca
+    // among them — keep reporting the position at Friday's closing price but
+    // report `change_today` as a flat 0 rather than omitting it, since
+    // nothing has traded "today" yet. Taken at face value that renders every
+    // holding as unchanged all weekend, which is wrong: the position is
+    // exactly as up or down as it was at Friday's close. Yahoo's cache
+    // doesn't have this problem — `regularMarketChangePercent` keeps
+    // reflecting the last completed session until a new one starts — so once
+    // the broker's number looks like "no session happened" (null, or a
+    // suspiciously exact 0) fall back to it instead of a broker figure that
+    // was never really about today.
+    const isLiveSession =
+      stock?.market_state === "PRE" ||
+      stock?.market_state === "REGULAR" ||
+      stock?.market_state === "POST";
+    const brokerDailyChangePct =
+      p.change_today != null ? p.change_today * 100 : null;
     const dailyChangePct = usingFallbackPrice
       ? stock?.daily_change_pct ?? null
-      : p.change_today != null
-        ? p.change_today * 100
-        : null;
+      : !isLiveSession && (brokerDailyChangePct == null || brokerDailyChangePct === 0)
+        ? stock?.daily_change_pct ?? brokerDailyChangePct
+        : brokerDailyChangePct;
 
     return {
       ticker: displayTicker,
@@ -185,7 +203,9 @@ export function buildFromPositions(
       lastFetchedAt: p.snapshot_at,
       quoteType: stock?.quote_type ?? assetClassToQuoteType(p.asset_class),
       dailyChangePct,
-      market_state: null,
+      // Sourced from Yahoo even for broker positions now, so the extended-
+      // hours tag and the fallback above both know when the market's closed.
+      market_state: stock?.market_state ?? null,
       pre_market_price: null,
       pre_market_change_pct: null,
       post_market_price: null,
