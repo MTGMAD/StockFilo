@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, State};
 
@@ -138,6 +138,71 @@ async fn release_lock(url: &str, username: &str, password: &str) {
     let _ = webdav_put(url, username, password, payload).await;
 }
 
+// ── Safe local DB replacement ──────────────────────────────────────────────
+//
+// A downloaded database must never be written straight into the live file:
+// the app's `DbManager` connection is still open against it, so an in-place
+// truncate+write (or even `fs::copy`) can be read half-written by that
+// connection or leave the WAL pointing at pages that no longer match the
+// file — this is what corrupted the on-disk database once already. Every
+// download path below writes to a *temp* file instead, then hands it to
+// `install_downloaded_db`, which does the swap atomically while holding the
+// connection lock, so no query can ever see a partially-replaced file.
+
+fn wal_path(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_owned();
+    s.push("-wal");
+    PathBuf::from(s)
+}
+
+fn shm_path(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_owned();
+    s.push("-shm");
+    PathBuf::from(s)
+}
+
+/// Deterministic temp-file location for an in-progress download, derived
+/// from the live DB path so both the downloader and the installer agree on
+/// it without needing to thread an extra field through `SyncResult`.
+fn sync_temp_path(local_db_path: &Path) -> PathBuf {
+    local_db_path
+        .parent()
+        .map(|p| p.join("stockfolio.db.sync_tmp"))
+        .unwrap_or_else(|| PathBuf::from("stockfolio.db.sync_tmp"))
+}
+
+/// Atomically install an already-downloaded database file as the live
+/// database. Holds both the path and connection locks for the whole swap,
+/// so no other command can open or query the file half-replaced.
+fn install_downloaded_db(db_state: &DbManager, temp_path: &Path) -> Result<(), String> {
+    let path_guard = db_state.path.lock().map_err(|e| e.to_string())?;
+    let mut conn_guard = db_state.conn.lock().map_err(|e| e.to_string())?;
+
+    // Flush the outgoing connection's WAL, then drop it — its WAL/SHM belong
+    // to the file we're about to discard and must not carry over.
+    let _ = conn_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    let _ = fs::remove_file(wal_path(&path_guard));
+    let _ = fs::remove_file(shm_path(&path_guard));
+
+    // Prefer an atomic rename; fall back to copy+delete across mount points.
+    if let Err(e) = fs::rename(temp_path, &*path_guard) {
+        fs::copy(temp_path, &*path_guard)
+            .map_err(|_| e.to_string())?;
+        let _ = fs::remove_file(temp_path);
+    }
+
+    use crate::db::migrations;
+    use rusqlite::Connection;
+    let new_conn = Connection::open(&*path_guard).map_err(|e| e.to_string())?;
+    new_conn
+        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        .map_err(|e| e.to_string())?;
+    migrations::run_all(&new_conn).map_err(|e| e.to_string())?;
+    *conn_guard = new_conn;
+
+    Ok(())
+}
+
 // ── Sync algorithm ─────────────────────────────────────────────────────────
 
 async fn sync_path_target(
@@ -168,8 +233,10 @@ async fn sync_path_target(
     let prefer_remote = remote_mtime > local_mtime || (never_synced && remote_path.exists());
 
     if prefer_remote {
-        // Remote is authoritative — download to local
-        fs::copy(remote_path, local_db_path).map_err(|e| e.to_string())?;
+        // Remote is authoritative — download to a temp file; the caller
+        // installs it atomically once this returns (see `install_downloaded_db`).
+        let temp_path = sync_temp_path(local_db_path);
+        fs::copy(remote_path, &temp_path).map_err(|e| e.to_string())?;
         Ok(SyncResult {
             success: true,
             message: "Downloaded newer database from remote path".into(),
@@ -218,9 +285,11 @@ async fn sync_webdav_target(
         let prefer_remote = remote_mtime > local_mtime || (never_synced && remote_exists);
 
         if prefer_remote {
-            // Remote is authoritative — download
+            // Remote is authoritative — download to a temp file; the caller
+            // installs it atomically once this returns (see `install_downloaded_db`).
             let bytes = webdav_get(url, username, password).await?;
-            let mut f = fs::File::create(local_db_path).map_err(|e| e.to_string())?;
+            let temp_path = sync_temp_path(local_db_path);
+            let mut f = fs::File::create(&temp_path).map_err(|e| e.to_string())?;
             f.write_all(&bytes).map_err(|e| e.to_string())?;
             Ok(SyncResult {
                 success: true,
@@ -309,32 +378,13 @@ pub async fn sync_now(
     }
     let _ = save_config_to_disk(&app, &cfg);
 
-    // If the remote was newer and we downloaded a new DB file, reopen the
-    // Rusqlite connection so the rest of the app immediately sees the new data.
+    // If the remote was newer, a temp file with the downloaded DB is now
+    // waiting at `sync_temp_path` — install it atomically so the rest of the
+    // app immediately sees the new data via a fresh connection.
     if let Ok(ref r) = result {
         if r.downloaded {
-            let path_guard = db_state.path.lock().map_err(|e| e.to_string())?;
-            let mut conn_guard = db_state.conn.lock().map_err(|e| e.to_string())?;
-            let wal = {
-                let mut p = path_guard.as_os_str().to_owned();
-                p.push("-wal");
-                PathBuf::from(p)
-            };
-            let shm = {
-                let mut p = path_guard.as_os_str().to_owned();
-                p.push("-shm");
-                PathBuf::from(p)
-            };
-            let _ = fs::remove_file(&wal);
-            let _ = fs::remove_file(&shm);
-            use crate::db::migrations;
-            use rusqlite::Connection;
-            let new_conn = Connection::open(&*path_guard).map_err(|e| e.to_string())?;
-            new_conn
-                .execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-                .map_err(|e| e.to_string())?;
-            migrations::run_all(&new_conn).map_err(|e| e.to_string())?;
-            *conn_guard = new_conn;
+            let temp_path = sync_temp_path(&local_db_path);
+            install_downloaded_db(&db_state, &temp_path)?;
         }
     }
 
@@ -576,52 +626,8 @@ pub async fn import_remote_db(
         other => return Err(format!("Unknown sync target kind: {}", other)),
     }
 
-    // Step 2 — lock the connection, checkpoint WAL, swap files, reopen
-    {
-        let path_guard = db_state.path.lock().map_err(|e| e.to_string())?;
-        let mut conn_guard = db_state.conn.lock().map_err(|e| e.to_string())?;
-
-        // Flush WAL so the local file is a consistent snapshot before we replace it
-        let _ = conn_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-
-        // Remove stale WAL / SHM files so the new connection starts clean
-        let wal = {
-            let mut p = path_guard.as_os_str().to_owned();
-            p.push("-wal");
-            PathBuf::from(p)
-        };
-        let shm = {
-            let mut p = path_guard.as_os_str().to_owned();
-            p.push("-shm");
-            PathBuf::from(p)
-        };
-        let _ = fs::remove_file(&wal);
-        let _ = fs::remove_file(&shm);
-
-        // Atomically replace local DB with the downloaded temp file
-        fs::rename(&temp_path, &*path_guard).map_err(|e| {
-            // rename can fail across mount points; fall back to copy+delete
-            fs::copy(&temp_path, &*path_guard)
-                .map(|_| {
-                    let _ = fs::remove_file(&temp_path);
-                })
-                .map_err(|ce| ce.to_string())
-                .unwrap_or_default();
-            e.to_string()
-        })?;
-
-        // Open a fresh connection to the imported database
-        use crate::db::migrations;
-        use rusqlite::Connection;
-        let new_conn =
-            Connection::open(&*path_guard).map_err(|e| e.to_string())?;
-        new_conn
-            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .map_err(|e| e.to_string())?;
-        migrations::run_all(&new_conn).map_err(|e| e.to_string())?;
-
-        *conn_guard = new_conn;
-    }
+    // Step 2 — atomically swap the downloaded temp file in as the live DB
+    install_downloaded_db(&db_state, &temp_path)?;
 
     // Clean up temp file in case rename failed and we fell back to copy
     let _ = fs::remove_file(&temp_path);
