@@ -684,6 +684,35 @@ CREATE INDEX IF NOT EXISTS idx_cash_events_source_sale ON cash_events(source_sal
 ALTER TABLE portfolios ADD COLUMN last_import_at INTEGER;
 "#;
 
+/// V20: a per-item Morningstar star rating (1-5) on the watchlist.
+///
+/// Superseded one migration later, in V21 — see the comment there for why.
+const MIGRATION_V20: &str = "ALTER TABLE watchlist ADD COLUMN morningstar_rating INTEGER;";
+
+/// V21: tried moving the Morningstar rating to `stocks` instead, fetched
+/// automatically from Yahoo's `quoteSummary` `defaultKeyStatistics` module
+/// rather than hand-typed per watchlist row. Removed entirely in V22 — the
+/// feature itself didn't work out, not just this data model — so this
+/// migration exists only as a historical step between V20 and V22 and adds
+/// nothing that survives.
+const MIGRATION_V21: &str = r#"
+ALTER TABLE watchlist DROP COLUMN morningstar_rating;
+ALTER TABLE stocks ADD COLUMN morningstar_rating INTEGER;
+ALTER TABLE stocks ADD COLUMN morningstar_fetched_at INTEGER;
+"#;
+
+/// V22: remove the Morningstar rating feature entirely.
+///
+/// Both the hand-typed version (V20) and the auto-fetched version (V21) are
+/// gone — the feature didn't work out. This is a plain column drop rather
+/// than the usual table-rebuild dance (see V11/V19) because SQLite has
+/// supported `DROP COLUMN` directly since 3.35 and the bundled rusqlite here
+/// is well past that.
+const MIGRATION_V22: &str = r#"
+ALTER TABLE stocks DROP COLUMN morningstar_rating;
+ALTER TABLE stocks DROP COLUMN morningstar_fetched_at;
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -708,6 +737,9 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (17, MIGRATION_V17),
         (18, MIGRATION_V18),
         (19, MIGRATION_V19),
+        (20, MIGRATION_V20),
+        (21, MIGRATION_V21),
+        (22, MIGRATION_V22),
     ];
 
     let user_version: i64 =
