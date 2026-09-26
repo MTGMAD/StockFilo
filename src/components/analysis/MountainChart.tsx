@@ -51,7 +51,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
     const saved = localStorage.getItem("stockfolio-chart-style");
     return saved === "line" || saved === "candles" || saved === "mountain"
       ? saved
-      : "mountain";
+      : "line";
   });
 
   function changeStyle(s: ChartStyle) {
@@ -71,10 +71,15 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset range when switching between stock and fund tickers
+  // Reset to the default range whenever the ticker changes — not just when
+  // switching between a stock and a fund. Without `ticker` in the deps, this
+  // component (never mounted with a `key={ticker}` by its callers) keeps
+  // whatever range was left over from the *previous* ticker: click through a
+  // few positions and each chart opens on a random leftover timeframe
+  // instead of consistently defaulting to 1D.
   useEffect(() => {
     setRange(defaultRange);
-  }, [defaultRange]);
+  }, [defaultRange, ticker]);
 
   const loadChart = useCallback(async () => {
     const r = ranges.find((r) => r.value === range) ?? ranges[0];
