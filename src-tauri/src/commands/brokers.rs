@@ -271,9 +271,25 @@ pub fn broker_list_connections(
             let provider_name = Provider::from_id(&provider)
                 .map(|p| p.descriptor().name)
                 .unwrap_or_else(|_| provider.clone());
-            let provider_logo_domain = Provider::from_id(&provider)
-                .ok()
-                .and_then(|p| p.descriptor().logo_domain);
+            let label: String = r.get(3)?;
+            let provider_logo_domain = if provider == "snaptrade" {
+                // The connection label is "{institution} (via SnapTrade)"
+                // (commands::snaptrade::snaptrade_sync_connections) unless a
+                // person has renamed it — fall back to SnapTrade's own icon
+                // when the institution can't be recovered from it.
+                label
+                    .strip_suffix(" (via SnapTrade)")
+                    .and_then(crate::brokers::snaptrade::map::institution_logo_domain)
+                    .or_else(|| {
+                        Provider::from_id(&provider)
+                            .ok()
+                            .and_then(|p| p.descriptor().logo_domain)
+                    })
+            } else {
+                Provider::from_id(&provider)
+                    .ok()
+                    .and_then(|p| p.descriptor().logo_domain)
+            };
             let supports_orders = Provider::from_id(&provider)
                 .map(|p| p.descriptor().supports_orders)
                 .unwrap_or(false);
@@ -288,7 +304,7 @@ pub fn broker_list_connections(
                 environment,
                 environment_label,
                 environment_kind,
-                label: r.get(3)?,
+                label,
                 created_at: r.get(4)?,
                 last_synced_at: r.get(5)?,
                 last_sync_status: r.get(6)?,

@@ -14,6 +14,7 @@ import {
 import { cn } from "../../lib/utils";
 import { openUrl } from "../../lib/openUrl";
 import { accountKindStyle, isRealMoney } from "../../lib/accountTypes";
+import { BrokerLogo } from "../shared/BrokerLogo";
 import type {
   BrokerConnectionInfo,
   ProviderDescriptor,
@@ -518,23 +519,30 @@ export function BrokerSettings({
             className="rounded-lg border border-border bg-card p-3 space-y-2"
           >
             <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium text-foreground truncate">
-                    {c.label}
-                  </span>
-                  <span
-                    className={cn(
-                      "text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide",
-                      accountKindStyle(c.environment_kind).chip,
-                    )}
-                  >
-                    {c.environment_label}
-                  </span>
+              <div className="flex items-start gap-2 min-w-0">
+                <BrokerLogo
+                  domain={c.provider_logo_domain}
+                  name={c.provider_name}
+                  className="w-8 h-8 mt-0.5"
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-foreground truncate">
+                      {c.label}
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide",
+                        accountKindStyle(c.environment_kind).chip,
+                      )}
+                    >
+                      {c.environment_label}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Last synced: {formatTs(c.last_synced_at)}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Last synced: {formatTs(c.last_synced_at)}
-                </p>
               </div>
 
               <div className="flex items-center gap-1 shrink-0">

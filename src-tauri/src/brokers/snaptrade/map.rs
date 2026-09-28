@@ -64,6 +64,59 @@ pub fn institution_name(v: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Domain for the underlying brokerage's icon, e.g. "Fidelity" -> "fidelity.com",
+/// so a SnapTrade-linked account shows that brokerage's own logo instead of
+/// SnapTrade's. Matched by substring against SnapTrade's free-text
+/// `institution_name`, since SnapTrade itself exposes no domain or logo URL.
+/// `None` for an unrecognized institution — the caller falls back to
+/// SnapTrade's own `logo_domain`.
+const INSTITUTION_DOMAINS: &[(&str, &str)] = &[
+    ("fidelity", "fidelity.com"),
+    ("robinhood", "robinhood.com"),
+    ("charles schwab", "schwab.com"),
+    ("schwab", "schwab.com"),
+    ("vanguard", "vanguard.com"),
+    ("e*trade", "etrade.com"),
+    ("etrade", "etrade.com"),
+    ("morgan stanley", "morganstanley.com"),
+    ("td ameritrade", "tdameritrade.com"),
+    ("webull", "webull.com"),
+    ("coinbase", "coinbase.com"),
+    ("interactive brokers", "interactivebrokers.com"),
+    ("merrill", "ml.com"),
+    ("ally", "ally.com"),
+    ("tastytrade", "tastytrade.com"),
+    ("m1 finance", "m1.com"),
+    ("public.com", "public.com"),
+    ("sofi", "sofi.com"),
+    ("wells fargo", "wellsfargo.com"),
+    ("chase", "chase.com"),
+    ("citi", "citi.com"),
+    ("firstrade", "firstrade.com"),
+    ("alpaca", "alpaca.markets"),
+    ("questrade", "questrade.com"),
+    ("wealthsimple", "wealthsimple.com"),
+    ("tradestation", "tradestation.com"),
+    ("stash", "stash.com"),
+    ("betterment", "betterment.com"),
+    ("wealthfront", "wealthfront.com"),
+    ("edward jones", "edwardjones.com"),
+    ("raymond james", "raymondjames.com"),
+    ("t. rowe price", "troweprice.com"),
+    ("j.p. morgan", "jpmorgan.com"),
+    ("empower", "empower.com"),
+    ("acorns", "acorns.com"),
+    ("transamerica", "transamerica.com"),
+];
+
+pub fn institution_logo_domain(institution_name: &str) -> Option<String> {
+    let lower = institution_name.to_lowercase();
+    INSTITUTION_DOMAINS
+        .iter()
+        .find(|(needle, _)| lower.contains(needle))
+        .map(|(_, domain)| domain.to_string())
+}
+
 /// One `AccountPosition` from the `results` array of
 /// `GET /accounts/{id}/positions/all`:
 /// `{"instrument": {"kind": "stock", "symbol": "AAPL", "raw_symbol": "AAPL",
@@ -423,5 +476,24 @@ mod tests {
     fn position_without_instrument_is_skipped() {
         let v = serde_json::json!({ "units": "1" });
         assert!(position(&v).is_none());
+    }
+}
+
+#[cfg(test)]
+mod institution_logo_tests {
+    use super::institution_logo_domain;
+
+    #[test]
+    fn matches_known_institutions() {
+        assert_eq!(institution_logo_domain("Fidelity"), Some("fidelity.com".into()));
+        assert_eq!(institution_logo_domain("Transamerica"), Some("transamerica.com".into()));
+        assert_eq!(institution_logo_domain("Coinbase"), Some("coinbase.com".into()));
+        assert_eq!(institution_logo_domain("Charles Schwab"), Some("schwab.com".into()));
+        assert_eq!(institution_logo_domain("Robinhood"), Some("robinhood.com".into()));
+    }
+
+    #[test]
+    fn unknown_institution_falls_back_to_none() {
+        assert_eq!(institution_logo_domain("Some Obscure Credit Union"), None);
     }
 }
