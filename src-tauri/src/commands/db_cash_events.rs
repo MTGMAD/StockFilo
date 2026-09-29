@@ -35,7 +35,7 @@ fn ensure_manual_portfolio(conn: &rusqlite::Connection, portfolio_id: i64) -> ru
 pub struct CashEvent {
     pub id: i64,
     pub portfolio_id: i64,
-    /// "dividend" | "fee".
+    /// "dividend" | "fee" | "sale" | "interest".
     pub kind: String,
     pub ticker: Option<String>,
     /// Signed: dividends positive, fees negative. A portfolio's cash balance

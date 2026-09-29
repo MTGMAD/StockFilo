@@ -91,6 +91,7 @@ pub fn run() {
             // ── Existing market-data / browser commands ────────────────────
             commands::stocks::fetch_quotes_command,
             commands::stocks::fetch_chart_command,
+            commands::stocks::fetch_price_on_date_command,
             commands::stocks::search_tickers_command,
             commands::stocks::fetch_news_command,
             commands::stocks::fetch_upcoming_earnings_command,
@@ -141,6 +142,7 @@ pub fn run() {
             commands::db_watchlists::db_add_to_watchlist,
             commands::db_watchlists::db_remove_from_watchlist,
             commands::db_watchlists::db_set_watch_price,
+            commands::db_watchlists::db_set_watchlist_added_at,
             commands::db_watchlists::db_set_watchlist_note,
             commands::db_watchlists::db_list_favorites,
             commands::db_watchlists::db_add_favorite,

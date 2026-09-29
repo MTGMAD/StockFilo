@@ -254,7 +254,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 19);
+        assert_eq!(v, 23);
     }
 
     #[test]
@@ -402,6 +402,80 @@ mod tests {
     }
 
     #[test]
+    fn v23_cash_events_allows_interest_kind() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO cash_events (portfolio_id, kind, ticker, amount, occurred_at, created_at) \
+             VALUES (1, 'interest', NULL, 0.04, '2026-08-31', 0)",
+            [],
+        )
+        .expect("'interest' kind must be accepted by the rebuilt CHECK constraint");
+    }
+
+    #[test]
+    fn v23_preserves_existing_cash_events_and_source_sale_id_through_the_rebuild() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Bring the database to V22 only, insert a 'sale' row with a
+        // source_sale_id, then let run_all finish the rest — the column this
+        // rebuild must not drop, unlike the plain V18 seed V19's own test uses.
+        for (version, sql) in [
+            (1, MIGRATION_V1),
+            (2, MIGRATION_V2),
+            (3, MIGRATION_V3),
+            (4, MIGRATION_V4),
+            (5, MIGRATION_V5),
+            (6, MIGRATION_V6),
+            (7, MIGRATION_V7),
+            (8, MIGRATION_V8),
+            (9, MIGRATION_V9),
+            (10, MIGRATION_V10),
+            (11, MIGRATION_V11),
+            (12, MIGRATION_V12),
+            (13, MIGRATION_V13),
+            (14, MIGRATION_V14),
+            (15, MIGRATION_V15),
+            (16, MIGRATION_V16),
+            (17, MIGRATION_V17),
+            (18, MIGRATION_V18),
+            (19, MIGRATION_V19),
+            (20, MIGRATION_V20),
+            (21, MIGRATION_V21),
+            (22, MIGRATION_V22),
+        ] {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", &version).unwrap();
+        }
+
+        conn.execute(
+            "INSERT INTO sales (id, portfolio_id, ticker, shares, price_per_share, sold_at, created_at) \
+             VALUES (1, 1, 'AAPL', 10.0, 150.0, '2026-01-01', 100)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cash_events (portfolio_id, kind, ticker, amount, occurred_at, note, created_at, source_sale_id) \
+             VALUES (1, 'sale', 'AAPL', 1500.0, '2026-01-01', NULL, 100, 1)",
+            [],
+        )
+        .unwrap();
+
+        run_all(&conn).unwrap();
+
+        let (kind, amount, source_sale_id): (String, f64, i64) = conn
+            .query_row(
+                "SELECT kind, amount, source_sale_id FROM cash_events WHERE portfolio_id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "sale");
+        assert_eq!(amount, 1500.0);
+        assert_eq!(source_sale_id, 1);
+    }
+
+    #[test]
     fn v19_adds_last_import_at_to_portfolios() {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
@@ -437,7 +511,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 19);
+        assert_eq!(v, 23);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -492,7 +566,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 19);
+        assert_eq!(after, 23);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -510,7 +584,12 @@ mod tests {
         for row in rows {
             let (id, name, source, broker) = row.unwrap();
             println!("  [{id}] {name:<26} source={source:<8} broker={broker:?}");
-            assert_eq!(source, "manual", "existing portfolio was not left manual");
+            // Only a portfolio with no broker account is one the migration
+            // could have mislabeled — a real broker-linked one (added well
+            // after V14 introduced brokers at all) is correctly non-manual.
+            if broker.is_none() {
+                assert_eq!(source, "manual", "existing manual portfolio was not left manual");
+            }
         }
 
         // Idempotent against real data too.
@@ -713,6 +792,39 @@ ALTER TABLE stocks DROP COLUMN morningstar_rating;
 ALTER TABLE stocks DROP COLUMN morningstar_fetched_at;
 "#;
 
+/// V23: `cash_events.kind` gains `'interest'`.
+///
+/// The Ameriprise importer used to count INTEREST PAYMENT rows (money-market
+/// sweep interest) in its summary and then throw them away — there was
+/// nowhere to put them. Cash income from interest behaves exactly like a
+/// dividend payout (credits cash, no share count, usually no ticker), so it
+/// gets the same treatment as one rather than a new table. SQLite can't
+/// ALTER a CHECK constraint, so this is the same table-rebuild V19 used to
+/// add `'sale'`.
+const MIGRATION_V23: &str = r#"
+CREATE TABLE cash_events_new (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id   INTEGER NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('dividend', 'fee', 'sale', 'interest')),
+    ticker         TEXT,
+    amount         REAL NOT NULL,
+    occurred_at    TEXT NOT NULL,
+    note           TEXT,
+    created_at     INTEGER NOT NULL,
+    source_sale_id INTEGER
+);
+
+INSERT INTO cash_events_new (id, portfolio_id, kind, ticker, amount, occurred_at, note, created_at, source_sale_id)
+    SELECT id, portfolio_id, kind, ticker, amount, occurred_at, note, created_at, source_sale_id FROM cash_events;
+
+DROP TABLE cash_events;
+
+ALTER TABLE cash_events_new RENAME TO cash_events;
+
+CREATE INDEX IF NOT EXISTS idx_cash_events_portfolio ON cash_events(portfolio_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_cash_events_source_sale ON cash_events(source_sale_id);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -740,6 +852,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (20, MIGRATION_V20),
         (21, MIGRATION_V21),
         (22, MIGRATION_V22),
+        (23, MIGRATION_V23),
     ];
 
     let user_version: i64 =

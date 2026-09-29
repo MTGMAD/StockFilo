@@ -79,6 +79,16 @@ pub async fn fetch_chart_command(
     yahoo::fetch_chart(&ticker.to_uppercase(), &range, &interval).await
 }
 
+/// Closing price on `date` (`YYYY-MM-DD`), or the most recent trading day at
+/// or before it. `null` means Yahoo has no session in that window.
+#[tauri::command]
+pub async fn fetch_price_on_date_command(
+    ticker: String,
+    date: String,
+) -> Result<Option<f64>, String> {
+    yahoo::fetch_price_on_date(&ticker.to_uppercase(), &date).await
+}
+
 /// Fetch recent news articles for a ticker.
 #[tauri::command]
 pub async fn fetch_news_command(ticker: String, count: Option<u32>) -> Result<Vec<yahoo::NewsArticle>, String> {

@@ -1084,21 +1084,18 @@ pub async fn search_tickers(query: &str) -> Result<Vec<SearchResult>, String> {
     Ok(results)
 }
 
-/// Fetch historical chart data for a single ticker.
-/// `range` is one of: 1d, 5d, 1mo, 6mo, ytd, 1y, 5y, max
-/// `interval` is one of: 1m, 2m, 5m, 15m, 30m, 60m, 1d, 1wk, 1mo
-pub async fn fetch_chart(
-    ticker: &str,
-    range: &str,
-    interval: &str,
-) -> Result<ChartData, String> {
+/// Shared by `fetch_chart` (relative range) and `fetch_price_on_date`
+/// (absolute period1/period2 window) — Yahoo's chart endpoint accepts either
+/// form of "how far back"; everything else about the request and response is
+/// identical. `query` is the pre-built `range=..&interval=..` or
+/// `period1=..&period2=..&interval=..` portion.
+async fn fetch_chart_with_query(ticker: &str, query: &str) -> Result<ChartData, String> {
     let (client, crumb) = get_authenticated_client().await?;
 
     let url = format!(
-        "https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval={}&crumb={}",
+        "https://query1.finance.yahoo.com/v8/finance/chart/{}?{}&crumb={}",
         urlencoding::encode(ticker),
-        urlencoding::encode(range),
-        urlencoding::encode(interval),
+        query,
         urlencoding::encode(&crumb),
     );
 
@@ -1161,6 +1158,72 @@ pub async fn fetch_chart(
         previous_close: result.meta.chart_previous_close,
         current_price: result.meta.regular_market_price,
     })
+}
+
+/// Fetch historical chart data for a single ticker.
+/// `range` is one of: 1d, 5d, 1mo, 6mo, ytd, 1y, 5y, max
+/// `interval` is one of: 1m, 2m, 5m, 15m, 30m, 60m, 1d, 1wk, 1mo
+pub async fn fetch_chart(
+    ticker: &str,
+    range: &str,
+    interval: &str,
+) -> Result<ChartData, String> {
+    fetch_chart_with_query(
+        ticker,
+        &format!(
+            "range={}&interval={}",
+            urlencoding::encode(range),
+            urlencoding::encode(interval)
+        ),
+    )
+    .await
+}
+
+/// The closing price on (or the most recent trading day at or before)
+/// `date` (`YYYY-MM-DD`) — used to backfill a watchlist item's "price when
+/// added" after the person edits the added date by hand.
+///
+/// `Ok(None)` means the request succeeded but Yahoo has no session in that
+/// window (e.g. the ticker didn't exist yet) — worth telling the person
+/// plainly rather than treating it the same as a network/rate-limit error.
+pub async fn fetch_price_on_date(ticker: &str, date: &str) -> Result<Option<f64>, String> {
+    let target = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| format!("Invalid date: {date}"))?;
+    if target > chrono::Utc::now().date_naive() {
+        return Err("Date is in the future".to_string());
+    }
+
+    // A week-wide window behind the target date crosses any run of weekends
+    // and holidays; one day past it keeps the target day's own session in
+    // range regardless of how Yahoo timestamps the daily bar.
+    let period1 = (target - chrono::Duration::days(7))
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp();
+    let period2 = (target + chrono::Duration::days(1))
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp();
+
+    let data = match fetch_chart_with_query(
+        ticker,
+        &format!("period1={period1}&period2={period2}&interval=1d"),
+    )
+    .await
+    {
+        Ok(d) => d,
+        // A narrow window with no session in it (ticker didn't exist yet,
+        // was halted, etc.) is a legitimate "no data" outcome here, not a
+        // real failure — every other error still propagates.
+        Err(e) if e.contains("No chart data returned from Yahoo") => return Ok(None),
+        Err(e) => return Err(e),
+    };
+
+    // The window is tight enough that the last bar returned is already the
+    // target date's own session, or the most recent one before it.
+    Ok(data.points.last().map(|p| p.close))
 }
 
 // ── Ticker news ────────────────────────────────────────────────────────────
@@ -1657,4 +1720,37 @@ fn clean_optional_string(value: Option<String>) -> Option<String> {
     value
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod price_on_date_tests {
+    use super::fetch_price_on_date;
+
+    #[tokio::test]
+    async fn rejects_a_future_date() {
+        let far_future = (chrono::Utc::now().date_naive() + chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
+        let err = fetch_price_on_date("AAPL", &far_future)
+            .await
+            .expect_err("a future date must be rejected before any request is sent");
+        assert!(err.contains("future"));
+    }
+
+    /// Hits the real Yahoo API — not run by default (see `migrates_a_real_database_without_data_loss`
+    /// in db::migrations for the same opt-in pattern). Run with:
+    /// `cargo test --lib fetch_price_on_date_returns_a_plausible_close -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn fetch_price_on_date_returns_a_plausible_close() {
+        let ten_days_ago = (chrono::Utc::now().date_naive() - chrono::Duration::days(10))
+            .format("%Y-%m-%d")
+            .to_string();
+        let price = fetch_price_on_date("AAPL", &ten_days_ago)
+            .await
+            .expect("request should succeed")
+            .expect("AAPL should have a session within the last 10 days");
+        println!("AAPL close on/before {ten_days_ago}: {price}");
+        assert!(price > 1.0 && price < 10_000.0, "implausible price: {price}");
+    }
 }

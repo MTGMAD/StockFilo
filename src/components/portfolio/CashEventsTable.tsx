@@ -4,6 +4,24 @@ import { formatCurrency, cn } from "../../lib/utils";
 import { CashEventDialog } from "./CashEventDialog";
 import { Pencil, Trash2, Plus, TrendingUp, TrendingDown, Lock } from "lucide-react";
 
+const KIND_STYLE: Record<
+  CashEvent["kind"],
+  { label: string; badgeClass: string; down: boolean }
+> = {
+  dividend: {
+    label: "Dividend",
+    badgeClass: "bg-[var(--dividend-bg)] text-[var(--dividend-fg)]",
+    down: false,
+  },
+  interest: {
+    label: "Interest",
+    badgeClass: "bg-blue-500/10 text-blue-600",
+    down: false,
+  },
+  sale: { label: "Sale", badgeClass: "bg-positive/10 text-positive", down: false },
+  fee: { label: "Fee", badgeClass: "bg-red-500/10 text-red-600", down: true },
+};
+
 interface CashEventsTableProps {
   cashEvents: CashEvent[];
   tickers: string[];
@@ -40,6 +58,9 @@ export function CashEventsTable({
   const dividends = cashEvents
     .filter((e) => e.kind === "dividend")
     .reduce((sum, e) => sum + e.amount, 0);
+  const interest = cashEvents
+    .filter((e) => e.kind === "interest")
+    .reduce((sum, e) => sum + e.amount, 0);
   const fees = cashEvents
     .filter((e) => e.kind === "fee")
     .reduce((sum, e) => sum + e.amount, 0);
@@ -57,6 +78,14 @@ export function CashEventsTable({
               {formatCurrency(dividends)}
             </span>
           </span>
+          {interest > 0 && (
+            <span>
+              Interest{" "}
+              <span className="font-semibold text-foreground">
+                {formatCurrency(interest)}
+              </span>
+            </span>
+          )}
           <span>
             Fees{" "}
             <span className="font-semibold text-foreground">
@@ -103,12 +132,12 @@ export function CashEventsTable({
         {cashEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
             <p className="text-sm">
-              No dividends or fees recorded yet.
+              No dividends, interest or fees recorded yet.
             </p>
             <p className="text-xs max-w-sm text-center">
               Reinvested dividends already show up as purchases automatically
-              — log cash dividends (paid out, not reinvested) and account
-              fees here.
+              — log cash dividends (paid out, not reinvested), cash-sweep
+              interest and account fees here.
             </p>
             <button
               onClick={() => {
@@ -143,23 +172,15 @@ export function CashEventsTable({
                     <span
                       className={cn(
                         "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full",
-                        e.kind === "fee"
-                          ? "bg-red-500/10 text-red-600"
-                          : e.kind === "sale"
-                            ? "bg-positive/10 text-positive"
-                            : "bg-[var(--dividend-bg)] text-[var(--dividend-fg)]",
+                        KIND_STYLE[e.kind].badgeClass,
                       )}
                     >
-                      {e.kind === "fee" ? (
+                      {KIND_STYLE[e.kind].down ? (
                         <TrendingDown className="w-3 h-3" />
                       ) : (
                         <TrendingUp className="w-3 h-3" />
                       )}
-                      {e.kind === "dividend"
-                        ? "Dividend"
-                        : e.kind === "fee"
-                          ? "Fee"
-                          : "Sale"}
+                      {KIND_STYLE[e.kind].label}
                     </span>
                   </Td>
                   <Td>{e.ticker ?? "—"}</Td>

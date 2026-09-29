@@ -20,7 +20,7 @@ export interface Purchase {
 export interface CashEvent {
   id: number;
   portfolio_id: number;
-  kind: "dividend" | "fee" | "sale";
+  kind: "dividend" | "fee" | "sale" | "interest";
   ticker: string | null;
   amount: number;
   occurred_at: string; // ISO date string YYYY-MM-DD

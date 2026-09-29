@@ -66,6 +66,11 @@ interface WatchListProps {
   onRemove: (id: number) => Promise<void>;
   onReload: () => Promise<void>;
   onSetNote: (id: number, notes: string) => Promise<void>;
+  onSetAddedDate: (
+    id: number,
+    ticker: string,
+    date: string,
+  ) => Promise<number | null>;
   onPurchase: (
     ticker: string,
     shares: number,
@@ -118,6 +123,7 @@ export function WatchList({
   onRemove,
   onReload,
   onSetNote,
+  onSetAddedDate,
   onPurchase,
 }: WatchListProps) {
   const [activeTab, setActiveTab] = useState<WatchListTab>("list");
@@ -132,6 +138,17 @@ export function WatchList({
   const [detailTicker, setDetailTicker] = useState<string | null>(null);
   const [editingTarget, setEditingTarget] = useState<string | null>(null);
   const [targetDraft, setTargetDraft] = useState("");
+  const [editingAddedDateId, setEditingAddedDateId] = useState<number | null>(
+    null,
+  );
+  const [addedDateDraft, setAddedDateDraft] = useState("");
+  const [savingAddedDateId, setSavingAddedDateId] = useState<number | null>(
+    null,
+  );
+  const [addedDateError, setAddedDateError] = useState<{
+    id: number;
+    message: string;
+  } | null>(null);
   const [openNoteIds, setOpenNoteIds] = useState<Set<number>>(new Set());
   const [notesOnly, setNotesOnly] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -256,6 +273,35 @@ export function WatchList({
       if (rankDelta !== 0) return rankDelta;
       return a.ticker.localeCompare(b.ticker);
     });
+
+  /** `YYYY-MM-DD` in UTC, matching how `onSetAddedDate` interprets the date
+   *  it's given (midnight UTC) — a local-timezone conversion here could shift
+   *  the date the picker shows by a day near midnight. */
+  function toDateInputValue(unixSeconds: number): string {
+    return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
+  }
+
+  async function submitAddedDate(item: WatchlistItem) {
+    const date = addedDateDraft;
+    setEditingAddedDateId(null);
+    if (!date || date === toDateInputValue(item.created_at)) return;
+
+    setSavingAddedDateId(item.id);
+    setAddedDateError(null);
+    try {
+      const price = await onSetAddedDate(item.id, item.ticker, date);
+      if (price == null) {
+        setAddedDateError({
+          id: item.id,
+          message: "Date saved, but no price found for that day.",
+        });
+      }
+    } catch (e) {
+      setAddedDateError({ id: item.id, message: String(e) });
+    } finally {
+      setSavingAddedDateId(null);
+    }
+  }
 
   function formatAddedDate(unixSeconds: number): string {
     return new Intl.DateTimeFormat("en-US", {
@@ -1073,9 +1119,56 @@ export function WatchList({
                             </div>
                           </td>
                           <td className="px-4 py-2.5 text-right text-foreground">
-                            <span className="text-xs">
-                              {formatAddedDate(item.created_at)}
-                            </span>
+                            {editingAddedDateId === item.id ? (
+                              <input
+                                autoFocus
+                                type="date"
+                                max={toDateInputValue(
+                                  Math.floor(Date.now() / 1000),
+                                )}
+                                value={addedDateDraft}
+                                onChange={(e) =>
+                                  setAddedDateDraft(e.target.value)
+                                }
+                                onBlur={() => submitAddedDate(item)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter")
+                                    (e.target as HTMLInputElement).blur();
+                                  if (e.key === "Escape")
+                                    setEditingAddedDateId(null);
+                                }}
+                                className="w-32 text-right rounded border border-primary bg-background px-1.5 py-0.5 text-xs outline-none"
+                              />
+                            ) : (
+                              <Tooltip
+                                text={
+                                  addedDateError?.id === item.id
+                                    ? addedDateError.message
+                                    : "Click to change the added date — updates the price it's since changed from too"
+                                }
+                              >
+                                <button
+                                  onClick={() => {
+                                    setAddedDateError(null);
+                                    setAddedDateDraft(
+                                      toDateInputValue(item.created_at),
+                                    );
+                                    setEditingAddedDateId(item.id);
+                                  }}
+                                  disabled={savingAddedDateId === item.id}
+                                  className={cn(
+                                    "text-xs rounded px-1.5 py-0.5 transition-colors hover:bg-muted",
+                                    addedDateError?.id === item.id
+                                      ? "text-amber-500"
+                                      : "text-foreground",
+                                  )}
+                                >
+                                  {savingAddedDateId === item.id
+                                    ? "Saving…"
+                                    : formatAddedDate(item.created_at)}
+                                </button>
+                              </Tooltip>
+                            )}
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             {watchPrice != null && currentPrice != null ? (

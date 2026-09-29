@@ -5,10 +5,12 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   setWatchlistWatchPrice,
+  setWatchlistAddedAt,
   updateWatchlistNote,
   migrateLegacyWatchlistNotes,
   getCachedStocks,
   fetchAndCachePrices,
+  fetchPriceOnDate,
 } from "../lib/db";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -150,5 +152,27 @@ export function useWatchlist(watchlistId: number | null) {
     );
   }, []);
 
-  return { items, stocks, loading, error, add, remove, setNote, reload: loadAll };
+  /**
+   * Change a row's added date by hand. Looks up that date's close for
+   * `ticker` first (so "since added" is never stale after a date edit),
+   * persists date and price together, and reflects both locally — same
+   * no-reload-needed reasoning as `setNote` above. Returns the looked-up
+   * price (`null` if Yahoo had no session that day) so the caller can tell
+   * the person their date was saved but the price is unknown.
+   */
+  const setAddedAt = useCallback(async (id: number, ticker: string, date: string) => {
+    const addedAt = Math.floor(new Date(`${date}T00:00:00Z`).getTime() / 1000);
+    const watchPrice = await fetchPriceOnDate(ticker, date);
+    await setWatchlistAddedAt(id, addedAt, watchPrice);
+    setItems((prev) =>
+      prev.map((item) =>
+        item.id === id
+          ? { ...item, created_at: addedAt, watch_price: watchPrice }
+          : item,
+      ),
+    );
+    return watchPrice;
+  }, []);
+
+  return { items, stocks, loading, error, add, remove, setNote, setAddedAt, reload: loadAll };
 }

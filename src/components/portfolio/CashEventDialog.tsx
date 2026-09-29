@@ -107,6 +107,18 @@ export function CashEventDialog({
               </button>
               <button
                 type="button"
+                onClick={() => setKind("interest")}
+                className={cn(
+                  "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
+                  kind === "interest"
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Interest
+              </button>
+              <button
+                type="button"
                 onClick={() => setKind("fee")}
                 className={cn(
                   "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
@@ -128,7 +140,13 @@ export function CashEventDialog({
               list="cash-event-tickers"
               value={ticker}
               onChange={(e) => setTicker(e.target.value.toUpperCase())}
-              placeholder={kind === "dividend" ? "e.g. VTI" : "Account fee, no ticker"}
+              placeholder={
+                kind === "dividend"
+                  ? "e.g. VTI"
+                  : kind === "interest"
+                    ? "Cash sweep interest, usually no ticker"
+                    : "Account fee, no ticker"
+              }
               autoComplete="off"
             />
             <datalist id="cash-event-tickers">

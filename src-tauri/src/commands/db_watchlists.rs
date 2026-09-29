@@ -198,6 +198,28 @@ pub fn db_set_watch_price(
     })
 }
 
+/// Change a watchlist row's added date by hand, and its "price when added"
+/// along with it — unlike `db_set_watch_price` above (a one-time backfill,
+/// guarded so it never overwrites a real value), this always writes both
+/// fields, since editing the date makes the old price wrong by definition.
+/// `watch_price: None` means the caller looked up that date and Yahoo had no
+/// session in it — recorded as unknown rather than left stale.
+#[tauri::command]
+pub fn db_set_watchlist_added_at(
+    id: i64,
+    added_at: i64,
+    watch_price: Option<f64>,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE watchlist SET created_at = ?1, watch_price = ?2 WHERE id = ?3",
+            params![added_at, watch_price, id],
+        )?;
+        Ok(())
+    })
+}
+
 /// Set or clear a watchlist row's note. Blank/whitespace-only text clears it
 /// (and its timestamp) rather than storing an empty string, matching how
 /// `hasNote` on the frontend already treats "no note" as the absence of any

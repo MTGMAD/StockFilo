@@ -313,6 +313,30 @@ export async function setWatchlistWatchPrice(
 }
 
 /**
+ * Change a watchlist row's added date and its "price when added" together —
+ * unlike `setWatchlistWatchPrice` above (a one-time backfill that never
+ * overwrites a real price), this always writes both. `watchPrice: null`
+ * records the price as unknown rather than leaving the old one stale, for a
+ * date Yahoo has no session in.
+ */
+export async function setWatchlistAddedAt(
+  id: number,
+  addedAt: number,
+  watchPrice: number | null,
+): Promise<void> {
+  return invoke("db_set_watchlist_added_at", { id, addedAt, watchPrice });
+}
+
+/** Closing price on `date` (`YYYY-MM-DD`), or null if Yahoo has no session
+ *  at or before it (e.g. the ticker didn't exist yet). */
+export async function fetchPriceOnDate(
+  ticker: string,
+  date: string,
+): Promise<number | null> {
+  return invoke("fetch_price_on_date_command", { ticker, date });
+}
+
+/**
  * Set or clear a watchlist row's note. Blank/whitespace-only text clears it
  * (see `db_set_watchlist_note`), so callers don't need to special-case an
  * empty string themselves.
@@ -907,15 +931,16 @@ export async function importPurchasesXlsx(
 
 // ── Ameriprise CSV Import ─────────────────────────────────────────────────
 // Handles the "Account Activity" CSV exported from Ameriprise SPS accounts.
-// Imports five kinds of completed rows:
+// Imports six kinds of completed rows:
 //   - BUY and dividend/capital-gain REINVESTMENTS → purchases (share acquisitions)
 //   - SELL → sales (reduces the position, credits proceeds to cash)
 //   - cash DIVIDEND / CAP GAIN payouts (not reinvested) → cash_events (kind: dividend)
 //   - FEE rows (advisory, account, etc.) → cash_events (kind: fee)
+//   - INTEREST PAYMENT rows (money-market sweep interest) → cash_events (kind: interest)
 // Rows under a "Pending Transactions" section are never imported (they
 // haven't settled and can still change or cancel) — they're only counted for
-// the result summary, same as JOURNAL transfers and INTEREST payments, which
-// this app doesn't track anywhere yet.
+// the result summary, same as JOURNAL transfers, which this app doesn't
+// track anywhere yet.
 
 export async function importAmeripriseCSV(
   portfolioId: number,
@@ -1068,13 +1093,15 @@ export async function importAmeripriseCSV(
       }
 
       imported++;
-    } else if (isCashDividend || isFee) {
-      // Fees and cash dividends have no share count — usually no ticker at
-      // all — so only the amount and description classify the row.
+    } else if (isCashDividend || isFee || isInterest) {
+      // Fees, cash dividends and interest have no share count — usually no
+      // ticker at all (interest is paid on the cash sweep, symbol 9999840,
+      // already excluded by hasSymbol above) — so only the amount and
+      // description classify the row.
       const magnitude = parseFloat(rawAmount.replace(/[$,()\-]/g, ""));
       if (isNaN(magnitude) || magnitude <= 0) continue;
 
-      const kind: CashEvent["kind"] = isFee ? "fee" : "dividend";
+      const kind: CashEvent["kind"] = isFee ? "fee" : isInterest ? "interest" : "dividend";
       const amount = kind === "fee" ? -magnitude : magnitude;
       const ticker = hasSymbol ? symbol : null;
 
@@ -1117,8 +1144,6 @@ export async function importAmeripriseCSV(
       imported++;
     } else if (isJournal) {
       bump("deposit/transfer");
-    } else if (isInterest) {
-      bump("interest payment");
     } else if (rawAmount) {
       // Has a real amount but matched none of the known patterns — still
       // worth naming instead of vanishing.
