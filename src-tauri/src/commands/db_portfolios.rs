@@ -127,11 +127,17 @@ pub fn db_delete_portfolio(id: i64, state: State<'_, DbManager>) -> Result<(), S
     })
 }
 
+/// Toggles one portfolio's star, independent of every other row's — more
+/// than one portfolio can be starred at a time (the sidebar keeps starred
+/// rows visible even with the Portfolios section collapsed, so starring is
+/// "pin this" now, not "pick the one default").
 #[tauri::command]
 pub fn db_star_portfolio(id: i64, state: State<'_, DbManager>) -> Result<(), String> {
     state.with_conn(|conn| {
-        conn.execute("UPDATE portfolios SET is_starred = 0", [])?;
-        conn.execute("UPDATE portfolios SET is_starred = 1 WHERE id = ?1", params![id])?;
+        conn.execute(
+            "UPDATE portfolios SET is_starred = 1 - is_starred WHERE id = ?1",
+            params![id],
+        )?;
         Ok(())
     })
 }

@@ -235,6 +235,15 @@ export function Sidebar({
     dragId != null && dropIndex === idx && !isNoopDrop(dragId, idx);
   const dropLine = <div className="mx-2 h-0.5 rounded-full bg-primary" />;
 
+  // Collapsing the Portfolios section hides the full list, but a starred
+  // row stays pinned in view — reordering only makes sense against the full
+  // list, so drag affordances below are gated on this too, not just which
+  // rows render.
+  const showFullList = collapsed || portfoliosOpen;
+  const visiblePortfolios = showFullList
+    ? portfolios
+    : portfolios.filter((p) => p.is_starred === 1);
+
   return (
     <aside
       style={{ width: collapsed ? COLLAPSED_WIDTH : width }}
@@ -309,15 +318,15 @@ export function Sidebar({
           <div className="my-1 border-t border-border/50" />
         )}
 
-        {(collapsed || portfoliosOpen) && portfolios.map((p, idx) => (
+        {visiblePortfolios.map((p, idx) => (
           <Fragment key={p.id}>
-          {showDropLine(idx) && dropLine}
+          {showFullList && showDropLine(idx) && dropLine}
           <div
             ref={(el) => {
               if (el) rowRefs.current.set(p.id, el);
               else rowRefs.current.delete(p.id);
             }}
-            onPointerDown={(e) => startRowPress(e, p.id)}
+            onPointerDown={showFullList ? (e) => startRowPress(e, p.id) : undefined}
             onClickCapture={(e) => {
               if (suppressClickRef.current) {
                 e.stopPropagation();
@@ -398,7 +407,11 @@ export function Sidebar({
                 {/* Star button */}
                 <button
                   onClick={(e) => { e.stopPropagation(); onStarPortfolio(p.id); }}
-                  title={p.is_starred ? "Default portfolio (starred)" : "Set as default"}
+                  title={
+                    p.is_starred
+                      ? "Starred — stays visible when Portfolios is collapsed"
+                      : "Star to keep visible when Portfolios is collapsed"
+                  }
                   className={cn(
                     "pl-2 pr-1 py-2 shrink-0 transition-colors",
                     p.is_starred === 1
@@ -420,15 +433,22 @@ export function Sidebar({
                 >
                   <span className="truncate">{p.name}</span>
                   {/* Account-type chip, so a mirrored brokerage account is
-                      never mistaken for one you maintain by hand. */}
+                      never mistaken for one you maintain by hand. Its usual
+                      kind-tinted colors (amber/blue/green) wash out against
+                      the highlighted row's own green background, so the
+                      active row gets a plain white-on-translucent chip
+                      instead — only while active; unselected rows keep the
+                      kind color unchanged. */}
                   {p.broker_account_id != null &&
                     brokerBadges?.[p.broker_account_id] && (
                       <span
                         className={cn(
                           "shrink-0 text-[9px] font-semibold px-1 py-px rounded uppercase tracking-wide",
-                          accountKindStyle(
-                            brokerBadges[p.broker_account_id].kind,
-                          ).chip,
+                          view === "portfolio" && activePortfolioId === p.id
+                            ? "bg-white/20 text-white"
+                            : accountKindStyle(
+                                brokerBadges[p.broker_account_id].kind,
+                              ).chip,
                         )}
                       >
                         {brokerBadges[p.broker_account_id].label}
@@ -438,12 +458,14 @@ export function Sidebar({
 
                 {/* Action buttons (show on hover) */}
                 <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pr-1 gap-0.5">
-                  <span
-                    className="p-0.5 cursor-grab active:cursor-grabbing"
-                    title="Drag to reorder"
-                  >
-                    <GripVertical className="w-3 h-3" />
-                  </span>
+                  {showFullList && (
+                    <span
+                      className="p-0.5 cursor-grab active:cursor-grabbing"
+                      title="Drag to reorder"
+                    >
+                      <GripVertical className="w-3 h-3" />
+                    </span>
+                  )}
                   <button
                     onClick={(e) => { e.stopPropagation(); startEdit(p); }}
                     className={cn(
@@ -476,7 +498,7 @@ export function Sidebar({
           </div>
           </Fragment>
         ))}
-        {(collapsed || portfoliosOpen) && showDropLine(portfolios.length) && dropLine}
+        {showFullList && showDropLine(portfolios.length) && dropLine}
 
         {/* New portfolio button / input — part of the section, so it hides
             with the list rather than floating under a collapsed header. */}

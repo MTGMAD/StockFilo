@@ -5,9 +5,6 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
-    "sql:allow-execute",
-    "sql:allow-load",
-    "sql:allow-select",
     "dialog:allow-save",
     "dialog:allow-open",
     "fs:default",

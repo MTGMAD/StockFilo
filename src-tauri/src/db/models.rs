@@ -1,5 +1,5 @@
-// Database row shapes — kept here for reference.
-// Actual SQL queries are executed from the frontend via tauri-plugin-sql.
+// Database row shapes — kept here for reference. Actual SQL queries live in
+// commands/db_*.rs, executed via rusqlite through DbManager.
 
 #![allow(dead_code)]
 

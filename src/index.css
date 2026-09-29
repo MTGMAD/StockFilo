@@ -59,10 +59,14 @@
   --background: hsl(40 35% 96%);
   --foreground: hsl(30 18% 14%);
   --muted: hsl(38 22% 90%);
-  --muted-foreground: hsl(30 10% 46%);
+  /* 32% lightness (was 46%) — the old value read at 3.81:1 against the
+     sidebar background, below WCAG AA's 4.5:1 minimum for normal text. */
+  --muted-foreground: hsl(30 10% 32%);
   --border: hsl(36 18% 84%);
   --primary: hsl(142 32% 38%);
-  --primary-foreground: hsl(0 0% 98%);
+  /* Pure white (was 98% lightness) — the highlighted/active portfolio row
+     uses this for its name text; the old value cleared WCAG AA by only 0.01. */
+  --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(38 22% 90%);
   --secondary-foreground: hsl(30 18% 18%);
   --accent: hsl(38 20% 87%);

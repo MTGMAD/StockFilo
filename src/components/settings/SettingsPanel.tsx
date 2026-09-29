@@ -282,7 +282,7 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
             <h2 className="text-sm font-semibold text-foreground">About</h2>
           </div>
           <div className="flex-1">
-            <p className="text-sm text-muted-foreground">Stockfolio v0.1.0 — Personal stock portfolio tracker.</p>
+            <p className="text-sm text-muted-foreground">Stockfolio v0.1.1 — Personal stock portfolio tracker.</p>
           </div>
         </div>
 
