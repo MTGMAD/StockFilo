@@ -220,14 +220,19 @@ export default function App() {
 
   const watchlist = useWatchlist(activeWatchlistId);
 
-  // Account-type chips for the sidebar, resolved from the live connection list.
+  // Account-type chips (and logo domain) for the sidebar, resolved from the
+  // live connection list.
   const brokerBadges = useMemo(() => {
-    const map: Record<number, { label: string; kind: string }> = {};
+    const map: Record<
+      number,
+      { label: string; kind: string; domain: string | null }
+    > = {};
     for (const c of connections) {
       for (const a of c.accounts) {
         map[a.id] = {
           label: c.environment_label,
           kind: c.environment_kind,
+          domain: c.provider_logo_domain,
         };
       }
     }

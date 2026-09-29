@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { AppLogoMark } from "../shared/AppLogoMark";
+import { BrokerLogo } from "../shared/BrokerLogo";
 
 const SIDEBAR_WIDTH_KEY = "stockfolio-sidebar-width";
 const COLLAPSED_WIDTH = 56; // matches w-14
@@ -45,7 +46,10 @@ interface SidebarProps {
   onReorderPortfolios: (ids: number[]) => Promise<void>;
   newPortfolioTrigger?: number;
   /** Account-type chip per linked portfolio, keyed by broker_account_id. */
-  brokerBadges?: Record<number, { label: string; kind: string }>;
+  brokerBadges?: Record<
+    number,
+    { label: string; kind: string; domain: string | null }
+  >;
   /** Jump to Settings and open the brokerage connect form. */
   onAddBrokerage?: () => void;
 }
@@ -235,11 +239,12 @@ export function Sidebar({
     dragId != null && dropIndex === idx && !isNoopDrop(dragId, idx);
   const dropLine = <div className="mx-2 h-0.5 rounded-full bg-primary" />;
 
-  // Collapsing the Portfolios section hides the full list, but a starred
-  // row stays pinned in view — reordering only makes sense against the full
+  // Collapsing the Portfolios section — or collapsing the whole sidebar
+  // down to its icon rail — hides the full list, but a starred row stays
+  // pinned in view either way. Reordering only makes sense against the full
   // list, so drag affordances below are gated on this too, not just which
   // rows render.
-  const showFullList = collapsed || portfoliosOpen;
+  const showFullList = !collapsed && portfoliosOpen;
   const visiblePortfolios = showFullList
     ? portfolios
     : portfolios.filter((p) => p.is_starred === 1);
@@ -314,7 +319,7 @@ export function Sidebar({
             />
           </button>
         )}
-        {collapsed && portfolios.length > 0 && (
+        {collapsed && visiblePortfolios.length > 0 && (
           <div className="my-1 border-t border-border/50" />
         )}
 
@@ -381,7 +386,9 @@ export function Sidebar({
                 </div>
               </div>
             ) : collapsed ? (
-              // Collapsed: show briefcase icon, highlight if active
+              // Collapsed: show the brokerage's own logo for a broker-linked
+              // portfolio (same lookup Header/Settings already use), or the
+              // plain briefcase icon for a manual one — highlight if active.
               <button
                 onClick={() => { onSelectPortfolio(p.id); onNavigate("portfolio"); }}
                 title={p.name}
@@ -392,7 +399,16 @@ export function Sidebar({
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}
               >
-                <Landmark className="w-4 h-4 shrink-0" />
+                {p.broker_account_id != null &&
+                brokerBadges?.[p.broker_account_id] ? (
+                  <BrokerLogo
+                    domain={brokerBadges[p.broker_account_id].domain}
+                    name={p.name}
+                    className="w-5 h-5"
+                  />
+                ) : (
+                  <Landmark className="w-4 h-4 shrink-0" />
+                )}
               </button>
             ) : (
               // Expanded: full portfolio row

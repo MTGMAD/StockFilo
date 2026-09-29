@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark, Network } from "lucide-react";
+import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark, Network, Settings } from "lucide-react";
 import { clearAllPurchases } from "../../lib/db";
 import { StorageSettings } from "./StorageSettings";
 import { BrokerSettings } from "./BrokerSettings";
 import { SnapTradeSettings } from "./SnapTradeSettings";
+
+type SettingsTab = "system" | "brokerage" | "storage";
 
 interface SettingsPanelProps {
   theme: Theme;
@@ -44,6 +46,16 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<SettingsTab>("system");
+
+  // Jumping here from "Add Brokerage" elsewhere in the app should land on
+  // the tab that actually has the form — same trigger BrokerSettings itself
+  // already watches to auto-open it.
+  useEffect(() => {
+    if (openBrokerFormTrigger && openBrokerFormTrigger > 0) {
+      setActiveTab("brokerage");
+    }
+  }, [openBrokerFormTrigger]);
 
   async function handleClearAll() {
     setClearing(true);
@@ -61,9 +73,55 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
   }
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="h-full flex flex-col">
+      {/* Tab bar */}
+      <div className="flex items-center border-b border-border bg-background shrink-0 px-6">
+        <button
+          type="button"
+          onClick={() => setActiveTab("system")}
+          className={cn(
+            "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+            activeTab === "system"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Settings className="w-4 h-4" />
+          System
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("brokerage")}
+          className={cn(
+            "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+            activeTab === "brokerage"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Landmark className="w-4 h-4" />
+          Brokerage
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("storage")}
+          className={cn(
+            "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+            activeTab === "storage"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Database className="w-4 h-4" />
+          Storage &amp; Sync
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
       <div className="p-6 max-w-2xl space-y-0">
 
+        {activeTab === "system" && (
+        <>
         {/* Appearance */}
         <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
           <div className="min-w-0 shrink-0 w-48">
@@ -233,7 +291,11 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
             )}
           </div>
         </div>
+        </>
+        )}
 
+        {activeTab === "brokerage" && (
+        <>
         {/* Brokerage Accounts */}
         <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
           <div className="min-w-0 shrink-0 w-48 pt-0.5">
@@ -249,7 +311,7 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
         </div>
 
         {/* SnapTrade */}
-        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+        <div className="flex items-start justify-between gap-8 py-5">
           <div className="min-w-0 shrink-0 w-48 pt-0.5">
             <div className="flex items-center gap-2">
               <Network className="w-4 h-4 text-muted-foreground" />
@@ -261,9 +323,13 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
             <SnapTradeSettings onConnectionsChanged={onBrokersChanged} />
           </div>
         </div>
+        </>
+        )}
 
+        {activeTab === "storage" && (
+        <>
         {/* Storage & Sync */}
-        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+        <div className="flex items-start justify-between gap-8 py-5">
           <div className="min-w-0 shrink-0 w-48 pt-0.5">
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-muted-foreground" />
@@ -275,7 +341,11 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
             <StorageSettings syncTick={syncTick} onConfigSaved={onConfigSaved} />
           </div>
         </div>
+        </>
+        )}
 
+        {activeTab === "system" && (
+        <>
         {/* About */}
         <div className="flex items-start justify-between gap-8 py-5">
           <div className="min-w-0 shrink-0 w-48">
@@ -285,7 +355,10 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
             <p className="text-sm text-muted-foreground">Stockfolio v0.1.1 — Personal stock portfolio tracker.</p>
           </div>
         </div>
+        </>
+        )}
 
+      </div>
       </div>
     </div>
   );
