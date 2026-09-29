@@ -13,10 +13,12 @@
  *                        usePortfolio.ts, moved here unchanged so both
  *                        callers can share it.
  *
- *   buildFromPositions — broker portfolios. Every money figure comes straight
- *                        from the brokerage. Nothing is recomputed, and a
- *                        value the broker omits stays null rather than being
- *                        inferred.
+ *   buildFromPositions — broker portfolios. Quantity, cost basis and every
+ *                        other detail come straight from the brokerage
+ *                        always. Price is the brokerage's own only when it
+ *                        quotes the market live (see `providesPricing`
+ *                        below); an aggregator's price is treated the same
+ *                        way a manual portfolio's is, priced from Yahoo.
  */
 import type { BrokerPosition, Purchase, Sale, Stock, TickerSummary } from "../types";
 
@@ -102,17 +104,24 @@ export function buildFromPurchases(
 /**
  * Turn broker-reported positions into summaries.
  *
- * Ownership of each field is deliberate: the brokerage owns everything about
- * the position and its price, so totals always match what the broker shows —
- * whenever the broker actually reports a price. Some brokers (seen with
- * Alpaca outside market hours, or on certain data plans) omit `current_price`
- * entirely while still reporting `change_today`; leaving the row blank in
- * that case is strictly worse than the one case this file otherwise avoids —
- * so when, and only when, the broker gives no price at all, price *and* its
- * percent change fall back together to the same Yahoo cache a manual
- * portfolio already uses, recomputed as one consistent pair rather than
- * pairing a broker number with a Yahoo one for the same figure. The broker's
- * own numbers are used exactly as reported the moment it reports any.
+ * `providesPricing` (from the provider's descriptor, `false` for SnapTrade,
+ * `true` for Alpaca) decides who owns price for this batch:
+ *
+ *   true  — the brokerage quotes the market live itself, so totals always
+ *           match what it shows. Yahoo only rescues a position where the
+ *           broker reports no price at all (seen with Alpaca outside market
+ *           hours, or on certain data plans) — price *and* its percent
+ *           change fall back together to the same Yahoo cache a manual
+ *           portfolio uses, recomputed as one consistent pair rather than
+ *           pairing a broker number with a Yahoo one for the same figure.
+ *
+ *   false — the provider is an aggregator (SnapTrade) whose own
+ *           `current_price` is only as fresh as the last brokerage sync, so
+ *           Yahoo's live feed is preferred whenever it can quote the ticker;
+ *           the broker's price is used only for symbols Yahoo can't price
+ *           (options, funds identified by CUSIP, etc). Everything else about
+ *           the position — quantity, cost basis, cash, transactions — still
+ *           comes from the broker either way.
  *
  * Yahoo also supplies reference data no broker publishes — company name,
  * asset type, analyst target, dividend yield — read from the same `stocks`
@@ -125,8 +134,10 @@ export function buildFromPurchases(
 export function buildFromPositions(
   positions: BrokerPosition[],
   stocks: Stock[],
+  providesPricing: boolean,
 ): TickerSummary[] {
   const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
+  const now = Math.floor(Date.now() / 1000);
 
   return positions.map((p) => {
     // Options and some crypto have no Yahoo row; fall back to the broker's own
@@ -142,10 +153,15 @@ export function buildFromPositions(
       p.cost_basis ??
       (p.avg_entry_price != null ? p.avg_entry_price * p.qty : null);
 
-    // Only when the broker has nothing — never to second-guess a price it did
-    // report.
-    const usingFallbackPrice = p.current_price == null && stock?.last_price != null;
-    const currentPrice = p.current_price ?? stock?.last_price ?? null;
+    // A live-quoting broker only gets second-guessed when it has nothing.
+    // An aggregator's own number is the one being second-guessed instead,
+    // whenever Yahoo actually has a quote for this ticker.
+    const usingFallbackPrice = providesPricing
+      ? p.current_price == null && stock?.last_price != null
+      : stock?.last_price != null;
+    const currentPrice = usingFallbackPrice
+      ? (stock?.last_price ?? null)
+      : (p.current_price ?? null);
 
     const marketValue = usingFallbackPrice
       ? (currentPrice != null ? currentPrice * p.qty : null)
@@ -195,12 +211,19 @@ export function buildFromPositions(
       marketValue,
       pnlDollar,
       pnlPercent,
-      // Freshness is the position snapshot, not the Yahoo reference fetch —
-      // using stocks.last_fetched_at here would show "stale" while prices are
-      // in fact current to the second.
-      isStale:
-        Math.floor(Date.now() / 1000) - p.snapshot_at > STALE_THRESHOLD_SECONDS,
-      lastFetchedAt: p.snapshot_at,
+      // Freshness follows whichever source actually priced this row. When
+      // the broker's own number is in play (a live-quoting broker, or a
+      // symbol Yahoo can't price), the position snapshot is what's current;
+      // when Yahoo priced it instead, its own fetch time is what's current —
+      // using the broker's stale sync time there would flag a live price as
+      // "stale".
+      isStale: usingFallbackPrice
+        ? stock?.last_fetched_at == null ||
+          now - stock.last_fetched_at > STALE_THRESHOLD_SECONDS
+        : now - p.snapshot_at > STALE_THRESHOLD_SECONDS,
+      lastFetchedAt: usingFallbackPrice
+        ? (stock?.last_fetched_at ?? p.snapshot_at)
+        : p.snapshot_at,
       quoteType: stock?.quote_type ?? assetClassToQuoteType(p.asset_class),
       dailyChangePct,
       // Sourced from Yahoo even for broker positions now, so the extended-

@@ -160,6 +160,7 @@ export default function App() {
   const broker = useBrokerPortfolio(
     isBroker ? (activePortfolio?.broker_account_id ?? null) : null,
     isBroker ? brokerConnectionId : null,
+    brokerConnection?.provides_pricing ?? true,
   );
 
   // From here down the views cannot tell the two apart: both produce

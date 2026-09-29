@@ -349,6 +349,9 @@ export interface BrokerConnectionInfo {
   provider_name: string;
   /** Domain for the brokerage icon, declared by the provider. */
   provider_logo_domain: string | null;
+  /** Whether the provider quotes its own holdings live. False means these
+   *  positions are priced from Yahoo instead, on its own timer. */
+  provides_pricing: boolean;
   environment: string;
   /** Display label for the account type, e.g. "Margin". */
   environment_label: string;

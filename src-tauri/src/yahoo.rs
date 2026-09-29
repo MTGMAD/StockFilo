@@ -3,8 +3,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration, Instant};
 
 // Match the user-agent to the OS TLS fingerprint to avoid Cloudflare bot detection.
 #[cfg(target_os = "macos")]
@@ -262,9 +263,76 @@ pub struct ChartData {
     pub current_price: Option<f64>,
 }
 
+/// How long a session (cookies + crumb) is reused before re-authenticating.
+/// Every caller in this file used to pay Yahoo's two-request handshake (a
+/// page load for session cookies, then a crumb lookup) on every single call;
+/// with several pollers now hitting Yahoo on their own timers, that added up
+/// to enough handshake traffic to trip Yahoo's rate limiting. The actual
+/// crumb is long-lived in practice, so caching it process-wide is a plain
+/// reduction in request volume, not a behavior change.
+const AUTH_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+
+struct AuthSession {
+    client: Client,
+    crumb: String,
+    fetched_at: Instant,
+}
+
+static AUTH_CACHE: OnceLock<Mutex<Option<AuthSession>>> = OnceLock::new();
+
+fn auth_cache() -> &'static Mutex<Option<AuthSession>> {
+    AUTH_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Drop the cached session so the next call re-authenticates — used when a
+/// request made with the cached crumb is rejected, so a revoked crumb heals
+/// itself on the next call rather than failing for the rest of its TTL.
+async fn invalidate_authenticated_client() {
+    *auth_cache().lock().await = None;
+}
+
+/// How long every Yahoo call backs off after Yahoo itself answers with 429.
+/// Several independent pollers (manual and broker portfolios, charts, news)
+/// share this one process, so one 429 means all of them are rate-limited —
+/// this stops every one of them from immediately retrying and prolonging it.
+const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(2 * 60);
+
+static RATE_LIMITED_UNTIL: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+
+fn rate_limited_until() -> &'static Mutex<Option<Instant>> {
+    RATE_LIMITED_UNTIL.get_or_init(|| Mutex::new(None))
+}
+
+async fn note_rate_limited() {
+    *rate_limited_until().lock().await = Some(Instant::now() + RATE_LIMIT_COOLDOWN);
+}
+
+/// `Some(remaining)` while still inside a cooldown noted by `note_rate_limited`.
+async fn rate_limit_remaining() -> Option<Duration> {
+    let guard = rate_limited_until().lock().await;
+    guard.and_then(|until| until.checked_duration_since(Instant::now()))
+}
+
 /// Build a reqwest client with a cookie jar, obtain a Yahoo crumb token,
-/// and return the authenticated (client, crumb) pair.
+/// and return the authenticated (client, crumb) pair — reused across calls
+/// within `AUTH_CACHE_TTL` rather than re-authenticated every time.
 async fn get_authenticated_client() -> Result<(Client, String), String> {
+    if let Some(remaining) = rate_limit_remaining().await {
+        return Err(format!(
+            "Yahoo Finance rate-limited this app recently; waiting {}s before trying again",
+            remaining.as_secs()
+        ));
+    }
+
+    {
+        let cached = auth_cache().lock().await;
+        if let Some(session) = cached.as_ref() {
+            if session.fetched_at.elapsed() < AUTH_CACHE_TTL {
+                return Ok((session.client.clone(), session.crumb.clone()));
+            }
+        }
+    }
+
     let jar = Arc::new(Jar::default());
     let client = Client::builder()
         .user_agent(USER_AGENT)
@@ -289,7 +357,11 @@ async fn get_authenticated_client() -> Result<(Client, String), String> {
         .map_err(|e| format!("Failed to request crumb: {e}"))?;
 
     if !crumb_resp.status().is_success() {
-        return Err(format!("Crumb request returned status {}", crumb_resp.status()));
+        let status = crumb_resp.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            note_rate_limited().await;
+        }
+        return Err(format!("Crumb request returned status {status}"));
     }
 
     let crumb = crumb_resp
@@ -300,6 +372,12 @@ async fn get_authenticated_client() -> Result<(Client, String), String> {
     if crumb.is_empty() || crumb.contains("<!DOCTYPE") || crumb.contains('<') {
         return Err("Received invalid crumb from Yahoo Finance".to_string());
     }
+
+    *auth_cache().lock().await = Some(AuthSession {
+        client: client.clone(),
+        crumb: crumb.clone(),
+        fetched_at: Instant::now(),
+    });
 
     Ok((client, crumb))
 }
@@ -387,7 +465,14 @@ pub async fn fetch_quotes(
 
         if !resp.status().is_success() {
             let status = resp.status();
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                note_rate_limited().await;
+            }
             let body = resp.text().await.unwrap_or_default();
+            // A cached crumb Yahoo has since revoked looks the same as any
+            // other failure here — drop it so the next poll re-authenticates
+            // instead of failing for the rest of the cache's TTL.
+            invalidate_authenticated_client().await;
             return Err(format!(
                 "Yahoo Finance returned HTTP {status} for [{raw_symbols}]: {body}"
             ));
@@ -1025,6 +1110,9 @@ pub async fn fetch_chart(
 
     if !resp.status().is_success() {
         let status = resp.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            note_rate_limited().await;
+        }
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("Yahoo chart API returned HTTP {status}: {body}"));
     }
@@ -1109,6 +1197,16 @@ pub async fn fetch_news(ticker: &str, count: u32) -> Result<Vec<NewsArticle>, St
         return Ok(vec![]);
     }
 
+    // News hits the same query2.finance.yahoo.com host as quotes and charts,
+    // so a rate limit noted by either of those applies here too — skip
+    // another doomed request rather than adding to the block.
+    if let Some(remaining) = rate_limit_remaining().await {
+        return Err(format!(
+            "Yahoo Finance rate-limited this app recently; waiting {}s before trying again",
+            remaining.as_secs()
+        ));
+    }
+
     let client = Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(10))
@@ -1166,6 +1264,9 @@ async fn fetch_news_from_search(
 
     if !resp.status().is_success() {
         let status = resp.status();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            note_rate_limited().await;
+        }
         let body = resp.text().await.unwrap_or_default();
         return Err(format!("Yahoo news search returned HTTP {status}: {body}"));
     }

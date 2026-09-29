@@ -49,6 +49,9 @@ pub struct BrokerConnectionInfo {
     pub provider_name: String,
     /// Domain for the brokerage icon, declared by the provider.
     pub provider_logo_domain: Option<String>,
+    /// Whether the provider quotes its own holdings live. False means the
+    /// frontend prices these positions from Yahoo instead, on its own timer.
+    pub provides_pricing: bool,
     pub environment: String,
     /// Display label for the account type, e.g. "Margin" or "Paper".
     pub environment_label: String,
@@ -293,6 +296,9 @@ pub fn broker_list_connections(
             let supports_orders = Provider::from_id(&provider)
                 .map(|p| p.descriptor().supports_orders)
                 .unwrap_or(false);
+            let provides_pricing = Provider::from_id(&provider)
+                .map(|p| p.descriptor().provides_pricing)
+                .unwrap_or(true);
             let environment: String = r.get(2)?;
             let environment_label = env_label(&provider, &environment);
             let environment_kind = env_kind(&provider, &environment);
@@ -301,6 +307,7 @@ pub fn broker_list_connections(
                 provider,
                 provider_name,
                 provider_logo_domain,
+                provides_pricing,
                 environment,
                 environment_label,
                 environment_kind,

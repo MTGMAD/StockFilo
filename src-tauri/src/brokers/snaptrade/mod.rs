@@ -108,7 +108,12 @@ impl SnapTrade {
             supports_positions: true,
             supports_activities: true,
             supports_orders: true,
-            provides_pricing: true,
+            // SnapTrade is an aggregator, not a live market feed — its
+            // `current_price` is only as fresh as the last brokerage sync.
+            // Yahoo (the same feed manual portfolios use) prices these
+            // positions instead, on its own timer, independent of how often
+            // the underlying brokerage login is resynced.
+            provides_pricing: false,
             docs_url: Some("https://snaptrade.com/".to_string()),
             logo_domain: Some("snaptrade.com".to_string()),
         }
