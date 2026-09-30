@@ -700,7 +700,7 @@ export function PortfolioView({
     <div className="flex h-full gap-0">
       {/* Ticker selector — left panel (hidden when empty) */}
       {!isEmpty && (
-        <div className="w-[15rem] border-r border-border shrink-0 overflow-y-auto">
+        <div className="w-[15rem] border-r border-border shrink-0 flex flex-col">
           <div className="flex items-center justify-center border-b border-border bg-background shrink-0">
             <ArrowUpDown className="w-3 h-3 text-muted-foreground shrink-0 mx-1" />
             {(
@@ -766,6 +766,7 @@ export function PortfolioView({
               </div>
             </div>
           )}
+          <div className="flex-1 overflow-y-auto">
           {favorites.length > 0 && <SectionLabel label="Favorites" />}
           {favorites.map((s, idx) => {
             const favIdx = favoriteTickers.indexOf(s.ticker);
@@ -876,6 +877,7 @@ export function PortfolioView({
             ))}
             {bondDrag.showDropLine(nonFavBonds.length) && dropLine}
           </CollapsibleSection>
+          </div>
         </div>
       )}
 
