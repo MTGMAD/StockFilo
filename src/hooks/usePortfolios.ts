@@ -7,6 +7,7 @@ import {
   deletePortfolio as dbDelete,
   starPortfolio as dbStar,
   reorderPortfolios as dbReorder,
+  setPositionSortMode as dbSetPositionSortMode,
 } from "../lib/db";
 
 export function usePortfolios() {
@@ -78,7 +79,31 @@ export function usePortfolios() {
     [load]
   );
 
+  const setPositionSortMode = useCallback(
+    async (id: number, mode: string) => {
+      // Optimistic, so the dropdown reflects the choice immediately rather
+      // than waiting a round trip.
+      setPortfolios((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, position_sort_mode: mode } : p)),
+      );
+      await dbSetPositionSortMode(id, mode);
+      await load();
+    },
+    [load]
+  );
+
   const starredPortfolio = portfolios.find((p) => p.is_starred === 1) ?? portfolios[0] ?? null;
 
-  return { portfolios, loading, starredPortfolio, create, rename, remove, star, reorder, reload: load };
+  return {
+    portfolios,
+    loading,
+    starredPortfolio,
+    create,
+    rename,
+    remove,
+    star,
+    reorder,
+    setPositionSortMode,
+    reload: load,
+  };
 }

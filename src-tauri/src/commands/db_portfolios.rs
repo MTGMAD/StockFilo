@@ -19,13 +19,17 @@ pub struct Portfolio {
     /// When a spreadsheet/Ameriprise import last completed for this
     /// portfolio. Null until the first one runs.
     pub last_import_at: Option<i64>,
+    /// How the positions list is currently ordered: 'gainers' | 'name' |
+    /// 'pnl' | 'custom'. 'custom' means a person has dragged rows by hand;
+    /// anything else is computed live from `TickerSummary` fields.
+    pub position_sort_mode: String,
 }
 
 #[tauri::command]
 pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id, last_import_at \
+            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id, last_import_at, position_sort_mode \
              FROM portfolios ORDER BY sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -38,6 +42,7 @@ pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>,
                 source: r.get(5)?,
                 broker_account_id: r.get(6)?,
                 last_import_at: r.get(7)?,
+                position_sort_mode: r.get(8)?,
             })
         })?;
         rows.collect()
@@ -137,6 +142,26 @@ pub fn db_star_portfolio(id: i64, state: State<'_, DbManager>) -> Result<(), Str
         conn.execute(
             "UPDATE portfolios SET is_starred = 1 - is_starred WHERE id = ?1",
             params![id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Set which sort mode the positions list uses. Picking a named mode
+/// ('gainers' | 'ticker' | 'pnl') over an existing 'custom' order is a
+/// deliberate, warned-about overwrite the frontend confirms before calling
+/// this — this command itself just writes whatever it's given, same as
+/// `db_star_portfolio` trusts its caller.
+#[tauri::command]
+pub fn db_set_position_sort_mode(
+    portfolio_id: i64,
+    mode: String,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE portfolios SET position_sort_mode = ?1 WHERE id = ?2",
+            params![mode, portfolio_id],
         )?;
         Ok(())
     })

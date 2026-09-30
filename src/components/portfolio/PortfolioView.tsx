@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type {
   BrokerTransaction,
@@ -39,6 +39,8 @@ import {
   Lock,
   Layers,
   ClipboardList,
+  GripVertical,
+  ArrowUpDown,
 } from "lucide-react";
 import { PortfolioRankView } from "./PortfolioRankView";
 import { MountainChart } from "../analysis/MountainChart";
@@ -49,6 +51,8 @@ import { BrokerTransactionsTable } from "./BrokerTransactionsTable";
 import { BrokerOrdersView } from "./BrokerOrdersView";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useFavorites } from "../../hooks/useFavorites";
+import { usePositionOrder } from "../../hooks/usePositionOrder";
+import { useDragReorder } from "../../hooks/useDragReorder";
 import { openUrl } from "../../lib/openUrl";
 import type { ImportResult } from "../../lib/db";
 import {
@@ -72,6 +76,45 @@ type PortfolioTab =
   | "cash"
   | "settings";
 
+/**
+ * Comparator for the positions list, shared by the favorites group and every
+ * asset-type section so switching sort mode behaves identically everywhere.
+ *
+ * `customIndex` looks up a ticker's position in whichever manual order
+ * applies to the group being sorted (favorites use `favoriteTickers`,
+ * everything else uses `position_order`) — only consulted in "custom" mode.
+ * A ticker with no manual position yet (-1) sorts after ones that have one,
+ * then alphabetically among themselves, so a newly bought position doesn't
+ * land in a random spot.
+ */
+function positionSortComparator(
+  mode: string,
+  customIndex: (ticker: string) => number,
+) {
+  return (a: TickerSummary, b: TickerSummary): number => {
+    if (mode === "custom") {
+      const ai = customIndex(a.ticker);
+      const bi = customIndex(b.ticker);
+      if (ai === -1 && bi === -1) return a.ticker.localeCompare(b.ticker);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    }
+    if (mode === "ticker") {
+      return a.ticker.localeCompare(b.ticker);
+    }
+    if (mode === "pnl") {
+      const av = a.pnlDollar ?? -Infinity;
+      const bv = b.pnlDollar ?? -Infinity;
+      return bv - av;
+    }
+    // "gainers" (default): today's % change, biggest first.
+    const av = a.dailyChangePct ?? -Infinity;
+    const bv = b.dailyChangePct ?? -Infinity;
+    return bv - av;
+  };
+}
+
 interface PortfolioViewProps {
   portfolioId: number | null;
   portfolioName: string;
@@ -80,6 +123,9 @@ interface PortfolioViewProps {
   sales: Sale[];
   /** When a spreadsheet/Ameriprise import last completed for this portfolio. */
   lastImportAt: number | null;
+  /** How the positions list is ordered: "gainers" | "ticker" | "pnl" | "custom". */
+  positionSortMode: string;
+  onSetPositionSortMode: (mode: string) => Promise<void>;
   stocks: Stock[];
   summaries: TickerSummary[];
   onAdd: (
@@ -146,6 +192,8 @@ export function PortfolioView({
   cashEvents,
   sales,
   lastImportAt,
+  positionSortMode,
+  onSetPositionSortMode,
   stocks,
   summaries,
   onAdd,
@@ -184,6 +232,27 @@ export function PortfolioView({
     toggle,
     reorder,
   } = useFavorites(portfolioId);
+  const { orderIndex: positionOrderIndex, reorder: reorderPositionsList } =
+    usePositionOrder(portfolioId);
+  const [pendingSortMode, setPendingSortMode] = useState<string | null>(null);
+
+  /** Any drag is what enters 'custom' mode — there's no menu item for it. */
+  async function enterCustomOrder() {
+    if (positionSortMode !== "custom") await onSetPositionSortMode("custom");
+  }
+
+  async function chooseSortMode(mode: "gainers" | "ticker" | "pnl") {
+    if (positionSortMode === "custom") {
+      setPendingSortMode(mode);
+      return;
+    }
+    await onSetPositionSortMode(mode);
+  }
+
+  async function confirmSortMode() {
+    if (pendingSortMode) await onSetPositionSortMode(pendingSortMode);
+    setPendingSortMode(null);
+  }
   const [upcomingEarnings, setUpcomingEarnings] = useState<
     Record<string, number>
   >({});
@@ -223,12 +292,16 @@ export function PortfolioView({
     );
   };
 
-  const favorites = summaries
-    .filter((s) => isFavorite(s.ticker))
-    .sort(
-      (a, b) =>
-        favoriteTickers.indexOf(a.ticker) - favoriteTickers.indexOf(b.ticker),
-    );
+  // Favorites keep their own manual order (indexOf into favoriteTickers) as
+  // the "custom" source; everything else uses the position_order table via
+  // positionOrderIndex. Both feed the same comparator, so switching sort
+  // mode behaves identically across every section.
+  const favCmp = positionSortComparator(positionSortMode, (t) =>
+    favoriteTickers.indexOf(t),
+  );
+  const restCmp = positionSortComparator(positionSortMode, positionOrderIndex);
+
+  const favorites = summaries.filter((s) => isFavorite(s.ticker)).sort(favCmp);
 
   const nonFavStocks = summaries
     .filter(
@@ -237,15 +310,39 @@ export function PortfolioView({
         !isMutualFund(s.quoteType) &&
         !isCusip(s.ticker),
     )
-    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+    .sort(restCmp);
 
   const nonFavFunds = summaries
     .filter((s) => !isFavorite(s.ticker) && isMutualFund(s.quoteType))
-    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+    .sort(restCmp);
 
   const nonFavBonds = summaries
     .filter((s) => !isFavorite(s.ticker) && isCusip(s.ticker))
-    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+    .sort(restCmp);
+
+  // One drag-reorder instance per section — dragging in any of them enters
+  // "custom" sort mode, same as picking it would, since dragging *is* the
+  // act of customizing.
+  const favoriteIds = favorites.map((s) => s.ticker);
+  const favDrag = useDragReorder(favoriteIds, async (next) => {
+    await enterCustomOrder();
+    await reorder(next);
+  });
+  const stockIds = nonFavStocks.map((s) => s.ticker);
+  const stockDrag = useDragReorder(stockIds, async (next) => {
+    await enterCustomOrder();
+    await reorderPositionsList(next);
+  });
+  const fundIds = nonFavFunds.map((s) => s.ticker);
+  const fundDrag = useDragReorder(fundIds, async (next) => {
+    await enterCustomOrder();
+    await reorderPositionsList(next);
+  });
+  const bondIds = nonFavBonds.map((s) => s.ticker);
+  const bondDrag = useDragReorder(bondIds, async (next) => {
+    await enterCustomOrder();
+    await reorderPositionsList(next);
+  });
 
   const ordered = [
     ...favorites,
@@ -410,12 +507,16 @@ export function PortfolioView({
   }
 
   async function moveFavorite(ticker: string, direction: "up" | "down") {
-    const idx = favoriteTickers.indexOf(ticker);
+    // Based on what's actually on screen, not the raw favorites table order
+    // — those only match once already in "custom" mode; a named sort mode
+    // displays favorites in a different order the buttons need to respect.
+    const newOrder = favorites.map((s) => s.ticker);
+    const idx = newOrder.indexOf(ticker);
     if (idx < 0) return;
-    const newOrder = [...favoriteTickers];
     const swapIdx = direction === "up" ? idx - 1 : idx + 1;
     if (swapIdx < 0 || swapIdx >= newOrder.length) return;
     [newOrder[idx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[idx]];
+    await enterCustomOrder();
     await reorder(newOrder);
   }
 
@@ -593,11 +694,68 @@ export function PortfolioView({
     estMonthlyDividends = (estMonthlyDividends ?? 0) + annual / 12;
   }
 
+  const dropLine = <div className="mx-2 my-0.5 h-0.5 rounded-full bg-primary" />;
+
   return (
     <div className="flex h-full gap-0">
       {/* Ticker selector — left panel (hidden when empty) */}
       {!isEmpty && (
         <div className="w-[15rem] border-r border-border shrink-0 overflow-y-auto">
+          <div className="flex items-center justify-center border-b border-border bg-background shrink-0">
+            <ArrowUpDown className="w-3 h-3 text-muted-foreground shrink-0 mx-1" />
+            {(
+              [
+                { id: "gainers", label: "Gainers" },
+                { id: "ticker", label: "Ticker" },
+                { id: "pnl", label: "P/L" },
+              ] as const
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => chooseSortMode(id)}
+                className={cn(
+                  "px-1 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
+                  positionSortMode === id
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+            {positionSortMode === "custom" && (
+              <span
+                className="px-1 py-3 text-sm font-medium border-b-2 border-primary text-primary whitespace-nowrap"
+                title="You've dragged rows into a custom order"
+              >
+                Custom
+              </span>
+            )}
+          </div>
+          {pendingSortMode && (
+            <div className="px-2 py-2 border-b border-border bg-amber-500/10 flex flex-col gap-1.5">
+              <span className="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-tight">
+                This replaces your custom order. Continue?
+              </span>
+              <div className="flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={confirmSortMode}
+                  className="flex-1 text-[11px] font-medium bg-amber-500 text-white rounded px-2 py-1 hover:opacity-90 transition-opacity"
+                >
+                  Yes, switch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSortMode(null)}
+                  className="flex-1 text-[11px] font-medium bg-muted text-muted-foreground rounded px-2 py-1 hover:opacity-90 transition-opacity"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {estMonthlyDividends != null && estMonthlyDividends > 0 && (
             <div className="px-3 py-2.5 border-b border-border bg-[var(--dividend-bg)]/40">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -609,74 +767,114 @@ export function PortfolioView({
             </div>
           )}
           {favorites.length > 0 && <SectionLabel label="Favorites" />}
-          {favorites.map((s) => {
+          {favorites.map((s, idx) => {
             const favIdx = favoriteTickers.indexOf(s.ticker);
             return (
-              <TickerRow
-                key={s.ticker}
-                s={s}
-                isSelected={selected === s.ticker}
-                hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
-                hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
-                isFav
-                favIdx={favIdx}
-                favCount={favoriteTickers.length}
-                onSelect={selectTicker}
-                onToggleFav={toggle}
-                onMoveFav={moveFavorite}
-              />
+              <Fragment key={s.ticker}>
+                {favDrag.showDropLine(idx) && dropLine}
+                <TickerRow
+                  s={s}
+                  isSelected={selected === s.ticker}
+                  hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+                  hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
+                  isFav
+                  favIdx={favIdx}
+                  favCount={favoriteTickers.length}
+                  onSelect={selectTicker}
+                  onToggleFav={toggle}
+                  onMoveFav={moveFavorite}
+                  dragRowRef={(el) => {
+                    if (el) favDrag.rowRefs.current.set(s.ticker, el);
+                    else favDrag.rowRefs.current.delete(s.ticker);
+                  }}
+                  onRowPointerDown={(e) => favDrag.startRowPress(e, s.ticker)}
+                  isDragging={favDrag.dragId === s.ticker}
+                  suppressClickRef={favDrag.suppressClickRef}
+                />
+              </Fragment>
             );
           })}
+          {favDrag.showDropLine(favorites.length) && dropLine}
           <CollapsibleSection label="Stocks" items={nonFavStocks}>
-            {nonFavStocks.map((s) => (
-              <TickerRow
-                key={s.ticker}
-                s={s}
-                isSelected={selected === s.ticker}
-                hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
-                hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
-                isFav={false}
-                favIdx={-1}
-                favCount={0}
-                onSelect={selectTicker}
-                onToggleFav={toggle}
-                onMoveFav={moveFavorite}
-              />
+            {nonFavStocks.map((s, idx) => (
+              <Fragment key={s.ticker}>
+                {stockDrag.showDropLine(idx) && dropLine}
+                <TickerRow
+                  s={s}
+                  isSelected={selected === s.ticker}
+                  hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+                  hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
+                  isFav={false}
+                  favIdx={-1}
+                  favCount={0}
+                  onSelect={selectTicker}
+                  onToggleFav={toggle}
+                  onMoveFav={moveFavorite}
+                  dragRowRef={(el) => {
+                    if (el) stockDrag.rowRefs.current.set(s.ticker, el);
+                    else stockDrag.rowRefs.current.delete(s.ticker);
+                  }}
+                  onRowPointerDown={(e) => stockDrag.startRowPress(e, s.ticker)}
+                  isDragging={stockDrag.dragId === s.ticker}
+                  suppressClickRef={stockDrag.suppressClickRef}
+                />
+              </Fragment>
             ))}
+            {stockDrag.showDropLine(nonFavStocks.length) && dropLine}
           </CollapsibleSection>
           <CollapsibleSection label="Mutual Funds & UITs" items={nonFavFunds}>
-            {nonFavFunds.map((s) => (
-              <TickerRow
-                key={s.ticker}
-                s={s}
-                isSelected={selected === s.ticker}
-                hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
-                hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
-                isFav={false}
-                favIdx={-1}
-                favCount={0}
-                onSelect={selectTicker}
-                onToggleFav={toggle}
-                onMoveFav={moveFavorite}
-              />
+            {nonFavFunds.map((s, idx) => (
+              <Fragment key={s.ticker}>
+                {fundDrag.showDropLine(idx) && dropLine}
+                <TickerRow
+                  s={s}
+                  isSelected={selected === s.ticker}
+                  hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+                  hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
+                  isFav={false}
+                  favIdx={-1}
+                  favCount={0}
+                  onSelect={selectTicker}
+                  onToggleFav={toggle}
+                  onMoveFav={moveFavorite}
+                  dragRowRef={(el) => {
+                    if (el) fundDrag.rowRefs.current.set(s.ticker, el);
+                    else fundDrag.rowRefs.current.delete(s.ticker);
+                  }}
+                  onRowPointerDown={(e) => fundDrag.startRowPress(e, s.ticker)}
+                  isDragging={fundDrag.dragId === s.ticker}
+                  suppressClickRef={fundDrag.suppressClickRef}
+                />
+              </Fragment>
             ))}
+            {fundDrag.showDropLine(nonFavFunds.length) && dropLine}
           </CollapsibleSection>
           <CollapsibleSection label="Bonds & CDs" items={nonFavBonds}>
-            {nonFavBonds.map((s) => (
-              <TickerRow
-                key={s.ticker}
-                s={s}
-                isSelected={selected === s.ticker}
-                hasUpcomingEarnings={false}
-                hasDividend={false}
-                isFav={false}
-                favIdx={-1}
-                favCount={0}
-                onSelect={selectTicker}
-                onToggleFav={toggle}
-                onMoveFav={moveFavorite}
-              />
+            {nonFavBonds.map((s, idx) => (
+              <Fragment key={s.ticker}>
+                {bondDrag.showDropLine(idx) && dropLine}
+                <TickerRow
+                  s={s}
+                  isSelected={selected === s.ticker}
+                  hasUpcomingEarnings={false}
+                  hasDividend={false}
+                  isFav={false}
+                  favIdx={-1}
+                  favCount={0}
+                  onSelect={selectTicker}
+                  onToggleFav={toggle}
+                  onMoveFav={moveFavorite}
+                  dragRowRef={(el) => {
+                    if (el) bondDrag.rowRefs.current.set(s.ticker, el);
+                    else bondDrag.rowRefs.current.delete(s.ticker);
+                  }}
+                  onRowPointerDown={(e) => bondDrag.startRowPress(e, s.ticker)}
+                  isDragging={bondDrag.dragId === s.ticker}
+                  suppressClickRef={bondDrag.suppressClickRef}
+                />
+              </Fragment>
             ))}
+            {bondDrag.showDropLine(nonFavBonds.length) && dropLine}
           </CollapsibleSection>
         </div>
       )}
@@ -1231,7 +1429,7 @@ export function PortfolioView({
                             ? formatCurrency(summary.currentPrice)
                             : "—"
                         }
-                        extra={<ExtendedHoursTag stock={selectedStock} />}
+                        extra={<ExtendedHoursTag stock={selectedStock} labelOnly />}
                       />
                       <StatCard
                         label="Market Value"
@@ -1623,6 +1821,10 @@ function TickerRow({
   onSelect,
   onToggleFav,
   onMoveFav,
+  dragRowRef,
+  onRowPointerDown,
+  isDragging,
+  suppressClickRef,
 }: {
   s: TickerSummary;
   isSelected: boolean;
@@ -1634,16 +1836,42 @@ function TickerRow({
   onSelect: (ticker: string) => void;
   onToggleFav: (ticker: string) => void;
   onMoveFav: (ticker: string, dir: "up" | "down") => void;
+  /** Drag-to-reorder — all four optional together, wired by whichever
+   *  section's useDragReorder instance renders this row. */
+  dragRowRef?: (el: HTMLDivElement | null) => void;
+  onRowPointerDown?: (e: React.PointerEvent) => void;
+  isDragging?: boolean;
+  suppressClickRef?: React.MutableRefObject<boolean>;
 }) {
   return (
     <div
+      ref={dragRowRef}
+      onPointerDown={onRowPointerDown}
+      onClickCapture={(e) => {
+        if (suppressClickRef?.current) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      }}
       className={cn(
         "flex items-center border-b border-border transition-colors group",
         isSelected
           ? "bg-primary text-primary-foreground"
           : "text-foreground hover:bg-muted",
+        isDragging && "opacity-40",
       )}
     >
+      {/* Drag handle */}
+      <span
+        className={cn(
+          "pl-1 pr-0.5 py-3 shrink-0 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity",
+          isSelected ? "text-primary-foreground/50" : "text-muted-foreground/50",
+        )}
+        title="Drag to reorder"
+      >
+        <GripVertical className="w-3 h-3" />
+      </span>
+
       {/* Star toggle */}
       <button
         type="button"

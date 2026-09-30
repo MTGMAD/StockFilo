@@ -23,6 +23,7 @@ import type {
   TickerSearchResult,
   NewsArticle,
   Favorite,
+  PositionOrder,
   UpcomingEarningsEvent,
   Portfolio,
   Watchlist,
@@ -53,6 +54,13 @@ export async function starPortfolio(id: number): Promise<void> {
 
 export async function reorderPortfolios(ids: number[]): Promise<void> {
   return invoke("db_reorder_portfolios", { ids });
+}
+
+export async function setPositionSortMode(
+  portfolioId: number,
+  mode: string,
+): Promise<void> {
+  return invoke("db_set_position_sort_mode", { portfolioId, mode });
 }
 
 // ── Purchases ──────────────────────────────────────────────────────────────
@@ -569,6 +577,23 @@ export async function reorderFavorites(
   portfolioId: number,
 ): Promise<void> {
   return invoke("db_reorder_favorites", { tickers, portfolioId });
+}
+
+// ── Position order ────────────────────────────────────────────────────────
+// Manual drag-order for the positions list — same idea as favorites above,
+// but for any ticker, not just starred ones.
+
+export async function listPositionOrder(
+  portfolioId: number,
+): Promise<PositionOrder[]> {
+  return invoke<PositionOrder[]>("db_list_position_order", { portfolioId });
+}
+
+export async function reorderPositions(
+  tickers: string[],
+  portfolioId: number,
+): Promise<void> {
+  return invoke("db_reorder_positions", { tickers, portfolioId });
 }
 
 // ── Ticker Search ─────────────────────────────────────────────────────────

@@ -254,7 +254,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 23);
+        assert_eq!(v, 24);
     }
 
     #[test]
@@ -415,6 +415,31 @@ mod tests {
     }
 
     #[test]
+    fn v24_portfolios_default_to_gainers_sort() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let mode: String = conn
+            .query_row(
+                "SELECT position_sort_mode FROM portfolios WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mode, "gainers");
+    }
+
+    #[test]
+    fn v24_position_order_accepts_a_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO position_order (portfolio_id, ticker, sort_order) VALUES (1, 'AAPL', 0)",
+            [],
+        )
+        .expect("position_order must accept a (portfolio_id, ticker) row");
+    }
+
+    #[test]
     fn v23_preserves_existing_cash_events_and_source_sale_id_through_the_rebuild() {
         let conn = Connection::open_in_memory().unwrap();
         // Bring the database to V22 only, insert a 'sale' row with a
@@ -511,7 +536,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 23);
+        assert_eq!(v, 24);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -566,7 +591,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 23);
+        assert_eq!(after, 24);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -825,6 +850,31 @@ CREATE INDEX IF NOT EXISTS idx_cash_events_portfolio ON cash_events(portfolio_id
 CREATE INDEX IF NOT EXISTS idx_cash_events_source_sale ON cash_events(source_sale_id);
 "#;
 
+/// V24: manual drag-order for the positions list, and the sort mode each
+/// portfolio is currently showing it in.
+///
+/// `favorites` already had its own `sort_order` for the pinned-to-top group;
+/// this does the same for everything else, one row per (portfolio, ticker)
+/// pair a person has actually dragged — a ticker with no row here just falls
+/// back to whatever named sort mode is active. `position_sort_mode` names
+/// that mode ('gainers' | 'ticker' | 'pnl' | 'custom'), defaulting to
+/// 'gainers' so a portfolio nobody has touched yet still has a sensible
+/// order. Switching *into* 'custom' happens by dragging a row (the frontend
+/// sets it), not by picking it from a menu.
+const MIGRATION_V24: &str = r#"
+ALTER TABLE portfolios ADD COLUMN position_sort_mode TEXT NOT NULL DEFAULT 'gainers';
+
+CREATE TABLE position_order (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id INTEGER NOT NULL,
+    ticker       TEXT NOT NULL,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(portfolio_id, ticker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_position_order_portfolio ON position_order(portfolio_id);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -853,6 +903,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (21, MIGRATION_V21),
         (22, MIGRATION_V22),
         (23, MIGRATION_V23),
+        (24, MIGRATION_V24),
     ];
 
     let user_version: i64 =

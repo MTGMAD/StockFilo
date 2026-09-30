@@ -120,6 +120,7 @@ export default function App() {
     remove,
     star,
     reorder,
+    setPositionSortMode,
     reload: reloadPortfolios,
   } = usePortfolios();
 
@@ -427,6 +428,12 @@ export default function App() {
               cashEvents={cashEvents}
               sales={sales}
               lastImportAt={activePortfolio?.last_import_at ?? null}
+              positionSortMode={activePortfolio?.position_sort_mode ?? "gainers"}
+              onSetPositionSortMode={(mode) =>
+                resolvedPortfolioId != null
+                  ? setPositionSortMode(resolvedPortfolioId, mode)
+                  : Promise.resolve()
+              }
               stocks={stocks}
               summaries={summaries}
               onAdd={add}

@@ -318,6 +318,62 @@ pub fn db_reorder_favorites(
     })
 }
 
+// ── Position order commands ─────────────────────────────────────────────────
+//
+// Manual drag-order for the positions list, mirroring the favorites commands
+// above — the same idea (one row per ticker with a sort_order), just for
+// tickers that aren't necessarily favorited. A ticker with no row here has
+// simply never been dragged; the frontend falls back to a named sort mode
+// (see `portfolios.position_sort_mode`) for it.
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PositionOrder {
+    pub ticker: String,
+    pub sort_order: i64,
+}
+
+#[tauri::command]
+pub fn db_list_position_order(
+    portfolio_id: i64,
+    state: State<'_, DbManager>,
+) -> Result<Vec<PositionOrder>, String> {
+    state.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT ticker, sort_order FROM position_order \
+             WHERE portfolio_id = ?1 ORDER BY sort_order ASC",
+        )?;
+        let rows = stmt.query_map(params![portfolio_id], |r| {
+            Ok(PositionOrder {
+                ticker: r.get(0)?,
+                sort_order: r.get(1)?,
+            })
+        })?;
+        rows.collect()
+    })
+}
+
+/// Persists a full drag order for `tickers` (creating a row for any ticker
+/// dragged for the first time) — it does not switch `position_sort_mode`
+/// itself; the frontend does that in the same action, since dragging is what
+/// enters 'custom' mode.
+#[tauri::command]
+pub fn db_reorder_positions(
+    tickers: Vec<String>,
+    portfolio_id: i64,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        for (i, ticker) in tickers.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO position_order (portfolio_id, ticker, sort_order) VALUES (?1, ?2, ?3) \
+                 ON CONFLICT(portfolio_id, ticker) DO UPDATE SET sort_order = excluded.sort_order",
+                params![portfolio_id, ticker.to_uppercase(), i as i64],
+            )?;
+        }
+        Ok(())
+    })
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

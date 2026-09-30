@@ -35,6 +35,7 @@ pub fn run() {
             commands::db_portfolios::db_delete_portfolio,
             commands::db_portfolios::db_star_portfolio,
             commands::db_portfolios::db_reorder_portfolios,
+            commands::db_portfolios::db_set_position_sort_mode,
             commands::db_portfolios::db_touch_portfolio_import,
             // ── Purchases DB commands ──────────────────────────────────────
             commands::db_purchases::db_list_purchases,
@@ -73,6 +74,8 @@ pub fn run() {
             commands::db_watchlists::db_add_favorite,
             commands::db_watchlists::db_remove_favorite,
             commands::db_watchlists::db_reorder_favorites,
+            commands::db_watchlists::db_list_position_order,
+            commands::db_watchlists::db_reorder_positions,
             // ── Config / Sync commands ─────────────────────────────────────
             commands::config::get_config,
             commands::config::save_config,

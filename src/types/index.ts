@@ -134,6 +134,17 @@ export interface Portfolio {
   /** When a spreadsheet/Ameriprise import last completed for this portfolio.
    *  Null until the first one runs. */
   last_import_at: number | null;
+  /** How the positions list is ordered: "gainers" | "ticker" | "pnl" | "custom".
+   *  "custom" means a person dragged rows by hand. */
+  position_sort_mode: string;
+}
+
+/** A ticker's manually dragged position within a portfolio's positions list —
+ *  set only once someone actually drags a row; absence means "use whatever
+ *  named sort mode is active" rather than any specific order. */
+export interface PositionOrder {
+  ticker: string;
+  sort_order: number;
 }
 
 /** True when this portfolio mirrors a brokerage account and is read-only. */

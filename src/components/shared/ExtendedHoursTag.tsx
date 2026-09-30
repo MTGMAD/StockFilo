@@ -10,11 +10,30 @@ type ExtendedHoursData = {
 
 interface ExtendedHoursTagProps {
   stock?: ExtendedHoursData;
+  /** True where the price shown alongside this tag is already the
+   *  session-aware one (see summaries.ts's sessionAwarePrice) — showing the
+   *  extended-hours price again here would just repeat it, so this renders
+   *  a plain session label ("Pre-Market" / "After Hours") instead. */
+  labelOnly?: boolean;
 }
 
-export function ExtendedHoursTag({ stock }: ExtendedHoursTagProps) {
+export function ExtendedHoursTag({ stock, labelOnly }: ExtendedHoursTagProps) {
   if (!stock) return null;
   const { market_state, pre_market_price, pre_market_change_pct, post_market_price, post_market_change_pct } = stock;
+  const state = market_state ?? "";
+
+  // Only show extended-hours data outside of regular market hours
+  if (state === "REGULAR" || state === "") return null;
+
+  if (labelOnly) {
+    if (state.startsWith("PRE") && pre_market_price != null) {
+      return <span className="text-xs text-muted-foreground">Pre-Market</span>;
+    }
+    if (state.startsWith("POST") && post_market_price != null) {
+      return <span className="text-xs text-muted-foreground">After Hours</span>;
+    }
+    return null;
+  }
 
   // During PRE hours show pre-market; during POST or any other state prefer
   // post-market if available, then fall back to pre-market so the last known
@@ -23,14 +42,11 @@ export function ExtendedHoursTag({ stock }: ExtendedHoursTagProps) {
   let price: number;
   let changePct: number | null | undefined;
 
-  // Only show extended-hours data outside of regular market hours
-  if (market_state === "REGULAR") return null;
-
-  if (market_state === "PRE" && pre_market_price != null) {
+  if (state === "PRE" && pre_market_price != null) {
     label = "Pre";
     price = pre_market_price;
     changePct = pre_market_change_pct;
-  } else if (market_state === "POST" && post_market_price != null) {
+  } else if (state === "POST" && post_market_price != null) {
     label = "Post";
     price = post_market_price;
     changePct = post_market_change_pct;

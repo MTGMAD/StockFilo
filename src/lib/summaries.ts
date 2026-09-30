@@ -25,6 +25,50 @@ import type { BrokerPosition, Purchase, Sale, Stock, TickerSummary } from "../ty
 const STALE_THRESHOLD_SECONDS = 3600; // 1 hour
 
 /**
+ * The price for pre-market (PRE) or after-hours (POST, or Yahoo's own
+ * further-extended POSTPOST) instead of always the last regular-hours
+ * close. Matched by prefix, not an exact list, so any PRE- or POST-prefixed
+ * state Yahoo reports is covered without enumerating them. Regular hours, a
+ * closed market, or a missing extended-hours quote all fall back to the
+ * last regular price.
+ *
+ * This does NOT cover true overnight trading (the ~8pm-4am ET session some
+ * brokers offer via Blue Ocean ATS, shown on Yahoo's own website as an
+ * "Overnight" badge) — confirmed by direct inspection that Yahoo's public
+ * quote/chart endpoints simply stop updating at 8pm ET and freeze there
+ * (`postMarketTime` lands at 19:59:55 ET even when checked hours later);
+ * the website's overnight price comes from a different, undocumented feed
+ * this app has no access to. POSTPOST is Yahoo's last tick before that
+ * freeze, not a stand-in for the overnight session.
+ */
+function sessionAwarePrice(stock: Stock | undefined): number | null {
+  if (!stock) return null;
+  const state = stock.market_state ?? "";
+  if (state.startsWith("PRE") && stock.pre_market_price != null) {
+    return stock.pre_market_price;
+  }
+  if (state.startsWith("POST") && stock.post_market_price != null) {
+    return stock.post_market_price;
+  }
+  return stock.last_price ?? null;
+}
+
+/** The % change paired with whatever `sessionAwarePrice` picked, so the two
+ *  numbers always describe the same session instead of mixing an
+ *  extended-hours price with a regular-session change. */
+function sessionAwareChangePct(stock: Stock | undefined): number | null {
+  if (!stock) return null;
+  const state = stock.market_state ?? "";
+  if (state.startsWith("PRE") && stock.pre_market_price != null) {
+    return stock.pre_market_change_pct ?? null;
+  }
+  if (state.startsWith("POST") && stock.post_market_price != null) {
+    return stock.post_market_change_pct ?? null;
+  }
+  return stock.daily_change_pct ?? null;
+}
+
+/**
  * Aggregate manual purchase (and sale) rows into per-ticker summaries.
  *
  * A ticker's position is `purchased shares - sold shares`. Cost basis on
@@ -64,7 +108,7 @@ export function buildFromPurchases(
     const totalInvested = totalShares * avgCost;
     const avgCostBasis = avgCost;
     const stock = stockMap.get(ticker);
-    const currentPrice = stock?.last_price ?? null;
+    const currentPrice = sessionAwarePrice(stock);
     const marketValue = currentPrice != null ? totalShares * currentPrice : null;
     const pnlDollar = marketValue != null ? marketValue - totalInvested : null;
     const pnlPercent =
@@ -88,7 +132,7 @@ export function buildFromPurchases(
       isStale,
       lastFetchedAt,
       quoteType: stock?.quote_type ?? null,
-      dailyChangePct: stock?.daily_change_pct ?? null,
+      dailyChangePct: sessionAwareChangePct(stock),
       market_state: stock?.market_state ?? null,
       pre_market_price: stock?.pre_market_price ?? null,
       pre_market_change_pct: stock?.pre_market_change_pct ?? null,
@@ -160,7 +204,7 @@ export function buildFromPositions(
       ? p.current_price == null && stock?.last_price != null
       : stock?.last_price != null;
     const currentPrice = usingFallbackPrice
-      ? (stock?.last_price ?? null)
+      ? sessionAwarePrice(stock)
       : (p.current_price ?? null);
 
     const marketValue = usingFallbackPrice
@@ -189,14 +233,17 @@ export function buildFromPositions(
     // the broker's number looks like "no session happened" (null, or a
     // suspiciously exact 0) fall back to it instead of a broker figure that
     // was never really about today.
+    // Matched broadly (any non-"CLOSED" state) rather than an exact list —
+    // Yahoo's further-extended POSTPOST is still a real completed session
+    // with real data, same reasoning as sessionAwarePrice above.
     const isLiveSession =
-      stock?.market_state === "PRE" ||
-      stock?.market_state === "REGULAR" ||
-      stock?.market_state === "POST";
+      stock?.market_state != null &&
+      stock.market_state !== "" &&
+      stock.market_state !== "CLOSED";
     const brokerDailyChangePct =
       p.change_today != null ? p.change_today * 100 : null;
     const dailyChangePct = usingFallbackPrice
-      ? stock?.daily_change_pct ?? null
+      ? sessionAwareChangePct(stock)
       : !isLiveSession && (brokerDailyChangePct == null || brokerDailyChangePct === 0)
         ? stock?.daily_change_pct ?? brokerDailyChangePct
         : brokerDailyChangePct;
