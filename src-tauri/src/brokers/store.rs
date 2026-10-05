@@ -42,6 +42,10 @@ pub struct StoredTransaction {
     pub qty: Option<f64>,
     pub price: Option<f64>,
     pub occurred_at: String,
+    /// True for a dividend reinvestment (SnapTrade type REI) — a buy the
+    /// broker made on the user's behalf, not a trading decision.
+    #[serde(default)]
+    pub reinvested: bool,
 }
 
 pub fn now_secs() -> i64 {
@@ -237,7 +241,8 @@ pub fn list_transactions(
 ) -> rusqlite::Result<Vec<StoredTransaction>> {
     let mut stmt = conn.prepare(
         "SELECT id, broker_account_id, external_id, kind, side, provider_symbol, ticker, \
-                qty, price, occurred_at \
+                qty, price, occurred_at, \
+                COALESCE(raw LIKE '%\"type\":\"REI\"%', 0) \
          FROM broker_transactions WHERE broker_account_id = ?1 \
          ORDER BY occurred_at DESC, id DESC",
     )?;
@@ -253,6 +258,7 @@ pub fn list_transactions(
             qty: r.get(7)?,
             price: r.get(8)?,
             occurred_at: r.get(9)?,
+            reinvested: r.get::<_, i64>(10)? != 0,
         })
     })?;
     rows.collect()

@@ -8,6 +8,8 @@ export interface Fill {
   qty: number;
   price: number;
   date: string; // YYYY-MM-DD — no intraday time is stored anywhere
+  /** Dividend reinvestment buy: counts toward the position, never opens a trade. */
+  drip?: boolean;
 }
 
 /** A round trip: opens when a position goes from flat to held, closes when it
@@ -17,6 +19,8 @@ export interface JournalTrade {
   ticker: string;
   openDate: string;
   closeDate: string | null; // null while still open
+  /** Date of the latest sell, closed or not. */
+  lastExitDate: string | null;
   fills: Fill[];
   /** Realized P&L (FIFO) per exit fill id. */
   exitPnl: Record<string, number>;
@@ -27,7 +31,8 @@ export interface JournalTrade {
   avgExit: number | null;
   openQty: number;
   holdDays: number;
-  status: "win" | "loss" | "open";
+  /** "partial" = some shares sold, position still held. */
+  status: "win" | "loss" | "partial" | "open";
 }
 
 const EPS = 1e-9;
@@ -69,6 +74,7 @@ export function fillsFromBroker(txs: BrokerTransaction[]): Fill[] {
       qty: t.qty,
       price: t.price,
       date: t.occurred_at.slice(0, 10),
+      drip: t.reinvested || undefined,
     });
   }
   return out;
@@ -124,6 +130,7 @@ export function buildTrades(fills: Fill[]): JournalTrade[] {
         ticker,
         openDate,
         closeDate: closed ? last : null,
+        lastExitDate: last,
         fills: cur.fills,
         exitPnl: cur.exitPnl,
         realizedPnl,
@@ -136,13 +143,22 @@ export function buildTrades(fills: Fill[]): JournalTrade[] {
           : null,
         openQty: closed ? 0 : openQty,
         holdDays: daysBetween(openDate, closed && last ? last : openDate),
-        status: !closed ? "open" : realizedPnl >= 0 ? "win" : "loss",
+        status: closed
+          ? realizedPnl >= 0
+            ? "win"
+            : "loss"
+          : soldQty > 0
+            ? "partial"
+            : "open",
       });
       cur = null;
     };
 
     for (const f of list) {
       if (f.side === "buy") {
+        // A dividend reinvestment adds to a position you already hold; on its
+        // own it isn't a trade, so it never starts one.
+        if (f.drip && !cur) continue;
         cur ??= { fills: [], lots: [], exitPnl: {} };
         cur.fills.push(f);
         cur.lots.push({ qty: f.qty, price: f.price });
@@ -198,7 +214,7 @@ export function summarizeDays(trades: JournalTrade[]): Map<string, DaySummary> {
 
 export interface PeriodStats {
   pnl: number;
-  trades: number; // round trips closed in the period
+  trades: number; // trades with a realized exit in the period
   wins: number;
   losses: number;
   winRate: number | null;
@@ -209,9 +225,11 @@ export interface PeriodStats {
   worst: number | null;
 }
 
-/** Stats over trades closed within [from, to] (inclusive ISO dates; omit for
- *  all time). `pnl` sums realized exits in the window, so it still reflects
- *  partial exits of positions that remain open. */
+/** Stats over trades with realized exits within [from, to] (inclusive ISO
+ *  dates; omit for all time). A trade counts once, dated by its latest exit,
+ *  using the P&L realized so far — so a position trimmed but still held counts
+ *  as a win or loss now, and moves to the later period if it is later closed
+ *  out. `pnl` sums realized exits in the window itself. */
 export function periodStats(
   trades: JournalTrade[],
   from?: string,
@@ -225,7 +243,7 @@ export function periodStats(
     for (const f of t.fills) {
       if (f.id in t.exitPnl && inRange(f.date)) pnl += t.exitPnl[f.id];
     }
-    if (t.closeDate && inRange(t.closeDate)) closedPnls.push(t.realizedPnl);
+    if (t.lastExitDate && inRange(t.lastExitDate)) closedPnls.push(t.realizedPnl);
   }
   const wins = closedPnls.filter((p) => p > 0);
   const losses = closedPnls.filter((p) => p <= 0);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -231,7 +231,7 @@ export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProp
             ))}
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4 pt-4 border-t border-border">
-            <Stat label="Trades closed" value={String(stats.trades)} />
+            <Stat label="Trades with exits" value={String(stats.trades)} />
             <Stat label="Average win" value={formatCurrency(stats.avgWin)} className="text-positive" />
             <Stat label="Average loss" value={formatCurrency(stats.avgLoss)} className={stats.avgLoss < 0 ? "text-negative" : ""} />
             <Stat label="Profit factor" value={stats.profitFactor == null ? "∞" : stats.profitFactor.toFixed(2)} />
@@ -319,9 +319,10 @@ function StatusBadge({ status }: { status: JournalTrade["status"] }) {
         status === "win" && "bg-positive/15 text-positive",
         status === "loss" && "bg-negative/15 text-negative",
         status === "open" && "bg-warning/15 text-warning",
+        status === "partial" && "bg-primary/15 text-primary",
       )}
     >
-      {status}
+      {status === "partial" ? "partial exit" : status}
     </span>
   );
 }
@@ -341,9 +342,9 @@ function TradeRow({ trade, hasNote, onClick }: { trade: JournalTrade; hasNote: b
         {" · "}
         {trade.totalBought.toLocaleString(undefined, { maximumFractionDigits: 4 })} sh
       </span>
-      {hasNote && <NotebookPen className="w-3.5 h-3.5 text-muted-foreground" />}
-      <span className={cn("font-semibold tabular-nums", pnlColor(trade.status === "open" && trade.totalSold === 0 ? null : trade.realizedPnl))}>
-        {trade.status === "open" && trade.totalSold === 0 ? "—" : formatCurrency(trade.realizedPnl)}
+      {hasNote && <NotebookPen className="w-3.5 h-3.5 text-positive" />}
+      <span className={cn("font-semibold tabular-nums", pnlColor(trade.status === "open" ? null : trade.realizedPnl))}>
+        {trade.status === "open" ? "—" : formatCurrency(trade.realizedPnl)}
       </span>
     </button>
   );
@@ -379,7 +380,7 @@ function TradeDetail({
         <Stat label="Average exit" value={trade.avgExit == null ? "—" : formatCurrency(trade.avgExit)} />
         <Stat label="Quantity" value={fmtQty(trade.totalBought)} />
         <Stat label="Holding time" value={holdLabel(trade.holdDays)} />
-        <Stat label="Position" value={trade.status === "open" ? `Long · ${fmtQty(trade.openQty)} still open` : "Long"} />
+        <Stat label="Position" value={trade.openQty > 0 ? `Long · ${fmtQty(trade.openQty)} still held` : "Long"} />
         <Stat label="Realized exits" value={String(exits)} />
       </div>
 
@@ -406,7 +407,7 @@ function TradeDetail({
                 <div className="flex-1 pb-4 flex justify-between gap-4">
                   <div>
                     <div className="font-medium">
-                      {f.side === "buy" ? "Entry" : "Exit"} · {f.side.toUpperCase()} {fmtQty(f.qty)} shares
+                      {f.drip ? "Dividend reinvestment" : f.side === "buy" ? "Entry" : "Exit"} · {f.side.toUpperCase()} {fmtQty(f.qty)} shares
                     </div>
                     <div className="text-xs text-muted-foreground">{shortDate(f.date)}</div>
                   </div>
@@ -452,7 +453,7 @@ function NoteBox({
   const [reflection, setReflection] = useState(note?.reflection ?? "");
   const [lesson, setLesson] = useState(note?.lesson ?? "");
   const [tags, setTags] = useState(note?.tags ?? "");
-  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState<string | null>(null);
 
   const dirty =
@@ -460,18 +461,45 @@ function NoteBox({
     lesson !== (note?.lesson ?? "") ||
     tags !== (note?.tags ?? "");
 
-  async function save() {
-    setSaving(true);
-    setError(null);
-    try {
-      await setJournalNote(portfolioId, noteKey, reflection, lesson, tags);
-      onSaved();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSaving(false);
-    }
-  }
+  // Latest values for the unmount flush, which can't see fresh state.
+  const latest = useRef({ reflection, lesson, tags, dirty });
+  latest.current = { reflection, lesson, tags, dirty };
+
+  // Autosave shortly after typing stops, so a note is never lost to a
+  // forgotten Save click.
+  useEffect(() => {
+    if (!dirty) return;
+    setStatus("idle");
+    const timer = setTimeout(async () => {
+      setStatus("saving");
+      setError(null);
+      try {
+        await setJournalNote(portfolioId, noteKey, reflection, lesson, tags);
+        setStatus("saved");
+        onSaved();
+      } catch (e) {
+        setStatus("idle");
+        setError(String(e));
+      }
+    }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reflection, lesson, tags]);
+
+  // Leaving the screen (or switching trade) inside the debounce window.
+  useEffect(
+    () => () => {
+      const l = latest.current;
+      if (l.dirty) {
+        void setJournalNote(portfolioId, noteKey, l.reflection, l.lesson, l.tags).then(
+          onSaved,
+          () => {},
+        );
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const area = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm resize-y min-h-[80px]";
   return (
@@ -500,10 +528,19 @@ function NoteBox({
         />
       )}
       <div className="flex items-center gap-3">
-        <button type="button" className="btn-primary text-sm" disabled={!dirty || saving} onClick={save}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-        {error && <span className="text-xs text-negative">{error}</span>}
+        <span className="text-xs text-muted-foreground">
+          {error ? (
+            <span className="text-negative">Couldn't save: {error}</span>
+          ) : status === "saving" ? (
+            "Saving…"
+          ) : dirty ? (
+            "Unsaved changes…"
+          ) : status === "saved" || note ? (
+            "Saved"
+          ) : (
+            "Notes save automatically"
+          )}
+        </span>
       </div>
     </div>
   );

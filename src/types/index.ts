@@ -432,6 +432,8 @@ export interface BrokerTransaction {
   qty: number | null;
   price: number | null;
   occurred_at: string; // YYYY-MM-DD
+  /** Dividend reinvestment — a buy the broker made, not a trading decision. */
+  reinvested?: boolean;
 }
 
 /** One broker's order-status vocabulary — drives the Orders view's tabs. */
