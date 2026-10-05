@@ -8,10 +8,13 @@ import {
   setWatchlistAddedAt,
   updateWatchlistNote,
   migrateLegacyWatchlistNotes,
+  migrateLegacyWatchlistTargets,
+  setWatchlistAlert,
   getCachedStocks,
   fetchAndCachePrices,
   fetchPriceOnDate,
 } from "../lib/db";
+import type { AlertDirection } from "../types";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -28,8 +31,9 @@ export function useWatchlist(watchlistId: number | null) {
     }
     try {
       const [w, s] = await Promise.all([listWatchlist(watchlistId), getCachedStocks()]);
-      const migrated = await migrateLegacyWatchlistNotes(watchlistId, w);
-      setItems(migrated > 0 ? await listWatchlist(watchlistId) : w);
+      const notesMigrated = await migrateLegacyWatchlistNotes(watchlistId, w);
+      const targetsMigrated = await migrateLegacyWatchlistTargets(watchlistId, w);
+      setItems(notesMigrated > 0 || targetsMigrated > 0 ? await listWatchlist(watchlistId) : w);
       setStocks(s);
       // Fire a background price refresh so switching watchlists always shows current data
       const tickers = w.map((i) => i.ticker);
@@ -174,5 +178,50 @@ export function useWatchlist(watchlistId: number | null) {
     return watchPrice;
   }, []);
 
-  return { items, stocks, loading, error, add, remove, setNote, setAddedAt, reload: loadAll };
+  /**
+   * Set or clear a row's price alert. Direction is inferred here from the
+   * target vs. the ticker's last-known price (from `stocks`) rather than
+   * exposed as a separate control — same automatic behavior the legacy
+   * localStorage target migration uses. `price: null` clears the alert.
+   */
+  const setAlert = useCallback(
+    async (id: number, ticker: string, price: number | null) => {
+      if (price == null || isNaN(price) || price <= 0) {
+        await setWatchlistAlert(id, null, null);
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  alert_target_price: null,
+                  alert_direction: null,
+                  alert_triggered_at: null,
+                  alert_acknowledged_at: null,
+                }
+              : item,
+          ),
+        );
+        return;
+      }
+      const referencePrice = stocks.find((s) => s.ticker === ticker)?.last_price ?? price;
+      const direction: AlertDirection = price >= referencePrice ? "above" : "below";
+      await setWatchlistAlert(id, price, direction);
+      setItems((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                alert_target_price: price,
+                alert_direction: direction,
+                alert_triggered_at: null,
+                alert_acknowledged_at: null,
+              }
+            : item,
+        ),
+      );
+    },
+    [stocks],
+  );
+
+  return { items, stocks, loading, error, add, remove, setNote, setAddedAt, setAlert, reload: loadAll };
 }

@@ -8,6 +8,7 @@
     "dialog:allow-save",
     "dialog:allow-open",
     "fs:default",
+    "notification:default",
     {
       "identifier": "fs:allow-read-text-file",
       "allow": [{ "path": "$HOME/**" }]

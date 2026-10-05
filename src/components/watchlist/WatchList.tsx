@@ -21,7 +21,6 @@ import { StockDetailModal } from "./StockDetailModal";
 import { StockCompareModal } from "./StockCompareModal";
 import { NoteEditor } from "./NoteEditor";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
-import { useWatchlistTargets } from "../../hooks/useWatchlistTargets";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import {
   Plus,
@@ -71,6 +70,7 @@ interface WatchListProps {
     ticker: string,
     date: string,
   ) => Promise<number | null>;
+  onSetAlert: (id: number, ticker: string, price: number | null) => Promise<void>;
   onPurchase: (
     ticker: string,
     shares: number,
@@ -124,6 +124,7 @@ export function WatchList({
   onReload,
   onSetNote,
   onSetAddedDate,
+  onSetAlert,
   onPurchase,
 }: WatchListProps) {
   const [activeTab, setActiveTab] = useState<WatchListTab>("list");
@@ -136,8 +137,8 @@ export function WatchList({
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [detailTicker, setDetailTicker] = useState<string | null>(null);
-  const [editingTarget, setEditingTarget] = useState<string | null>(null);
-  const [targetDraft, setTargetDraft] = useState("");
+  const [editingAlert, setEditingAlert] = useState<string | null>(null);
+  const [alertDraft, setAlertDraft] = useState("");
   const [editingAddedDateId, setEditingAddedDateId] = useState<number | null>(
     null,
   );
@@ -195,13 +196,6 @@ export function WatchList({
       return [...prev, ticker];
     });
   }
-
-  const {
-    getTarget,
-    setTarget,
-    isTriggered,
-    refresh: refreshTargets,
-  } = useWatchlistTargets(activeWatchlistId);
 
   const [upcomingEarnings, setUpcomingEarnings] = useState<
     Record<string, number>
@@ -453,7 +447,6 @@ export function WatchList({
       if (result == null) return;
       await onReloadWatchlists();
       await onReload();
-      refreshTargets();
       setBackupStatus({
         kind: "success",
         msg: `Restored ${result.watchlistsImported} watchlist${result.watchlistsImported === 1 ? "" : "s"}, ${result.tickersImported} ticker${result.tickersImported === 1 ? "" : "s"} imported.`,
@@ -922,7 +915,7 @@ export function WatchList({
                       Since Add %
                     </th>
                     <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">
-                      Target
+                      Alert
                     </th>
                     <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">
                       Actions
@@ -938,8 +931,8 @@ export function WatchList({
                     const isStale =
                       !stock?.last_fetched_at ||
                       now - stock.last_fetched_at > STALE_THRESHOLD;
-                    const triggered = isTriggered(item.ticker, currentPrice);
-                    const target = getTarget(item.ticker);
+                    const triggered = item.alert_triggered_at != null;
+                    const target = item.alert_target_price;
                     const hasNote = !!item.notes?.trim();
                     const noteOpen = openNoteIds.has(item.id);
 
@@ -1192,36 +1185,37 @@ export function WatchList({
                             )}
                           </td>
                           <td className="px-4 py-2.5 text-right">
-                            {editingTarget === item.ticker ? (
+                            {editingAlert === item.ticker ? (
                               <input
                                 autoFocus
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                value={targetDraft}
-                                onChange={(e) => setTargetDraft(e.target.value)}
+                                value={alertDraft}
+                                onChange={(e) => setAlertDraft(e.target.value)}
                                 onBlur={() => {
-                                  const val = parseFloat(targetDraft);
-                                  setTarget(
+                                  const val = parseFloat(alertDraft);
+                                  onSetAlert(
+                                    item.id,
                                     item.ticker,
                                     isNaN(val) || val <= 0 ? null : val,
                                   );
-                                  setEditingTarget(null);
+                                  setEditingAlert(null);
                                 }}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter")
                                     (e.target as HTMLInputElement).blur();
                                   if (e.key === "Escape")
-                                    setEditingTarget(null);
+                                    setEditingAlert(null);
                                 }}
                                 className="w-24 text-right rounded border border-primary bg-background px-2 py-0.5 text-sm outline-none"
                               />
                             ) : (
-                              <Tooltip text="Click to set buy target">
+                              <Tooltip text="Click to set a price alert — notifies you when reached">
                                 <button
                                   onClick={() => {
-                                    setEditingTarget(item.ticker);
-                                    setTargetDraft(
+                                    setEditingAlert(item.ticker);
+                                    setAlertDraft(
                                       target != null ? String(target) : "",
                                     );
                                   }}
@@ -1236,7 +1230,7 @@ export function WatchList({
                                 >
                                   {target != null
                                     ? formatCurrency(target)
-                                    : "Set target"}
+                                    : "Set alert"}
                                 </button>
                               </Tooltip>
                             )}

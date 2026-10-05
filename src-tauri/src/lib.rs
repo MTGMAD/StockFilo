@@ -12,6 +12,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             // ── Existing market-data / browser commands ────────────────────
             commands::stocks::fetch_quotes_command,
@@ -70,6 +71,10 @@ pub fn run() {
             commands::db_watchlists::db_set_watch_price,
             commands::db_watchlists::db_set_watchlist_added_at,
             commands::db_watchlists::db_set_watchlist_note,
+            commands::db_watchlists::db_set_watchlist_alert,
+            commands::db_watchlists::db_mark_alert_triggered,
+            commands::db_watchlists::db_acknowledge_alert,
+            commands::db_watchlists::db_acknowledge_all_alerts,
             commands::db_watchlists::db_list_favorites,
             commands::db_watchlists::db_add_favorite,
             commands::db_watchlists::db_remove_favorite,

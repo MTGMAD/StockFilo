@@ -10,6 +10,7 @@ import { PortfolioView } from "./components/portfolio/PortfolioView";
 import { WatchList } from "./components/watchlist/WatchList";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { Dashboard } from "./components/dashboard/Dashboard";
+import { AlertsView } from "./components/alerts/AlertsView";
 import { usePortfolio } from "./hooks/usePortfolio";
 import { useBrokerPortfolio } from "./hooks/useBrokerPortfolio";
 import { useBrokerConnections } from "./hooks/useBrokerConnections";
@@ -21,10 +22,13 @@ import { useTheme } from "./hooks/useTheme";
 import { useInvestorMode } from "./hooks/useInvestorMode";
 import { useLinkOpenMode } from "./hooks/useLinkOpenMode";
 import { useInfoTooltips } from "./hooks/useInfoTooltips";
+import { useAlertSettings } from "./hooks/useAlertSettings";
+import { useAlertsMonitor } from "./hooks/useAlertsMonitor";
 
 const VIEW_TITLES: Partial<Record<View, string>> = {
   dashboard: "Dashboard",
   watchlist: "Watch List",
+  alerts: "Alerts",
   settings: "Settings",
 };
 
@@ -35,6 +39,11 @@ export default function App() {
   const { investorMode, setInvestorMode } = useInvestorMode();
   const { linkOpenMode, setLinkOpenMode } = useLinkOpenMode();
   const { showInfoTooltips, setShowInfoTooltips } = useInfoTooltips();
+  const alertSettings = useAlertSettings();
+  // Mounted at the top level (not inside the Watch List view) so price
+  // alerts keep firing — native notification + sound — no matter which
+  // screen is currently open.
+  const alerts = useAlertsMonitor();
 
   // ── Sync state ────────────────────────────────────────────────────────────
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
@@ -373,6 +382,7 @@ export default function App() {
           setView("settings");
           setOpenBrokerFormTrigger((n) => n + 1);
         }}
+        alertsUnacknowledgedCount={alerts.unacknowledgedCount}
       />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header
@@ -488,6 +498,10 @@ export default function App() {
               onReload={watchlist.reload}
               onSetNote={watchlist.setNote}
               onSetAddedDate={watchlist.setAddedAt}
+              onSetAlert={async (id, ticker, price) => {
+                await watchlist.setAlert(id, ticker, price);
+                await alerts.reload();
+              }}
               onPurchase={async (ticker, shares, price, date) => {
                 // Buying from the watch list is a hand-entered action, so it
                 // always lands in a manual portfolio — never in a broker
@@ -521,6 +535,17 @@ export default function App() {
                 }
               }}
             />
+          ) : view === "alerts" ? (
+            <AlertsView
+              items={alerts.items}
+              watchlists={watchlists}
+              onReload={alerts.reload}
+              onAcknowledgeAll={alerts.acknowledgeAll}
+              onJumpToWatchlist={(watchlistId) => {
+                setActiveWatchlistId(watchlistId);
+                setView("watchlist");
+              }}
+            />
           ) : (
             <SettingsPanel
               theme={theme}
@@ -532,6 +557,10 @@ export default function App() {
               onLinkOpenModeChange={setLinkOpenMode}
               showInfoTooltips={showInfoTooltips}
               onShowInfoTooltipsChange={setShowInfoTooltips}
+              alertSoundId={alertSettings.soundId}
+              onAlertSoundIdChange={alertSettings.setSoundId}
+              alertSoundEnabled={alertSettings.soundEnabled}
+              onAlertSoundEnabledChange={alertSettings.setSoundEnabled}
               syncTick={syncTick}
               onConfigSaved={() => setConfigVersion((v) => v + 1)}
               onBrokersChanged={async () => {

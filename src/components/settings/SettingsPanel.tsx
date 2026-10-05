@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
-import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark, Network, Settings } from "lucide-react";
+import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark, Network, Settings, Bell, Play, BellOff, BellRing } from "lucide-react";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { clearAllPurchases } from "../../lib/db";
+import { ALERT_SOUNDS, playAlertSound, type AlertSoundId } from "../../lib/alertSounds";
 import { StorageSettings } from "./StorageSettings";
 import { BrokerSettings } from "./BrokerSettings";
 import { SnapTradeSettings } from "./SnapTradeSettings";
@@ -19,11 +21,17 @@ interface SettingsPanelProps {
   onLinkOpenModeChange: (m: LinkOpenMode) => void;
   showInfoTooltips: boolean;
   onShowInfoTooltipsChange: (v: boolean) => void;
+  alertSoundId: AlertSoundId;
+  onAlertSoundIdChange: (id: AlertSoundId) => void;
+  alertSoundEnabled: boolean;
+  onAlertSoundEnabledChange: (v: boolean) => void;
   syncTick?: number;
   onConfigSaved?: () => void;
   onBrokersChanged?: () => void;
   openBrokerFormTrigger?: number;
 }
+
+type NotificationPermissionState = "granted" | "denied" | "default" | "unknown";
 
 const linkOpenModes: { id: LinkOpenMode; label: string; description: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "browser", label: "Default Browser", description: "Opens links in your system's default web browser", Icon: Globe },
@@ -42,11 +50,13 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "warm", label: "Warm", Icon: Leaf },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange, syncTick, onConfigSaved, onBrokersChanged, openBrokerFormTrigger }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange, alertSoundId, onAlertSoundIdChange, alertSoundEnabled, onAlertSoundEnabledChange, syncTick, onConfigSaved, onBrokersChanged, openBrokerFormTrigger }: SettingsPanelProps) {
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [activeTab, setActiveTab] = useState<SettingsTab>("system");
+  const [notificationPermission, setNotificationPermission] =
+    useState<NotificationPermissionState>("unknown");
 
   // Jumping here from "Add Brokerage" elsewhere in the app should land on
   // the tab that actually has the form — same trigger BrokerSettings itself
@@ -56,6 +66,21 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
       setActiveTab("brokerage");
     }
   }, [openBrokerFormTrigger]);
+
+  useEffect(() => {
+    isPermissionGranted()
+      .then((granted) => setNotificationPermission(granted ? "granted" : "default"))
+      .catch(() => setNotificationPermission("unknown"));
+  }, []);
+
+  async function handleRequestNotificationPermission() {
+    try {
+      const result = await requestPermission();
+      setNotificationPermission(result);
+    } catch {
+      setNotificationPermission("unknown");
+    }
+  }
 
   async function handleClearAll() {
     setClearing(true);
@@ -229,6 +254,93 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
             <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Info className="w-3.5 h-3.5" />
               {showInfoTooltips ? "Tooltips enabled" : "Tooltips hidden"}
+            </div>
+          </div>
+        </div>
+
+        {/* Price Alerts */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">Price Alerts</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Set an alert price on any Watch List row to be notified when it's reached.
+            </p>
+          </div>
+          <div className="flex-1 space-y-4">
+            {/* OS notification permission */}
+            <div className="flex items-center gap-3">
+              {notificationPermission === "granted" ? (
+                <div className="flex items-center gap-1.5 text-sm text-green-600">
+                  <BellRing className="w-3.5 h-3.5" />
+                  Notifications enabled
+                </div>
+              ) : notificationPermission === "denied" ? (
+                <div className="flex items-center gap-1.5 text-sm text-red-600">
+                  <BellOff className="w-3.5 h-3.5" />
+                  Notifications blocked — enable Stockfolio in your system notification settings
+                </div>
+              ) : (
+                <button
+                  onClick={handleRequestNotificationPermission}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors"
+                >
+                  <Bell className="w-4 h-4" />
+                  Enable notifications
+                </button>
+              )}
+            </div>
+
+            {/* Sound toggle */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => onAlertSoundEnabledChange(!alertSoundEnabled)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none",
+                  alertSoundEnabled ? "bg-primary" : "bg-muted-foreground/30"
+                )}
+                role="switch"
+                aria-checked={alertSoundEnabled}
+              >
+                <span
+                  className={cn(
+                    "inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform",
+                    alertSoundEnabled ? "translate-x-4" : "translate-x-0.5"
+                  )}
+                />
+              </button>
+              <span className="text-sm text-muted-foreground">
+                {alertSoundEnabled ? "Alert sound enabled" : "Alert sound muted"}
+              </span>
+            </div>
+
+            {/* Sound picker */}
+            <div className={cn("flex gap-2 flex-wrap", !alertSoundEnabled && "opacity-50")}>
+              {ALERT_SOUNDS.map(({ id, label }) => (
+                <div
+                  key={id}
+                  className={cn(
+                    "flex items-center gap-1 rounded-lg border pl-3 pr-1 py-1 text-sm font-medium transition-colors",
+                    alertSoundId === id
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                  )}
+                >
+                  <button
+                    onClick={() => onAlertSoundIdChange(id)}
+                    disabled={!alertSoundEnabled}
+                    className="disabled:cursor-not-allowed"
+                  >
+                    {label}
+                  </button>
+                  <button
+                    onClick={() => playAlertSound(id)}
+                    title={`Preview ${label}`}
+                    className="p-1.5 rounded-md hover:bg-primary/20 transition-colors"
+                  >
+                    <Play className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Settings,
   Eye,
+  Bell,
   PanelLeftClose,
   PanelLeftOpen,
   Star,
@@ -52,6 +53,8 @@ interface SidebarProps {
   >;
   /** Jump to Settings and open the brokerage connect form. */
   onAddBrokerage?: () => void;
+  /** Count of fired-but-unseen price alerts, shown as a badge on "Alerts". */
+  alertsUnacknowledgedCount?: number;
 }
 
 export function Sidebar({
@@ -70,6 +73,7 @@ export function Sidebar({
   newPortfolioTrigger,
   brokerBadges,
   onAddBrokerage,
+  alertsUnacknowledgedCount = 0,
 }: SidebarProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
@@ -619,6 +623,34 @@ export function Sidebar({
         >
           <Eye className="w-4 h-4 shrink-0" />
           {!collapsed && "Watch List"}
+        </button>
+
+        {/* Alerts */}
+        <button
+          onClick={() => onNavigate("alerts")}
+          title={collapsed ? "Alerts" : undefined}
+          className={cn(
+            "flex items-center rounded-md text-sm font-medium transition-colors w-full relative",
+            collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2 text-left",
+            view === "alerts"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          )}
+        >
+          <span className="relative shrink-0">
+            <Bell className="w-4 h-4" />
+            {alertsUnacknowledgedCount > 0 && (
+              <span
+                className={cn(
+                  "absolute -top-1.5 -right-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-0.5 text-[9px] font-semibold leading-none text-white",
+                  collapsed && "-top-1 -right-1"
+                )}
+              >
+                {alertsUnacknowledgedCount > 9 ? "9+" : alertsUnacknowledgedCount}
+              </span>
+            )}
+          </span>
+          {!collapsed && "Alerts"}
         </button>
       </nav>
 

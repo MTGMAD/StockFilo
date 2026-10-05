@@ -98,6 +98,9 @@ export interface TickerSummary {
   dividendYield: number | null;
 }
 
+/** 'above' = notify when price rises to/past the target, 'below' = falls to/past it. */
+export type AlertDirection = "above" | "below";
+
 export interface WatchlistItem {
   id: number;
   ticker: string;
@@ -105,6 +108,12 @@ export interface WatchlistItem {
   created_at: number;
   notes: string | null;
   notes_updated_at: number | null;
+  alert_target_price: number | null;
+  alert_direction: AlertDirection | null;
+  /** Set once, the moment the price first crosses the target; null = still armed. */
+  alert_triggered_at: number | null;
+  /** Set when the user has seen a firing; null (or older than alert_triggered_at) = unread. */
+  alert_acknowledged_at: number | null;
 }
 
 export interface TickerSearchResult {
@@ -159,7 +168,7 @@ export interface Watchlist {
   created_at: number;
 }
 
-export type View = "dashboard" | "portfolio" | "watchlist" | "settings";
+export type View = "dashboard" | "portfolio" | "watchlist" | "alerts" | "settings";
 export type Theme = "system" | "light" | "dark" | "warm";
 export type InvestorMode = "novice" | "advanced";
 export type LinkOpenMode = "browser" | "inapp";

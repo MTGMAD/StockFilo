@@ -254,7 +254,45 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 24);
+        assert_eq!(v, 25);
+    }
+
+    #[test]
+    fn v25_adds_alert_columns_to_watchlist_defaulting_null() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let cols = columns(&conn, "watchlist");
+        for c in [
+            "alert_target_price",
+            "alert_direction",
+            "alert_triggered_at",
+            "alert_acknowledged_at",
+        ] {
+            assert!(cols.contains(&c.to_string()), "missing column {c}");
+        }
+
+        conn.execute(
+            "INSERT INTO watchlist (ticker, created_at, watchlist_id) VALUES ('AAPL', 0, 1)",
+            [],
+        )
+        .unwrap();
+        let (target, direction, triggered, ack): (
+            Option<f64>,
+            Option<String>,
+            Option<i64>,
+            Option<i64>,
+        ) = conn
+            .query_row(
+                "SELECT alert_target_price, alert_direction, alert_triggered_at, alert_acknowledged_at \
+                 FROM watchlist WHERE ticker = 'AAPL'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(target, None);
+        assert_eq!(direction, None);
+        assert_eq!(triggered, None);
+        assert_eq!(ack, None);
     }
 
     #[test]
@@ -536,7 +574,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 24);
+        assert_eq!(v, 25);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -591,7 +629,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 24);
+        assert_eq!(after, 25);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -875,6 +913,27 @@ CREATE TABLE position_order (
 CREATE INDEX IF NOT EXISTS idx_position_order_portfolio ON position_order(portfolio_id);
 "#;
 
+/// V25: price alerts on watch-list rows.
+///
+/// The "Target" price shown in the watch list used to be purely cosmetic —
+/// kept in `localStorage`, never notified anyone, and (being localStorage)
+/// never travelled with the rest of the database through a WebDAV/NAS sync.
+/// These four columns make it a real, persisted alert: `alert_direction` is
+/// computed once when the target is set ('above' if the target is at or
+/// above the price at that moment, 'below' otherwise — not a CHECK
+/// constraint, validated in the command handler instead, matching how other
+/// free-text columns here work). `alert_triggered_at` is set once, the first
+/// time the price crosses, and guards against re-firing on every poll tick.
+/// `alert_acknowledged_at` is separate from it so the unread badge can tell
+/// "fired, not yet seen" apart from "fired and seen" — and so re-arming an
+/// alert (editing its target) can simply clear both and let it fire again.
+const MIGRATION_V25: &str = r#"
+ALTER TABLE watchlist ADD COLUMN alert_target_price REAL;
+ALTER TABLE watchlist ADD COLUMN alert_direction TEXT;
+ALTER TABLE watchlist ADD COLUMN alert_triggered_at INTEGER;
+ALTER TABLE watchlist ADD COLUMN alert_acknowledged_at INTEGER;
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -904,6 +963,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (22, MIGRATION_V22),
         (23, MIGRATION_V23),
         (24, MIGRATION_V24),
+        (25, MIGRATION_V25),
     ];
 
     let user_version: i64 =

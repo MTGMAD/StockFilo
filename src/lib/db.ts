@@ -28,6 +28,7 @@ import type {
   Portfolio,
   Watchlist,
   DividendInfo,
+  AlertDirection,
 } from "../types";
 
 // ── Portfolios ─────────────────────────────────────────────────────────────
@@ -388,16 +389,80 @@ export async function migrateLegacyWatchlistNotes(
   return migrated;
 }
 
+// ── Price alerts ─────────────────────────────────────────────────────────
+
+/**
+ * Set or clear a watchlist row's price alert. `targetPrice: null` clears it
+ * entirely. `direction` is computed by the caller — 'above' when the target
+ * is at or above the price at the moment it's set, 'below' otherwise — since
+ * only the caller knows the current price. Setting a target (even the same
+ * value again) always re-arms the alert.
+ */
+export async function setWatchlistAlert(
+  id: number,
+  targetPrice: number | null,
+  direction: AlertDirection | null,
+): Promise<void> {
+  return invoke("db_set_watchlist_alert", { id, targetPrice, direction });
+}
+
+export async function markAlertTriggered(id: number): Promise<void> {
+  return invoke("db_mark_alert_triggered", {
+    id,
+    triggeredAt: Math.floor(Date.now() / 1000),
+  });
+}
+
+export async function acknowledgeAlert(id: number): Promise<void> {
+  return invoke("db_acknowledge_alert", { id });
+}
+
+export async function acknowledgeAllAlerts(): Promise<void> {
+  return invoke("db_acknowledge_all_alerts");
+}
+
+/** Every watchlist row that has an alert (or ever had a target), across every watch list. */
+export async function listAllWatchlistItems(): Promise<WatchlistItemFull[]> {
+  return invoke<WatchlistItemFull[]>("db_list_all_watchlist_items");
+}
+
+/**
+ * One-time move of buy/sell targets written before migration V25, when they
+ * lived in `localStorage` per watch list rather than as columns on the row —
+ * mirrors `migrateLegacyWatchlistNotes` above. A target already in the
+ * database always wins over the legacy one; direction is inferred the same
+ * way a freshly-set alert's is (target vs. the row's last-known price).
+ */
+export async function migrateLegacyWatchlistTargets(
+  watchlistId: number,
+  items: WatchlistItem[],
+): Promise<number> {
+  const key = `stockfolio-watchlist-targets-${watchlistId}`;
+  const legacy = readLocalJson<Record<string, number>>(key, {});
+  if (Object.keys(legacy).length === 0) {
+    localStorage.removeItem(key);
+    return 0;
+  }
+
+  let migrated = 0;
+  for (const item of items) {
+    if (item.alert_target_price != null) continue;
+    const target = legacy[item.ticker];
+    if (target != null && !isNaN(target) && target > 0) {
+      const referencePrice = item.watch_price ?? target;
+      const direction: AlertDirection = target >= referencePrice ? "above" : "below";
+      await setWatchlistAlert(item.id, target, direction);
+      migrated++;
+    }
+  }
+  localStorage.removeItem(key);
+  return migrated;
+}
+
 // ── Watchlist backup (all watchlists) ─────────────────────────────────────
 
-interface WatchlistItemFull {
-  id: number;
-  ticker: string;
-  watch_price: number | null;
-  created_at: number;
+export interface WatchlistItemFull extends WatchlistItem {
   watchlist_id: number;
-  notes: string | null;
-  notes_updated_at: number | null;
 }
 
 interface WatchlistBackupEntry {
@@ -437,29 +502,31 @@ function readLocalJson<T>(key: string, fallback: T): T {
 
 export async function exportAllWatchlistsBackup(): Promise<boolean> {
   const watchlists = await listWatchlists();
-  const allItems = await invoke<WatchlistItemFull[]>(
-    "db_list_all_watchlist_items",
-  );
+  const allItems = await listAllWatchlistItems();
 
-  const entries: WatchlistBackupEntry[] = watchlists.map((wl) => ({
-    name: wl.name,
-    sort_order: wl.sort_order,
-    items: allItems
-      .filter((i) => i.watchlist_id === wl.id)
-      .map(({ ticker, watch_price, created_at, notes }) => ({
+  const entries: WatchlistBackupEntry[] = watchlists.map((wl) => {
+    const wlItems = allItems.filter((i) => i.watchlist_id === wl.id);
+    const targets: Record<string, number> = {};
+    for (const item of wlItems) {
+      if (item.alert_target_price != null) targets[item.ticker] = item.alert_target_price;
+    }
+    return {
+      name: wl.name,
+      sort_order: wl.sort_order,
+      items: wlItems.map(({ ticker, watch_price, created_at, notes }) => ({
         ticker,
         watch_price,
         created_at,
         notes,
       })),
-    targets: readLocalJson<Record<string, number>>(
-      `stockfolio-watchlist-targets-${wl.id}`,
-      {},
-    ),
-    // No `notes` map here — notes now live per-item (above), in the database,
-    // so they travel with the rest of a WebDAV/NAS sync instead of needing a
-    // manual backup/restore round-trip at all.
-  }));
+      // Alert targets now live in the database too (like notes), but the
+      // backup keeps this shape for compatibility with older backup files.
+      targets,
+      // No `notes` map here — notes now live per-item (above), in the database,
+      // so they travel with the rest of a WebDAV/NAS sync instead of needing a
+      // manual backup/restore round-trip at all.
+    };
+  });
 
   const path = await save({
     defaultPath: `watchlists-backup-${new Date().toISOString().slice(0, 10)}.json`,
@@ -519,19 +586,10 @@ export async function importAllWatchlistsBackup(): Promise<{
       tickersImported++;
     }
 
-    // Merge targets (existing values win)
-    const targetsKey = `stockfolio-watchlist-targets-${watchlistId}`;
-    const existingTargets = readLocalJson<Record<string, number>>(
-      targetsKey,
-      {},
-    );
-    const mergedTargets = { ...entry.targets, ...existingTargets };
-    localStorage.setItem(targetsKey, JSON.stringify(mergedTargets));
-
-    // Notes now live in the database rather than localStorage, so they merge
-    // per-row instead of as a blob — existing values still win, matching
-    // targets above. A backup may carry notes either way: per-item (current
-    // export format) or as v2's legacy ticker-keyed map.
+    // Targets and notes now both live in the database rather than
+    // localStorage, so both merge per-row instead of as a blob — existing
+    // values always win. A backup may carry notes either way: per-item
+    // (current export format) or as v2's legacy ticker-keyed map.
     const noteByTicker = new Map<string, string>();
     for (const [ticker, text] of Object.entries(entry.notes ?? {})) {
       if (text.trim()) noteByTicker.set(ticker, text);
@@ -539,12 +597,22 @@ export async function importAllWatchlistsBackup(): Promise<{
     for (const item of entry.items ?? []) {
       if (item.notes?.trim()) noteByTicker.set(item.ticker, item.notes);
     }
-    if (noteByTicker.size > 0) {
+
+    if (Object.keys(entry.targets ?? {}).length > 0 || noteByTicker.size > 0) {
       const current = await listWatchlist(watchlistId);
       for (const row of current) {
-        if (row.notes?.trim()) continue; // existing value wins
-        const incoming = noteByTicker.get(row.ticker);
-        if (incoming) await updateWatchlistNote(row.id, incoming);
+        if (row.alert_target_price == null) {
+          const target = entry.targets?.[row.ticker];
+          if (target != null && !isNaN(target) && target > 0) {
+            const referencePrice = row.watch_price ?? target;
+            const direction: AlertDirection = target >= referencePrice ? "above" : "below";
+            await setWatchlistAlert(row.id, target, direction);
+          }
+        }
+        if (!row.notes?.trim()) {
+          const incoming = noteByTicker.get(row.ticker);
+          if (incoming) await updateWatchlistNote(row.id, incoming);
+        }
       }
     }
   }

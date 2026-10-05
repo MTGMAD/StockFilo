@@ -22,6 +22,10 @@ pub struct WatchlistItem {
     pub created_at: i64,
     pub notes: Option<String>,
     pub notes_updated_at: Option<i64>,
+    pub alert_target_price: Option<f64>,
+    pub alert_direction: Option<String>,
+    pub alert_triggered_at: Option<i64>,
+    pub alert_acknowledged_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +37,10 @@ pub struct WatchlistItemFull {
     pub watchlist_id: i64,
     pub notes: Option<String>,
     pub notes_updated_at: Option<i64>,
+    pub alert_target_price: Option<f64>,
+    pub alert_direction: Option<String>,
+    pub alert_triggered_at: Option<i64>,
+    pub alert_acknowledged_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,8 +121,9 @@ pub fn db_list_watchlist_items(
 ) -> Result<Vec<WatchlistItem>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, ticker, watch_price, created_at, notes, notes_updated_at FROM watchlist \
-             WHERE watchlist_id = ?1 ORDER BY created_at DESC",
+            "SELECT id, ticker, watch_price, created_at, notes, notes_updated_at, \
+             alert_target_price, alert_direction, alert_triggered_at, alert_acknowledged_at \
+             FROM watchlist WHERE watchlist_id = ?1 ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![watchlist_id], |r| {
             Ok(WatchlistItem {
@@ -124,6 +133,10 @@ pub fn db_list_watchlist_items(
                 created_at: r.get(3)?,
                 notes: r.get(4)?,
                 notes_updated_at: r.get(5)?,
+                alert_target_price: r.get(6)?,
+                alert_direction: r.get(7)?,
+                alert_triggered_at: r.get(8)?,
+                alert_acknowledged_at: r.get(9)?,
             })
         })?;
         rows.collect()
@@ -136,7 +149,8 @@ pub fn db_list_all_watchlist_items(
 ) -> Result<Vec<WatchlistItemFull>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, ticker, watch_price, created_at, watchlist_id, notes, notes_updated_at \
+            "SELECT id, ticker, watch_price, created_at, watchlist_id, notes, notes_updated_at, \
+             alert_target_price, alert_direction, alert_triggered_at, alert_acknowledged_at \
              FROM watchlist ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -148,6 +162,10 @@ pub fn db_list_all_watchlist_items(
                 watchlist_id: r.get(4)?,
                 notes: r.get(5)?,
                 notes_updated_at: r.get(6)?,
+                alert_target_price: r.get(7)?,
+                alert_direction: r.get(8)?,
+                alert_triggered_at: r.get(9)?,
+                alert_acknowledged_at: r.get(10)?,
             })
         })?;
         rows.collect()
@@ -236,6 +254,73 @@ pub fn db_set_watchlist_note(
         conn.execute(
             "UPDATE watchlist SET notes = ?1, notes_updated_at = ?2 WHERE id = ?3",
             params![trimmed, updated_at, id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Set or clear a watchlist row's price alert. `target_price: None` clears
+/// the alert entirely (target, direction, and any fired/acknowledged state).
+/// Setting a new target always re-arms it — clearing `alert_triggered_at`
+/// and `alert_acknowledged_at` — since a different target is a different
+/// alert, even if it had already fired once under the old value. `direction`
+/// is computed by the caller (target vs. current price at set time) rather
+/// than here, since the DB layer has no opinion on "current price".
+#[tauri::command]
+pub fn db_set_watchlist_alert(
+    id: i64,
+    target_price: Option<f64>,
+    direction: Option<String>,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE watchlist SET alert_target_price = ?1, alert_direction = ?2, \
+             alert_triggered_at = NULL, alert_acknowledged_at = NULL WHERE id = ?3",
+            params![target_price, direction, id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Record that a row's alert has fired. Guarded on `alert_triggered_at IS
+/// NULL` so two overlapping poll ticks can't both "win" and double-fire a
+/// notification for the same crossing.
+#[tauri::command]
+pub fn db_mark_alert_triggered(
+    id: i64,
+    triggered_at: i64,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE watchlist SET alert_triggered_at = ?1 \
+             WHERE id = ?2 AND alert_triggered_at IS NULL",
+            params![triggered_at, id],
+        )?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn db_acknowledge_alert(id: i64, state: State<'_, DbManager>) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE watchlist SET alert_acknowledged_at = ?1 WHERE id = ?2",
+            params![now_secs(), id],
+        )?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn db_acknowledge_all_alerts(state: State<'_, DbManager>) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE watchlist SET alert_acknowledged_at = ?1 \
+             WHERE alert_triggered_at IS NOT NULL \
+             AND (alert_acknowledged_at IS NULL OR alert_acknowledged_at < alert_triggered_at)",
+            params![now_secs()],
         )?;
         Ok(())
     })
