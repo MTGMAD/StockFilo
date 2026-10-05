@@ -254,7 +254,17 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 25);
+        assert_eq!(v, 26);
+    }
+
+    #[test]
+    fn v26_creates_journal_notes() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let cols = columns(&conn, "journal_notes");
+        for c in ["portfolio_id", "trade_key", "reflection", "lesson", "tags", "updated_at"] {
+            assert!(cols.contains(&c.to_string()), "missing column {c}");
+        }
     }
 
     #[test]
@@ -574,7 +584,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 25);
+        assert_eq!(v, 26);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -629,7 +639,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 25);
+        assert_eq!(after, 26);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -934,6 +944,23 @@ ALTER TABLE watchlist ADD COLUMN alert_triggered_at INTEGER;
 ALTER TABLE watchlist ADD COLUMN alert_acknowledged_at INTEGER;
 "#;
 
+/// Trading journal notes. One row per journaled item: a round-trip trade
+/// (`trade_key` = "TICKER|open-date|n") or a whole day ("day:YYYY-MM-DD").
+/// Trades themselves are derived from purchases/sales/broker transactions, so
+/// only the user's own writing is stored. Purely additive — no existing table
+/// is touched.
+const MIGRATION_V26: &str = r#"
+CREATE TABLE IF NOT EXISTS journal_notes (
+    portfolio_id INTEGER NOT NULL,
+    trade_key    TEXT NOT NULL,
+    reflection   TEXT,
+    lesson       TEXT,
+    tags         TEXT,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (portfolio_id, trade_key)
+);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -964,6 +991,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (23, MIGRATION_V23),
         (24, MIGRATION_V24),
         (25, MIGRATION_V25),
+        (26, MIGRATION_V26),
     ];
 
     let user_version: i64 =

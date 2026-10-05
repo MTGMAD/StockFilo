@@ -478,3 +478,14 @@ export interface BrokerOrder {
   expired_at: string | null;
   updated_at: string | null;
 }
+
+/** The user's own writing about a journaled trade (`trade_key` from
+ *  `buildTrades`) or day (`day:YYYY-MM-DD`). */
+export interface JournalNote {
+  portfolio_id: number;
+  trade_key: string;
+  reflection: string | null;
+  lesson: string | null;
+  tags: string | null;
+  updated_at: number;
+}

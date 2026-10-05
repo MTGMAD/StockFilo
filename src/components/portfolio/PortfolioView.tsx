@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type {
   BrokerTransaction,
@@ -41,6 +41,7 @@ import {
   ClipboardList,
   GripVertical,
   ArrowUpDown,
+  NotebookPen,
 } from "lucide-react";
 import { PortfolioRankView } from "./PortfolioRankView";
 import { MountainChart } from "../analysis/MountainChart";
@@ -48,6 +49,8 @@ import { TickerNews } from "../analysis/TickerNews";
 import { PurchasesTable } from "./PurchasesTable";
 import { CashEventsTable } from "./CashEventsTable";
 import { BrokerTransactionsTable } from "./BrokerTransactionsTable";
+import { JournalView } from "../journal/JournalView";
+import { fillsFromBroker, fillsFromPurchasesAndSales } from "../../lib/journal";
 import { BrokerOrdersView } from "./BrokerOrdersView";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useFavorites } from "../../hooks/useFavorites";
@@ -74,6 +77,7 @@ type PortfolioTab =
   | "purchases"
   | "orders"
   | "cash"
+  | "journal"
   | "settings";
 
 /**
@@ -219,6 +223,13 @@ export function PortfolioView({
     setActiveTab("analysis");
   }, [portfolioId]);
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const journalFills = useMemo(
+    () =>
+      brokerTransactions
+        ? fillsFromBroker(brokerTransactions)
+        : fillsFromPurchasesAndSales(purchases, sales),
+    [brokerTransactions, purchases, sales],
+  );
 
   function selectTicker(ticker: string) {
     setSelectedTicker(ticker);
@@ -956,6 +967,19 @@ export function PortfolioView({
           )}
           <button
             type="button"
+            onClick={() => setActiveTab("journal")}
+            className={cn(
+              "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+              activeTab === "journal"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <NotebookPen className="w-4 h-4" />
+            Journal
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("settings")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
@@ -972,6 +996,12 @@ export function PortfolioView({
         {/* Tab content */}
         {activeTab === "orders" && ordersAccountId != null ? (
           <BrokerOrdersView brokerAccountId={ordersAccountId} />
+        ) : activeTab === "journal" && portfolioId != null ? (
+          <JournalView
+            portfolioId={portfolioId}
+            fills={journalFills}
+            onViewChart={selectTicker}
+          />
         ) : activeTab === "performance" ? (
           isEmpty ? (
             <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">

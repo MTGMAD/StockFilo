@@ -7,6 +7,7 @@ pub mod browser;
 pub mod db_cash_events;
 pub mod db_portfolios;
 pub mod db_purchases;
+pub mod db_journal;
 pub mod db_sales;
 pub mod db_stocks;
 pub mod db_watchlists;

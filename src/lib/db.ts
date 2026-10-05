@@ -17,6 +17,7 @@ import type {
   Purchase,
   CashEvent,
   Sale,
+  JournalNote,
   Stock,
   QuoteResult,
   WatchlistItem,
@@ -1256,4 +1257,29 @@ export async function importAmeripriseCSV(
     skipped,
     unhandled: Object.keys(unhandled).length > 0 ? unhandled : undefined,
   };
+}
+
+// ── Journal ──────────────────────────────────────────────────────────────
+
+export async function listJournalNotes(
+  portfolioId: number,
+): Promise<JournalNote[]> {
+  return invoke<JournalNote[]>("db_list_journal_notes", { portfolioId });
+}
+
+/** Upsert a journal note; one with every field blank is deleted. */
+export async function setJournalNote(
+  portfolioId: number,
+  tradeKey: string,
+  reflection: string | null,
+  lesson: string | null,
+  tags: string | null,
+): Promise<void> {
+  return invoke("db_set_journal_note", {
+    portfolioId,
+    tradeKey,
+    reflection,
+    lesson,
+    tags,
+  });
 }
