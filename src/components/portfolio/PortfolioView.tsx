@@ -1000,6 +1000,7 @@ export function PortfolioView({
           <JournalView
             portfolioId={portfolioId}
             fills={journalFills}
+            income={readOnly ? null : cashEvents}
             onViewChart={selectTicker}
           />
         ) : activeTab === "performance" ? (

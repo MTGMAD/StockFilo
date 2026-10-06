@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#52986c"/>
+      <stop offset="1" stop-color="#1d392b"/>
+    </linearGradient>
+    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dcad6a" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#dcad6a" stop-opacity="0.04"/>
+    </linearGradient>
+    <clipPath id="tile"><rect x="32" y="32" width="448" height="448" rx="104"/></clipPath>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="url(#bg)"/>
+  <g clip-path="url(#tile)">
+    <path d="M32 398 C92 374 134 380 194 352 C254 324 304 290 364 262 C414 238 448 220 482 200 V480 H32 Z" fill="url(#fill)"/>
+    <path d="M32 398 C92 374 134 380 194 352 C254 324 304 290 364 262 C414 238 448 220 482 200" fill="none" stroke="#dcad6a" stroke-opacity="0.85" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <circle cx="466" cy="204" r="15" fill="#dcad6a" fill-opacity="0.45"/>
+  <circle cx="466" cy="204" r="7.5" fill="#f8f6f1"/>
+  <text x="256" y="300" text-anchor="middle" font-family="Arial Black, Arial, Helvetica, sans-serif" font-weight="900" font-size="236" letter-spacing="-12" fill="#f8f6f1">SF</text>
+</svg>

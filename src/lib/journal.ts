@@ -273,3 +273,351 @@ export function equityCurve(
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((d) => ({ date: d.date, cum: (cum += d.pnl) }));
 }
+
+// ── Tags, filters and reviews ────────────────────────────────────────────
+
+/** Tags offered as one-click chips in the note editor. */
+export const SUGGESTED_TAGS = [
+  "breakout",
+  "earnings",
+  "dip buy",
+  "plan followed",
+  "fomo",
+  "early exit",
+  "chased",
+  "no plan",
+  "oversized",
+];
+
+/** Tags that mark a mistake; the Reports tab totals what they cost. */
+export const MISTAKE_TAGS = new Set([
+  "mistake",
+  "fomo",
+  "early exit",
+  "chased",
+  "revenge",
+  "no plan",
+  "oversized",
+]);
+
+export function parseTags(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const seen = new Set<string>();
+  for (const part of raw.split(",")) {
+    const t = part.trim().toLowerCase();
+    if (t) seen.add(t);
+  }
+  return [...seen];
+}
+
+export interface NoteLike {
+  reflection: string | null;
+  lesson: string | null;
+  tags: string | null;
+}
+
+export type NoteMap = Map<string, NoteLike>;
+
+export function hasNote(n: NoteLike | undefined): boolean {
+  return !!n && !!(n.reflection?.trim() || n.lesson?.trim() || n.tags?.trim());
+}
+
+/** A trade is awaiting review when it has realized something but has no
+ *  reflection, lesson or tag yet. */
+export function needsReview(t: JournalTrade, notes: NoteMap): boolean {
+  return t.lastExitDate != null && !hasNote(notes.get(t.key));
+}
+
+export interface TradeFilter {
+  ticker: string;
+  status: "all" | "win" | "loss" | "partial" | "open";
+  tag: string; // "" = any
+  from: string; // inclusive ISO date of the latest exit/open; "" = any
+  to: string;
+  unreviewedOnly: boolean;
+}
+
+export const EMPTY_FILTER: TradeFilter = {
+  ticker: "",
+  status: "all",
+  tag: "",
+  from: "",
+  to: "",
+  unreviewedOnly: false,
+};
+
+export function isFilterActive(f: TradeFilter): boolean {
+  return (
+    f.ticker.trim() !== "" ||
+    f.status !== "all" ||
+    f.tag !== "" ||
+    f.from !== "" ||
+    f.to !== "" ||
+    f.unreviewedOnly
+  );
+}
+
+export function filterTrades(
+  trades: JournalTrade[],
+  f: TradeFilter,
+  notes: NoteMap,
+): JournalTrade[] {
+  const ticker = f.ticker.trim().toUpperCase();
+  return trades.filter((t) => {
+    if (ticker && !t.ticker.toUpperCase().includes(ticker)) return false;
+    if (f.status !== "all" && t.status !== f.status) return false;
+    if (f.tag && !parseTags(notes.get(t.key)?.tags).includes(f.tag)) return false;
+    const when = t.lastExitDate ?? t.openDate;
+    if (f.from && when < f.from) return false;
+    if (f.to && when > f.to) return false;
+    if (f.unreviewedOnly && !needsReview(t, notes)) return false;
+    return true;
+  });
+}
+
+export function allTags(notes: NoteMap): string[] {
+  const set = new Set<string>();
+  for (const n of notes.values()) parseTags(n.tags).forEach((t) => set.add(t));
+  return [...set].sort();
+}
+
+// ── Grouped reports ──────────────────────────────────────────────────────
+
+export interface GroupRow {
+  key: string;
+  trades: number;
+  wins: number;
+  winRate: number;
+  avgWin: number;
+  avgLoss: number;
+  /** Average realized P&L per trade. */
+  expectancy: number;
+  pnl: number;
+}
+
+/** Trades that have realized something — the unit every report counts. */
+export function realizedTrades(trades: JournalTrade[]): JournalTrade[] {
+  return trades.filter((t) => t.lastExitDate != null);
+}
+
+function rowFor(key: string, list: JournalTrade[]): GroupRow {
+  const pnls = list.map((t) => t.realizedPnl);
+  const wins = pnls.filter((p) => p > 0);
+  const losses = pnls.filter((p) => p <= 0);
+  const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
+  return {
+    key,
+    trades: list.length,
+    wins: wins.length,
+    winRate: list.length ? wins.length / list.length : 0,
+    avgWin: wins.length ? sum(wins) / wins.length : 0,
+    avgLoss: losses.length ? sum(losses) / losses.length : 0,
+    expectancy: list.length ? sum(pnls) / list.length : 0,
+    pnl: sum(pnls),
+  };
+}
+
+/** Group realized trades by one or more keys (a trade with several tags lands
+ *  in each tag's group). Rows come back sorted by total P&L, best first. */
+export function groupReport(
+  trades: JournalTrade[],
+  keysOf: (t: JournalTrade) => string[],
+): GroupRow[] {
+  const groups = new Map<string, JournalTrade[]>();
+  for (const t of realizedTrades(trades)) {
+    for (const k of keysOf(t)) {
+      const list = groups.get(k) ?? [];
+      list.push(t);
+      groups.set(k, list);
+    }
+  }
+  return [...groups].map(([k, l]) => rowFor(k, l)).sort((a, b) => b.pnl - a.pnl);
+}
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+export function weekdayOf(isoDate: string): string {
+  return WEEKDAYS[new Date(isoDate + "T00:00:00Z").getUTCDay()];
+}
+
+export const WEEKDAY_ORDER = WEEKDAYS.slice(1, 6);
+
+export function holdBucket(days: number): string {
+  if (days === 0) return "Same day";
+  if (days <= 6) return "1–6 days";
+  if (days <= 29) return "1–4 weeks";
+  if (days <= 89) return "1–3 months";
+  return "3+ months";
+}
+
+export const HOLD_ORDER = ["Same day", "1–6 days", "1–4 weeks", "1–3 months", "3+ months"];
+
+export interface MistakeCost {
+  mistakeTrades: number;
+  mistakePnl: number;
+  otherTrades: number;
+  otherPnl: number;
+}
+
+/** What trades carrying a mistake tag cost compared with the rest. */
+export function mistakeCost(trades: JournalTrade[], notes: NoteMap): MistakeCost {
+  const out: MistakeCost = { mistakeTrades: 0, mistakePnl: 0, otherTrades: 0, otherPnl: 0 };
+  for (const t of realizedTrades(trades)) {
+    const isMistake = parseTags(notes.get(t.key)?.tags).some((x) => MISTAKE_TAGS.has(x));
+    if (isMistake) {
+      out.mistakeTrades += 1;
+      out.mistakePnl += t.realizedPnl;
+    } else {
+      out.otherTrades += 1;
+      out.otherPnl += t.realizedPnl;
+    }
+  }
+  return out;
+}
+
+export function pnlBuckets(
+  trades: JournalTrade[],
+  count = 8,
+): { lo: number; hi: number; n: number }[] {
+  const pnls = realizedTrades(trades).map((t) => t.realizedPnl);
+  if (pnls.length === 0) return [];
+  const min = Math.min(...pnls);
+  const max = Math.max(...pnls);
+  if (min === max) return [{ lo: min, hi: max, n: pnls.length }];
+  const step = (max - min) / count;
+  const buckets = Array.from({ length: count }, (_, i) => ({
+    lo: min + i * step,
+    hi: min + (i + 1) * step,
+    n: 0,
+  }));
+  for (const p of pnls) {
+    buckets[Math.min(count - 1, Math.floor((p - min) / step))].n += 1;
+  }
+  return buckets;
+}
+
+// ── Dividends and fees ───────────────────────────────────────────────────
+
+export interface IncomeEvent {
+  kind: string;
+  ticker: string | null;
+  amount: number; // signed: dividends/interest positive, fees negative
+  occurred_at: string;
+}
+
+/** Dividends, interest and fees for a ticker while a trade was on. Sale
+ *  proceeds are excluded — they are the trade itself, not extra return. */
+export function tradeIncome(t: JournalTrade, events: IncomeEvent[]): number {
+  const end = t.closeDate ?? "9999-12-31";
+  return events
+    .filter(
+      (e) =>
+        e.kind !== "sale" &&
+        e.ticker === t.ticker &&
+        e.occurred_at >= t.openDate &&
+        e.occurred_at <= end,
+    )
+    .reduce((s, e) => s + e.amount, 0);
+}
+
+/** All dividends/interest/fees dated within the window, any ticker. */
+export function periodIncome(events: IncomeEvent[], from?: string, to?: string): number {
+  return events
+    .filter(
+      (e) =>
+        e.kind !== "sale" && (!from || e.occurred_at >= from) && (!to || e.occurred_at <= to),
+    )
+    .reduce((s, e) => s + e.amount, 0);
+}
+
+// ── Peak and drawdown during the hold ────────────────────────────────────
+
+export interface DailyBar {
+  date: string; // YYYY-MM-DD
+  high: number;
+  low: number;
+  close: number;
+}
+
+export interface Excursion {
+  /** Best price reached during the hold, as % above average entry. */
+  mfePct: number;
+  /** Worst price reached during the hold, as % below average entry (≤ 0). */
+  maePct: number;
+  peakPrice: number;
+  /** Share of the peak gain captured by the exit; null when the trade never
+   *  traded above entry. Capped at 100%, may be negative. */
+  exitEfficiency: number | null;
+  /** Peak gain given back by selling below the high, in dollars. */
+  gaveBack: number;
+}
+
+/** Peak/drawdown from daily bars across the hold. Daily highs and lows can
+ *  predate the buy or follow the sell on those days, so the numbers lean a
+ *  little generous; same-day trades are skipped because they cannot be told
+ *  apart from a single bar. Only trades that have exited qualify. */
+export function computeExcursion(t: JournalTrade, bars: DailyBar[]): Excursion | null {
+  if (t.avgExit == null) return null;
+  if (t.closeDate == null || t.holdDays === 0) return null;
+  const window = bars.filter((b) => b.date >= t.openDate && b.date <= t.closeDate!);
+  if (window.length === 0) return null;
+  const peak = Math.max(...window.map((b) => b.high));
+  const trough = Math.min(...window.map((b) => b.low));
+  const entry = t.avgEntry;
+  const mfePct = ((peak - entry) / entry) * 100;
+  const maePct = Math.min(0, ((trough - entry) / entry) * 100);
+  const room = peak - entry;
+  return {
+    mfePct: Math.max(0, mfePct),
+    maePct,
+    peakPrice: peak,
+    exitEfficiency: room > 0 ? Math.min(1, (t.avgExit - entry) / room) : null,
+    gaveBack: Math.max(0, (peak - t.avgExit) * t.totalSold),
+  };
+}
+
+/** Yahoo range wide enough to cover a date, with a margin for context. */
+export function rangeCovering(fromDate: string, today = new Date()): string {
+  const from = Date.parse(fromDate + "T00:00:00Z") - 45 * 86_400_000;
+  const days = (today.getTime() - from) / 86_400_000;
+  if (days <= 30) return "1mo";
+  if (days <= 90) return "3mo";
+  if (days <= 180) return "6mo";
+  if (days <= 365) return "1y";
+  if (days <= 730) return "2y";
+  if (days <= 1825) return "5y";
+  if (days <= 3650) return "10y";
+  return "max";
+}
+
+// ── CSV export ───────────────────────────────────────────────────────────
+
+function csvCell(v: string | number | null): string {
+  if (v == null) return "";
+  const s = String(v);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export function tradesToCsv(
+  trades: JournalTrade[],
+  notes: NoteMap,
+  income: (t: JournalTrade) => number | null,
+): string {
+  const header = [
+    "ticker", "status", "opened", "last_exit", "closed", "shares_bought", "shares_sold",
+    "avg_entry", "avg_exit", "realized_pnl", "dividends_and_fees", "hold_days",
+    "tags", "reflection", "lesson",
+  ];
+  const rows = trades.map((t) => {
+    const n = notes.get(t.key);
+    return [
+      t.ticker, t.status, t.openDate, t.lastExitDate, t.closeDate, t.totalBought, t.totalSold,
+      t.avgEntry.toFixed(4), t.avgExit?.toFixed(4) ?? null, t.realizedPnl.toFixed(2),
+      income(t)?.toFixed(2) ?? null, t.holdDays,
+      n?.tags ?? null, n?.reflection ?? null, n?.lesson ?? null,
+    ]
+      .map(csvCell)
+      .join(",");
+  });
+  return [header.join(","), ...rows].join("\n");
+}

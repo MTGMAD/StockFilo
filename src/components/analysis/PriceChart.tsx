@@ -73,11 +73,11 @@ function resolveRgb(cssColor: string): [number, number, number] {
   return [Number(parts[0]), Number(parts[1]), Number(parts[2])];
 }
 
-function rgba([r, g, b]: [number, number, number], alpha: number): string {
+export function rgba([r, g, b]: [number, number, number], alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function palette() {
+export function palette() {
   const up = resolveRgb(getCssVar("--positive"));
   const down = resolveRgb(getCssVar("--negative"));
   const text = resolveRgb(getCssVar("--muted-foreground"));

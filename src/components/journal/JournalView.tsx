@@ -1,26 +1,44 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  LineChart,
+  Download,
   NotebookPen,
 } from "lucide-react";
 import type { JournalNote } from "../../types";
 import { cn, formatCurrency, pnlColor } from "../../lib/utils";
-import { listJournalNotes, setJournalNote } from "../../lib/db";
+import { listJournalNotes } from "../../lib/db";
 import {
+  EMPTY_FILTER,
+  allTags,
   buildTrades,
   equityCurve,
+  filterTrades,
+  isFilterActive,
+  needsReview,
+  periodIncome,
   periodStats,
   summarizeDays,
+  tradeIncome,
+  tradesToCsv,
   type Fill,
+  type IncomeEvent,
   type JournalTrade,
+  type TradeFilter,
 } from "../../lib/journal";
+import { saveJournalCsv } from "../../lib/journalExport";
+import { NoteBox } from "./NoteBox";
+import { TradeDetail } from "./TradeDetail";
+import { JournalFilters } from "./JournalFilters";
+import { JournalReports } from "./JournalReports";
+import { Stat, StatusBadge, compactMoney, shortDate } from "./journalUi";
 
 interface JournalViewProps {
   portfolioId: number;
   fills: Fill[];
+  /** Dividends, interest and fees. Pass null for accounts that don't record them
+   *  (broker-linked accounts only sync buys and sells). */
+  income: IncomeEvent[] | null;
   onViewChart: (ticker: string) => void;
 }
 
@@ -33,32 +51,22 @@ const MONTHS = [
 const iso = (y: number, m: number, d: number) =>
   `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 
-function shortDate(d: string): string {
-  const [y, m, day] = d.split("-").map(Number);
-  return new Date(y, m - 1, day).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+const isoDate = (d: Date) => iso(d.getFullYear(), d.getMonth(), d.getDate());
 
-function compactMoney(v: number): string {
-  const sign = v < 0 ? "-" : "";
-  return `${sign}$${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-}
+export function JournalView({ portfolioId, fills, income, onViewChart }: JournalViewProps) {
+  const allTrades = useMemo(() => buildTrades(fills), [fills]);
+  const [notes, setNotes] = useState<Map<string, JournalNote>>(new Map());
+  const [filter, setFilter] = useState<TradeFilter>(EMPTY_FILTER);
+  const [section, setSection] = useState<"trades" | "reports">("trades");
+  const filterActive = isFilterActive(filter);
 
-function holdLabel(days: number): string {
-  if (days === 0) return "Same day";
-  return days === 1 ? "1 day" : `${days} days`;
-}
-
-export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProps) {
-  const trades = useMemo(() => buildTrades(fills), [fills]);
+  const trades = useMemo(() => filterTrades(allTrades, filter, notes), [allTrades, filter, notes]);
   const days = useMemo(() => summarizeDays(trades), [trades]);
   const curve = useMemo(() => equityCurve(days), [days]);
+  const tags = useMemo(() => allTags(notes), [notes]);
 
   const latest = useMemo(() => {
-    const dates = [...days.keys()].sort();
+    const dates = [...summarizeDays(allTrades).keys()].sort();
     const last = dates[dates.length - 1];
     if (last) {
       const [y, m] = last.split("-").map(Number);
@@ -66,18 +74,18 @@ export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProp
     }
     const now = new Date();
     return { y: now.getFullYear(), m: now.getMonth() };
-  }, [days]);
+  }, [allTrades]);
 
   const [cursor, setCursor] = useState(latest);
   const [range, setRange] = useState<"month" | "all">("month");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [notes, setNotes] = useState<Map<string, JournalNote>>(new Map());
 
   useEffect(() => {
     setCursor(latest);
     setSelectedDate(null);
     setSelectedKey(null);
+    setFilter(EMPTY_FILTER);
     // Reset only when switching account, not each time fills refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioId]);
@@ -104,21 +112,53 @@ export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProp
         : periodStats(trades),
     [trades, range, monthFrom, monthTo],
   );
+  const periodDividends = income
+    ? range === "month"
+      ? periodIncome(income, monthFrom, monthTo)
+      : periodIncome(income)
+    : null;
+  const incomeFor = (t: JournalTrade) => (income ? tradeIncome(t, income) : null);
 
-  const selectedTrade = trades.find((t) => t.key === selectedKey) ?? null;
+  const selectedTrade = allTrades.find((t) => t.key === selectedKey) ?? null;
 
   const listTrades = useMemo(() => {
     const touches = (t: JournalTrade, pred: (d: string) => boolean) =>
       t.fills.some((f) => pred(f.date));
     if (selectedDate) return trades.filter((t) => touches(t, (d) => d === selectedDate));
-    if (range === "all") return trades;
+    if (range === "all" || filterActive) return trades;
     return trades.filter((t) => touches(t, (d) => d >= monthFrom && d <= monthTo));
-  }, [trades, selectedDate, range, monthFrom, monthTo]);
+  }, [trades, selectedDate, range, filterActive, monthFrom, monthTo]);
+
+  // Weekly review: what closed in the last 7 days, and what still needs words.
+  const weekAgo = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return isoDate(d);
+  }, []);
+  const recent = useMemo(
+    () => allTrades.filter((t) => t.lastExitDate != null && t.lastExitDate >= weekAgo),
+    [allTrades, weekAgo],
+  );
+  const recentUnreviewed = recent.filter((t) => needsReview(t, notes));
+  const recentPnl = periodStats(allTrades, weekAgo).pnl;
 
   function shiftMonth(delta: number) {
     const d = new Date(cursor.y, cursor.m + delta, 1);
     setCursor({ y: d.getFullYear(), m: d.getMonth() });
     setSelectedDate(null);
+  }
+
+  function openTrade(key: string) {
+    setSection("trades");
+    setSelectedKey(key);
+  }
+
+  async function exportCsv() {
+    try {
+      await saveJournalCsv(tradesToCsv(trades, notes, incomeFor));
+    } catch (e) {
+      window.alert(`Couldn't export the journal: ${e}`);
+    }
   }
 
   if (fills.length === 0) {
@@ -143,6 +183,40 @@ export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProp
   ];
 
   return (
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className="flex items-center gap-3 px-5 py-2.5 border-b border-border">
+        <div className="inline-flex rounded-md border border-border text-sm overflow-hidden">
+          {(["trades", "reports"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSection(s)}
+              className={cn("px-4 py-1 capitalize", section === s ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={exportCsv}
+          className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          title="Export the trades currently shown, with notes, to CSV"
+        >
+          <Download className="w-3.5 h-3.5" /> Export CSV
+        </button>
+      </div>
+      <JournalFilters
+        filter={filter}
+        onChange={(f) => { setFilter(f); setSelectedDate(null); }}
+        tags={tags}
+        shown={trades.length}
+        total={allTrades.length}
+      />
+
+      {section === "reports" ? (
+        <JournalReports trades={trades} notes={notes} onOpenTrade={openTrade} />
+      ) : (
     <div className="flex-1 flex min-h-0 overflow-hidden">
       {/* Left: calendar + stats */}
       <div className="w-[440px] shrink-0 border-r border-border overflow-y-auto p-5 flex flex-col gap-5">
@@ -237,7 +311,23 @@ export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProp
             <Stat label="Profit factor" value={stats.profitFactor == null ? "∞" : stats.profitFactor.toFixed(2)} />
             <Stat label="Best trade" value={stats.best == null ? "—" : formatCurrency(stats.best)} className={pnlColor(stats.best)} />
             <Stat label="Worst trade" value={stats.worst == null ? "—" : formatCurrency(stats.worst)} className={pnlColor(stats.worst)} />
+            {periodDividends != null && (
+              <>
+                <Stat label="Dividends & fees" value={formatCurrency(periodDividends)} className={pnlColor(periodDividends)} />
+                <Stat
+                  label="Total return"
+                  value={formatCurrency(stats.pnl + periodDividends)}
+                  className={pnlColor(stats.pnl + periodDividends)}
+                  hint="Realized P&L plus dividends, interest and fees in the same period"
+                />
+              </>
+            )}
           </div>
+          {income == null && (
+            <p className="text-[10px] text-muted-foreground mt-3">
+              Trades only — dividends and fees aren't synced from brokerage accounts.
+            </p>
+          )}
         </div>
 
         <EquityCurve points={curve} />
@@ -250,19 +340,50 @@ export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProp
             trade={selectedTrade}
             note={notes.get(selectedTrade.key)}
             portfolioId={portfolioId}
+            income={incomeFor(selectedTrade)}
             onSaved={reloadNotes}
             onBack={() => setSelectedKey(null)}
             onViewChart={onViewChart}
           />
         ) : (
           <>
+            {recent.length > 0 && !selectedDate && !filter.unreviewedOnly && (
+              <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 mb-4 text-sm">
+                <div className="flex-1">
+                  <span className="font-medium">Weekly review</span>
+                  <span className="text-muted-foreground">
+                    {" "}· {recent.length} trade{recent.length === 1 ? "" : "s"} with exits in the last 7 days,{" "}
+                  </span>
+                  <span className={cn("font-medium", pnlColor(recentPnl))}>{formatCurrency(recentPnl)}</span>
+                  <span className="text-muted-foreground">
+                    {recentUnreviewed.length > 0
+                      ? ` · ${recentUnreviewed.length} still need notes`
+                      : " · all reviewed ✓"}
+                  </span>
+                </div>
+                {recentUnreviewed.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn-primary text-xs"
+                    onClick={() => {
+                      setFilter({ ...EMPTY_FILTER, unreviewedOnly: true, from: weekAgo });
+                      setRange("all");
+                    }}
+                  >
+                    Review them
+                  </button>
+                )}
+              </div>
+            )}
             <div className="flex items-baseline justify-between mb-3">
               <h2 className="font-semibold">
                 {selectedDate
                   ? `Trades on ${shortDate(selectedDate)}`
-                  : range === "month"
-                    ? `Trades in ${MONTHS[cursor.m]} ${cursor.y}`
-                    : "All trades"}
+                  : filterActive
+                    ? "Filtered trades"
+                    : range === "month"
+                      ? `Trades in ${MONTHS[cursor.m]} ${cursor.y}`
+                      : "All trades"}
               </h2>
               <span className="text-xs text-muted-foreground">{listTrades.length} trade{listTrades.length === 1 ? "" : "s"}</span>
             </div>
@@ -290,6 +411,8 @@ export function JournalView({ portfolioId, fills, onViewChart }: JournalViewProp
         )}
       </div>
     </div>
+      )}
+    </div>
   );
 }
 
@@ -298,31 +421,6 @@ function Legend({ color, label }: { color: string; label: string }) {
     <span className="flex items-center gap-1.5">
       <span className={cn("w-2 h-2 rounded-full", color)} />
       {label}
-    </span>
-  );
-}
-
-function Stat({ label, value, className }: { label: string; value: string; className?: string }) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={cn("text-lg font-semibold tabular-nums", className)}>{value}</div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: JournalTrade["status"] }) {
-  return (
-    <span
-      className={cn(
-        "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide",
-        status === "win" && "bg-positive/15 text-positive",
-        status === "loss" && "bg-negative/15 text-negative",
-        status === "open" && "bg-warning/15 text-warning",
-        status === "partial" && "bg-primary/15 text-primary",
-      )}
-    >
-      {status === "partial" ? "partial exit" : status}
     </span>
   );
 }
@@ -347,202 +445,6 @@ function TradeRow({ trade, hasNote, onClick }: { trade: JournalTrade; hasNote: b
         {trade.status === "open" ? "—" : formatCurrency(trade.realizedPnl)}
       </span>
     </button>
-  );
-}
-
-function TradeDetail({
-  trade, note, portfolioId, onSaved, onBack, onViewChart,
-}: {
-  trade: JournalTrade;
-  note: JournalNote | undefined;
-  portfolioId: number;
-  onSaved: () => void;
-  onBack: () => void;
-  onViewChart: (ticker: string) => void;
-}) {
-  const fmtQty = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 6 });
-  const exits = Object.keys(trade.exitPnl).length;
-  return (
-    <div className="max-w-2xl flex flex-col gap-5">
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={onBack} className="p-1.5 rounded-full hover:bg-muted" aria-label="Back to trades">
-          <ArrowLeft className="w-4 h-4" />
-        </button>
-        <h2 className="text-xl font-bold">{trade.ticker}</h2>
-        <StatusBadge status={trade.status} />
-        <span className={cn("ml-auto text-xl font-bold tabular-nums", pnlColor(trade.realizedPnl))}>
-          {formatCurrency(trade.realizedPnl)}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-xl bg-muted/50 p-4">
-        <Stat label="Average entry" value={formatCurrency(trade.avgEntry)} />
-        <Stat label="Average exit" value={trade.avgExit == null ? "—" : formatCurrency(trade.avgExit)} />
-        <Stat label="Quantity" value={fmtQty(trade.totalBought)} />
-        <Stat label="Holding time" value={holdLabel(trade.holdDays)} />
-        <Stat label="Position" value={trade.openQty > 0 ? `Long · ${fmtQty(trade.openQty)} still held` : "Long"} />
-        <Stat label="Realized exits" value={String(exits)} />
-      </div>
-
-      <button
-        type="button"
-        onClick={() => onViewChart(trade.ticker)}
-        className="flex items-center justify-center gap-2 rounded-lg border border-border py-2.5 text-sm font-medium text-primary hover:bg-muted/50"
-      >
-        <LineChart className="w-4 h-4" />
-        View {trade.ticker} chart
-      </button>
-
-      <div>
-        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground mb-3">EXECUTIONS</h3>
-        <ol className="flex flex-col">
-          {trade.fills.map((f) => {
-            const pnl = trade.exitPnl[f.id];
-            return (
-              <li key={f.id} className="flex gap-3">
-                <div className="flex flex-col items-center">
-                  <span className={cn("w-2.5 h-2.5 rounded-full mt-1.5", f.side === "buy" ? "bg-positive" : "bg-negative")} />
-                  <span className="flex-1 w-px bg-border" />
-                </div>
-                <div className="flex-1 pb-4 flex justify-between gap-4">
-                  <div>
-                    <div className="font-medium">
-                      {f.drip ? "Dividend reinvestment" : f.side === "buy" ? "Entry" : "Exit"} · {f.side.toUpperCase()} {fmtQty(f.qty)} shares
-                    </div>
-                    <div className="text-xs text-muted-foreground">{shortDate(f.date)}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-medium tabular-nums">{formatCurrency(f.price)}</div>
-                    {pnl != null && (
-                      <div className={cn("text-xs tabular-nums", pnlColor(pnl))}>{formatCurrency(pnl)}</div>
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
-
-      <NoteBox
-        key={trade.key}
-        label="Reflection & learning"
-        portfolioId={portfolioId}
-        noteKey={trade.key}
-        note={note}
-        onSaved={onSaved}
-        withLesson
-        withTags
-      />
-    </div>
-  );
-}
-
-function NoteBox({
-  label, portfolioId, noteKey, note, onSaved, withLesson, withTags, className,
-}: {
-  label: string;
-  portfolioId: number;
-  noteKey: string;
-  note: JournalNote | undefined;
-  onSaved: () => void;
-  withLesson?: boolean;
-  withTags?: boolean;
-  className?: string;
-}) {
-  const [reflection, setReflection] = useState(note?.reflection ?? "");
-  const [lesson, setLesson] = useState(note?.lesson ?? "");
-  const [tags, setTags] = useState(note?.tags ?? "");
-  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const [error, setError] = useState<string | null>(null);
-
-  const dirty =
-    reflection !== (note?.reflection ?? "") ||
-    lesson !== (note?.lesson ?? "") ||
-    tags !== (note?.tags ?? "");
-
-  // Latest values for the unmount flush, which can't see fresh state.
-  const latest = useRef({ reflection, lesson, tags, dirty });
-  latest.current = { reflection, lesson, tags, dirty };
-
-  // Autosave shortly after typing stops, so a note is never lost to a
-  // forgotten Save click.
-  useEffect(() => {
-    if (!dirty) return;
-    setStatus("idle");
-    const timer = setTimeout(async () => {
-      setStatus("saving");
-      setError(null);
-      try {
-        await setJournalNote(portfolioId, noteKey, reflection, lesson, tags);
-        setStatus("saved");
-        onSaved();
-      } catch (e) {
-        setStatus("idle");
-        setError(String(e));
-      }
-    }, 800);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reflection, lesson, tags]);
-
-  // Leaving the screen (or switching trade) inside the debounce window.
-  useEffect(
-    () => () => {
-      const l = latest.current;
-      if (l.dirty) {
-        void setJournalNote(portfolioId, noteKey, l.reflection, l.lesson, l.tags).then(
-          onSaved,
-          () => {},
-        );
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
-
-  const area = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm resize-y min-h-[80px]";
-  return (
-    <div className={cn("flex flex-col gap-2", className)}>
-      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{label}</h3>
-      <textarea
-        className={area}
-        placeholder={withLesson ? "What was the thesis? How did you execute?" : "How did the day go?"}
-        value={reflection}
-        onChange={(e) => setReflection(e.target.value)}
-      />
-      {withLesson && (
-        <textarea
-          className={area}
-          placeholder="What would you do differently next time?"
-          value={lesson}
-          onChange={(e) => setLesson(e.target.value)}
-        />
-      )}
-      {withTags && (
-        <input
-          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-          placeholder="Tags, comma separated (e.g. breakout, earnings, FOMO)"
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-        />
-      )}
-      <div className="flex items-center gap-3">
-        <span className="text-xs text-muted-foreground">
-          {error ? (
-            <span className="text-negative">Couldn't save: {error}</span>
-          ) : status === "saving" ? (
-            "Saving…"
-          ) : dirty ? (
-            "Unsaved changes…"
-          ) : status === "saved" || note ? (
-            "Saved"
-          ) : (
-            "Notes save automatically"
-          )}
-        </span>
-      </div>
-    </div>
   );
 }
 

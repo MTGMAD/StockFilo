@@ -2,6 +2,11 @@
 
 /* ── Design tokens (light) ──────────────────────────────────────────────── */
 :root {
+  /* App logo mark — violet everywhere except the warm theme, which overrides. */
+  --logo-from: #7c3aed;
+  --logo-to: #1e1b4b;
+  --logo-fg: #ffffff;
+  --logo-accent: #ffffff;
   --background: hsl(0 0% 100%);
   --foreground: hsl(224 71.4% 4.1%);
   --muted: hsl(220 14.3% 95.9%);
@@ -56,6 +61,11 @@
 
 /* ── Warm (parchment) theme ─────────────────────────────────────────────── */
 .warm {
+  /* Sage-to-forest green with parchment lettering and an amber trend line. */
+  --logo-from: hsl(142 30% 46%);
+  --logo-to: hsl(150 32% 17%);
+  --logo-fg: hsl(40 35% 96%);
+  --logo-accent: hsl(35 62% 64%);
   --background: hsl(40 35% 96%);
   --foreground: hsl(30 18% 14%);
   --muted: hsl(38 22% 90%);
