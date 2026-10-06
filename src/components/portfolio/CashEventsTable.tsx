@@ -23,11 +23,18 @@ const KIND_STYLE: Record<
   fee: { label: "Fee", badgeClass: "bg-red-500/10 text-red-600", down: true },
 };
 
+const FILTERS: { kind: "all" | CashEvent["kind"]; label: string }[] = [
+  { kind: "all", label: "All" },
+  { kind: "dividend", label: "Dividends" },
+  { kind: "interest", label: "Interest" },
+  { kind: "fee", label: "Fees" },
+  { kind: "sale", label: "Sales" },
+];
+
 interface CashEventsTableProps {
   cashEvents: CashEvent[];
   cashAnchor: CashAnchor | null;
   cashBalance: CashBalance;
-  onResetCalibration: () => Promise<void>;
   tickers: string[];
   onAdd: (
     kind: CashEvent["kind"],
@@ -51,7 +58,6 @@ export function CashEventsTable({
   cashEvents,
   cashAnchor,
   cashBalance,
-  onResetCalibration,
   tickers,
   onAdd,
   onUpdate,
@@ -60,20 +66,7 @@ export function CashEventsTable({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<CashEvent | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
-
-  const total = cashEvents.reduce((sum, e) => sum + e.amount, 0);
-  const dividends = cashEvents
-    .filter((e) => e.kind === "dividend")
-    .reduce((sum, e) => sum + e.amount, 0);
-  const interest = cashEvents
-    .filter((e) => e.kind === "interest")
-    .reduce((sum, e) => sum + e.amount, 0);
-  const fees = cashEvents
-    .filter((e) => e.kind === "fee")
-    .reduce((sum, e) => sum + e.amount, 0);
-  const saleProceeds = cashEvents
-    .filter((e) => e.kind === "sale")
-    .reduce((sum, e) => sum + e.amount, 0);
+  const [typeFilter, setTypeFilter] = useState<"all" | CashEvent["kind"]>("all");
 
   return (
     <div className="flex flex-col h-full">
@@ -88,82 +81,58 @@ export function CashEventsTable({
           >
             {cashBalance.balance == null ? "—" : formatCurrency(cashBalance.balance)}
           </span>
-          {cashAnchor && (
+          <div className="ml-auto flex items-center gap-3 self-center">
             <button
               type="button"
-              onClick={() => void onResetCalibration()}
-              className="ml-auto text-xs text-muted-foreground hover:text-foreground underline"
-              title="Forget the balance taken from the imported file"
+              onClick={() => {
+                setEditing(null);
+                setDialogOpen(true);
+              }}
+              className="btn-primary flex items-center gap-1 px-2.5 py-1 text-xs"
             >
-              Reset
+              <Plus className="w-3.5 h-3.5" />
+              Add cash event
             </button>
-          )}
+          </div>
         </div>
         <p className="text-xs text-muted-foreground mt-1">
           {cashBalance.mode === "anchored" && cashAnchor
-            ? `Worked out from your imported activity file as of ${cashAnchor.as_of}. Anything dated after that adds to it, and purchases take from it. Re-import a newer file to refresh it.`
+            ? `Worked out from your imported activity file as of ${cashAnchor.as_of}. Anything dated after that adds to it, and purchases take from it. Importing a newer file updates it.`
             : cashBalance.mode === "events"
               ? "Not a real balance yet — it only adds up recorded dividends, fees and sale proceeds, and doesn't subtract what you bought. Import your latest account activity file (Settings tab) and it will be worked out for you."
               : "Import your account activity file (Settings tab) and the cash balance will be worked out for you."}
         </p>
       </div>
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border gap-4">
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span>
-            Dividends{" "}
-            <span className="font-semibold text-foreground">
-              {formatCurrency(dividends)}
-            </span>
-          </span>
-          {interest > 0 && (
-            <span>
-              Interest{" "}
-              <span className="font-semibold text-foreground">
-                {formatCurrency(interest)}
-              </span>
-            </span>
-          )}
-          <span>
-            Fees{" "}
-            <span className="font-semibold text-foreground">
-              {formatCurrency(fees)}
-            </span>
-          </span>
-          {saleProceeds > 0 && (
-            <span>
-              Sale Proceeds{" "}
-              <span className="font-semibold text-foreground">
-                {formatCurrency(saleProceeds)}
-              </span>
-            </span>
-          )}
-          <span>
-            Net{" "}
-            <span
-              className={cn(
-                "font-semibold",
-                total > 0
-                  ? "text-positive"
-                  : total < 0
-                    ? "text-negative"
-                    : "text-foreground",
-              )}
-            >
-              {formatCurrency(total)}
-            </span>
-          </span>
+      {cashEvents.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-6 py-2.5 border-b border-border">
+          {FILTERS.filter(
+            (f) => f.kind === "all" || cashEvents.some((e) => e.kind === f.kind),
+          ).map((f) => {
+            const rows = f.kind === "all" ? cashEvents : cashEvents.filter((e) => e.kind === f.kind);
+            const sum = rows.reduce((s, e) => s + e.amount, 0);
+            const active = typeFilter === f.kind;
+            return (
+              <button
+                key={f.kind}
+                type="button"
+                onClick={() => setTypeFilter(f.kind)}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+                  active
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <span className="font-medium">{f.label}</span>
+                <span className={active ? "opacity-80" : ""}>
+                  {/* "All" mixes inflows and fees; its sum isn't a balance, so show only the count. */}
+                  {f.kind === "all" ? rows.length : `${rows.length} · ${formatCurrency(sum)}`}
+                </span>
+              </button>
+            );
+          })}
         </div>
-        <button
-          onClick={() => {
-            setEditing(null);
-            setDialogOpen(true);
-          }}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          Add Cash Event
-        </button>
-      </div>
+      )}
 
       <div className="flex-1 overflow-auto">
         {cashEvents.length === 0 ? (
@@ -199,7 +168,9 @@ export function CashEventsTable({
               </tr>
             </thead>
             <tbody>
-              {cashEvents.map((e) => (
+              {cashEvents
+                .filter((e) => typeFilter === "all" || e.kind === typeFilter)
+                .map((e) => (
                 <tr
                   key={e.id}
                   className="border-b border-border hover:bg-muted/30 transition-colors"

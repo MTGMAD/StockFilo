@@ -11,7 +11,6 @@ import {
   updateCashEvent,
   deleteCashEvent,
   getCashAnchor,
-  clearCashAnchor,
   listSales,
   addSale,
   updateSale,
@@ -220,12 +219,6 @@ export function usePortfolio(portfolioId: number | null) {
   const cash = computeCash(cashAnchor, cashEvents, purchases);
   const cashTotal = cash.balance;
 
-  const resetCashCalibration = useCallback(async () => {
-    if (portfolioId == null) return;
-    await clearCashAnchor(portfolioId);
-    await loadAll();
-  }, [portfolioId, loadAll]);
-
   const summaries: TickerSummary[] = buildFromPurchases(purchases, sales, stocks);
 
   return {
@@ -234,7 +227,6 @@ export function usePortfolio(portfolioId: number | null) {
     cashTotal,
     cashAnchor,
     cashMode: cash.mode,
-    resetCashCalibration,
     sales,
     stocks,
     summaries,

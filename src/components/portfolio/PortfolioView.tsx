@@ -128,7 +128,6 @@ interface PortfolioViewProps {
   cashEvents: CashEvent[];
   /** Cash balance worked out from an imported activity file, if any. */
   cashAnchor: CashAnchor | null;
-  onResetCashCalibration: () => Promise<void>;
   sales: Sale[];
   /** When a spreadsheet/Ameriprise import last completed for this portfolio. */
   lastImportAt: number | null;
@@ -200,7 +199,6 @@ export function PortfolioView({
   purchases,
   cashEvents,
   cashAnchor,
-  onResetCashCalibration,
   sales,
   lastImportAt,
   positionSortMode,
@@ -1313,7 +1311,6 @@ export function PortfolioView({
             cashEvents={cashEvents}
             cashAnchor={cashAnchor}
             cashBalance={computeCash(cashAnchor, cashEvents, purchases)}
-            onResetCalibration={onResetCashCalibration}
             tickers={[...new Set(purchases.map((p) => p.ticker))].sort()}
             onAdd={onAddCashEvent}
             onUpdate={onUpdateCashEvent}
