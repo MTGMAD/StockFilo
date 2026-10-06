@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { CashEvent } from "../../types";
+import type { CashAnchor, CashEvent } from "../../types";
+import type { CashBalance } from "../../lib/cash";
 import { formatCurrency, cn } from "../../lib/utils";
 import { CashEventDialog } from "./CashEventDialog";
 import { Pencil, Trash2, Plus, TrendingUp, TrendingDown, Lock } from "lucide-react";
@@ -24,6 +25,9 @@ const KIND_STYLE: Record<
 
 interface CashEventsTableProps {
   cashEvents: CashEvent[];
+  cashAnchor: CashAnchor | null;
+  cashBalance: CashBalance;
+  onResetCalibration: () => Promise<void>;
   tickers: string[];
   onAdd: (
     kind: CashEvent["kind"],
@@ -45,6 +49,9 @@ interface CashEventsTableProps {
 
 export function CashEventsTable({
   cashEvents,
+  cashAnchor,
+  cashBalance,
+  onResetCalibration,
   tickers,
   onAdd,
   onUpdate,
@@ -70,6 +77,36 @@ export function CashEventsTable({
 
   return (
     <div className="flex flex-col h-full">
+      <div className="px-6 py-3 border-b border-border bg-muted/30">
+        <div className="flex items-baseline gap-3">
+          <span className="text-xs font-semibold tracking-wide text-muted-foreground">CASH BALANCE</span>
+          <span
+            className={cn(
+              "text-xl font-bold tabular-nums",
+              cashBalance.balance != null && cashBalance.balance < 0 && "text-negative",
+            )}
+          >
+            {cashBalance.balance == null ? "—" : formatCurrency(cashBalance.balance)}
+          </span>
+          {cashAnchor && (
+            <button
+              type="button"
+              onClick={() => void onResetCalibration()}
+              className="ml-auto text-xs text-muted-foreground hover:text-foreground underline"
+              title="Forget the balance taken from the imported file"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">
+          {cashBalance.mode === "anchored" && cashAnchor
+            ? `Worked out from your imported activity file as of ${cashAnchor.as_of}. Anything dated after that adds to it, and purchases take from it. Re-import a newer file to refresh it.`
+            : cashBalance.mode === "events"
+              ? "Not a real balance yet — it only adds up recorded dividends, fees and sale proceeds, and doesn't subtract what you bought. Import your latest account activity file (Settings tab) and it will be worked out for you."
+              : "Import your account activity file (Settings tab) and the cash balance will be worked out for you."}
+        </p>
+      </div>
       <div className="flex items-center justify-between px-6 py-3 border-b border-border gap-4">
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span>

@@ -197,6 +197,8 @@ export default function App() {
   const {
     cashEvents,
     cashTotal,
+    cashAnchor,
+    resetCashCalibration,
     addCashEvent,
     updateCashEvent,
     removeCashEvent,
@@ -436,6 +438,8 @@ export default function App() {
               }
               purchases={purchases}
               cashEvents={cashEvents}
+              cashAnchor={cashAnchor}
+              onResetCashCalibration={resetCashCalibration}
               sales={sales}
               lastImportAt={activePortfolio?.last_import_at ?? null}
               positionSortMode={activePortfolio?.position_sort_mode ?? "gainers"}

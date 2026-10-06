@@ -56,6 +56,9 @@ pub fn run() {
             commands::db_sales::db_add_sale,
             commands::db_sales::db_update_sale,
             commands::db_sales::db_delete_sale,
+            commands::db_cash_anchor::db_get_cash_anchor,
+            commands::db_cash_anchor::db_set_cash_anchor,
+            commands::db_cash_anchor::db_clear_cash_anchor,
             commands::db_journal::db_list_journal_notes,
             commands::db_journal::db_set_journal_note,
             // ── Stocks DB commands ─────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import type { CashEvent, Purchase, Sale, Stock, TickerSummary } from "../types";
+import type { CashAnchor, CashEvent, Purchase, Sale, Stock, TickerSummary } from "../types";
+import { computeCash } from "../lib/cash";
 import {
   listPurchases,
   addPurchase,
@@ -9,6 +10,8 @@ import {
   addCashEvent,
   updateCashEvent,
   deleteCashEvent,
+  getCashAnchor,
+  clearCashAnchor,
   listSales,
   addSale,
   updateSale,
@@ -24,6 +27,7 @@ const POLL_INTERVAL_MS = 30_000; // 30 seconds
 export function usePortfolio(portfolioId: number | null) {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [cashEvents, setCashEvents] = useState<CashEvent[]>([]);
+  const [cashAnchor, setCashAnchor] = useState<CashAnchor | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,17 +43,20 @@ export function usePortfolio(portfolioId: number | null) {
       setPurchases([]);
       purchasesRef.current = [];
       setCashEvents([]);
+      setCashAnchor(null);
       setSales([]);
       setLoading(false);
       return;
     }
     try {
-      const [p, c, sl, s] = await Promise.all([
+      const [p, c, sl, s, anchor] = await Promise.all([
         listPurchases(portfolioId),
         listCashEvents(portfolioId),
         listSales(portfolioId),
         getCachedStocks(),
+        getCashAnchor(portfolioId),
       ]);
+      setCashAnchor(anchor);
       setPurchases(p);
       purchasesRef.current = p;
       setCashEvents(c);
@@ -208,11 +215,16 @@ export function usePortfolio(portfolioId: number | null) {
     [loadAll]
   );
 
-  // Omitted (not 0) when there are no cash events, so an untouched portfolio
-  // doesn't show a misleading "Cash $0" in the header.
-  const cashTotal = cashEvents.length > 0
-    ? cashEvents.reduce((sum, e) => sum + e.amount, 0)
-    : null;
+  // Null (not 0) when there is nothing to base cash on, so an untouched
+  // portfolio doesn't show a misleading "Cash $0" in the header.
+  const cash = computeCash(cashAnchor, cashEvents, purchases);
+  const cashTotal = cash.balance;
+
+  const resetCashCalibration = useCallback(async () => {
+    if (portfolioId == null) return;
+    await clearCashAnchor(portfolioId);
+    await loadAll();
+  }, [portfolioId, loadAll]);
 
   const summaries: TickerSummary[] = buildFromPurchases(purchases, sales, stocks);
 
@@ -220,6 +232,9 @@ export function usePortfolio(portfolioId: number | null) {
     purchases,
     cashEvents,
     cashTotal,
+    cashAnchor,
+    cashMode: cash.mode,
+    resetCashCalibration,
     sales,
     stocks,
     summaries,

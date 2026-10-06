@@ -120,6 +120,8 @@ pub fn db_delete_portfolio(id: i64, state: State<'_, DbManager>) -> Result<(), S
         conn.execute("DELETE FROM purchases WHERE portfolio_id = ?1", params![id])?;
         conn.execute("DELETE FROM sales WHERE portfolio_id = ?1", params![id])?;
         conn.execute("DELETE FROM cash_events WHERE portfolio_id = ?1", params![id])?;
+        conn.execute("DELETE FROM cash_anchors WHERE portfolio_id = ?1", params![id])?;
+        conn.execute("DELETE FROM journal_notes WHERE portfolio_id = ?1", params![id])?;
         conn.execute("DELETE FROM portfolios WHERE id = ?1", params![id])?;
         // Clean up orphaned stock cache entries
         conn.execute(

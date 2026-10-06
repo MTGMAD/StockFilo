@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type {
   BrokerTransaction,
+  CashAnchor,
   CashEvent,
   DividendInfo,
   Sale,
@@ -50,6 +51,7 @@ import { PurchasesTable } from "./PurchasesTable";
 import { CashEventsTable } from "./CashEventsTable";
 import { BrokerTransactionsTable } from "./BrokerTransactionsTable";
 import { JournalView } from "../journal/JournalView";
+import { computeCash } from "../../lib/cash";
 import { fillsFromBroker, fillsFromPurchasesAndSales } from "../../lib/journal";
 import { BrokerOrdersView } from "./BrokerOrdersView";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
@@ -124,6 +126,9 @@ interface PortfolioViewProps {
   portfolioName: string;
   purchases: Purchase[];
   cashEvents: CashEvent[];
+  /** Cash balance worked out from an imported activity file, if any. */
+  cashAnchor: CashAnchor | null;
+  onResetCashCalibration: () => Promise<void>;
   sales: Sale[];
   /** When a spreadsheet/Ameriprise import last completed for this portfolio. */
   lastImportAt: number | null;
@@ -194,6 +199,8 @@ export function PortfolioView({
   portfolioName,
   purchases,
   cashEvents,
+  cashAnchor,
+  onResetCashCalibration,
   sales,
   lastImportAt,
   positionSortMode,
@@ -1304,6 +1311,9 @@ export function PortfolioView({
         ) : activeTab === "cash" ? (
           <CashEventsTable
             cashEvents={cashEvents}
+            cashAnchor={cashAnchor}
+            cashBalance={computeCash(cashAnchor, cashEvents, purchases)}
+            onResetCalibration={onResetCashCalibration}
             tickers={[...new Set(purchases.map((p) => p.ticker))].sort()}
             onAdd={onAddCashEvent}
             onUpdate={onUpdateCashEvent}
@@ -1605,7 +1615,7 @@ function StatCard({
 }
 
 function formatImportMessage(
-  { imported, skipped, unhandled }: ImportResult,
+  { imported, skipped, unhandled, cashCalibrated, possibleDuplicates }: ImportResult,
   noun: string,
   suffix?: string,
 ): string {
@@ -1626,6 +1636,14 @@ function formatImportMessage(
       ([label, count]) => `${count} ${label}${count === 1 ? "" : "s"}`,
     );
     msg += ` Not imported — this app doesn't track these yet: ${parts.join(", ")}.`;
+  }
+
+  if (cashCalibrated) {
+    msg += ` Cash set to ${formatCurrency(cashCalibrated.balance)} as of ${cashCalibrated.asOf}, worked out from the file.`;
+  }
+
+  if (possibleDuplicates && possibleDuplicates.length > 0) {
+    msg += ` Already recorded twice in this portfolio (same trade, different dates) — check the Purchases tab: ${possibleDuplicates.join("; ")}.`;
   }
 
   return msg;

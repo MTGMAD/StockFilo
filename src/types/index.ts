@@ -491,3 +491,12 @@ export interface JournalNote {
   tags: string | null;
   updated_at: number;
 }
+
+/** A manual portfolio's cash balance on one day, worked out from an imported
+ *  activity file. Cash is that balance plus later activity (see lib/cash.ts). */
+export interface CashAnchor {
+  portfolio_id: number;
+  as_of: string; // YYYY-MM-DD
+  balance: number;
+  updated_at: number;
+}

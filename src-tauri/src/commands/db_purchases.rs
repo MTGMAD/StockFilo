@@ -139,6 +139,8 @@ pub fn db_clear_all_purchases(state: State<'_, DbManager>) -> Result<(), String>
         conn.execute("DELETE FROM purchases", [])?;
         conn.execute("DELETE FROM sales", [])?;
         conn.execute("DELETE FROM cash_events", [])?;
+        conn.execute("DELETE FROM cash_anchors", [])?;
+        conn.execute("DELETE FROM journal_notes", [])?;
         conn.execute(
             "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist) \
              AND ticker NOT IN (SELECT ticker FROM broker_positions WHERE ticker IS NOT NULL)",

@@ -254,7 +254,17 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 26);
+        assert_eq!(v, 27);
+    }
+
+    #[test]
+    fn v27_creates_cash_anchors() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let cols = columns(&conn, "cash_anchors");
+        for c in ["portfolio_id", "as_of", "balance", "updated_at"] {
+            assert!(cols.contains(&c.to_string()), "missing column {c}");
+        }
     }
 
     #[test]
@@ -584,7 +594,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 26);
+        assert_eq!(v, 27);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -639,7 +649,7 @@ mod tests {
         assert_eq!(count("portfolios"), f, "portfolio rows changed");
         assert_eq!(count("watchlist"), w, "watchlist rows changed");
         assert_eq!(count("stocks"), s, "stock cache rows changed");
-        assert_eq!(after, 26);
+        assert_eq!(after, 27);
 
         let mut stmt = conn
             .prepare("SELECT id, name, source, broker_account_id FROM portfolios ORDER BY id")
@@ -961,6 +971,20 @@ CREATE TABLE IF NOT EXISTS journal_notes (
 );
 "#;
 
+/// A manual portfolio's real cash balance on a given day, taken from a
+/// statement. Cash is derived from it: the balance plus everything dated after
+/// it (dividends, interest, fees, sale proceeds) minus purchases dated after
+/// it. Without an anchor, cash can only be the sum of cash events, which never
+/// accounts for money spent on buying. Purely additive; one row per portfolio.
+const MIGRATION_V27: &str = r#"
+CREATE TABLE IF NOT EXISTS cash_anchors (
+    portfolio_id INTEGER PRIMARY KEY,
+    as_of        TEXT NOT NULL,
+    balance      REAL NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -992,6 +1016,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (24, MIGRATION_V24),
         (25, MIGRATION_V25),
         (26, MIGRATION_V26),
+        (27, MIGRATION_V27),
     ];
 
     let user_version: i64 =
