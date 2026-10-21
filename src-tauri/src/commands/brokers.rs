@@ -128,7 +128,7 @@ pub async fn broker_save_connection(
     let blob = serde_json::to_string(&credentials).map_err(|e| e.to_string())?;
     secrets::set_secret(&app, &reference, &blob)?;
 
-    let device_id = load_config(&app).device_id;
+    let device_id = load_config(&app)?.device_id;
     let display_label = label.filter(|l| !l.trim().is_empty()).unwrap_or_else(|| {
         format!("{} — {}", descriptor.name, env_label(&provider, &environment))
     });

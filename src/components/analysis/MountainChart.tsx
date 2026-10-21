@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/platform";
 import type { ChartData, ChartRange, ChartStyle } from "../../types";
 import { formatCurrency, cn } from "../../lib/utils";
 import { openUrl } from "../../lib/openUrl";

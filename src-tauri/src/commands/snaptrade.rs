@@ -9,15 +9,15 @@
 //! unchanged. See `brokers::snaptrade` for how that reuse is wired.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tauri::{AppHandle, State};
-use uuid::Uuid;
 
 use crate::brokers::snaptrade::{self, client::SnapTradeClient, map};
-use crate::brokers::store;
 use crate::commands::config::load_config;
 use crate::db::manager::DbManager;
 use crate::secrets;
+
+mod discovery;
 
 /// This app's SnapTrade developer keys — Personal tier (one clientId/
 /// consumerKey per person, not per company), one pair for the whole install.
@@ -66,13 +66,9 @@ pub async fn snaptrade_connect(app: AppHandle) -> Result<String, String> {
     Ok(client.portal_url().await?)
 }
 
-/// Find every brokerage authorization SnapTrade now reports that Stockfolio
-/// has no connection row for yet, and create one for each — its accounts
-/// start hidden, so nothing appears in the sidebar until the person opts in
-/// via `broker_set_account_visible`. Safe to call any time, not just right
-/// after the portal round-trip: it is also "check for new brokerages."
-///
-/// Returns how many new authorizations were found.
+/// Discover new accounts and reconnect synced accounts using non-secret IDs.
+/// Credentials never determine whether an imported account already exists.
+/// Returns the number of genuinely new authorizations.
 #[tauri::command]
 pub async fn snaptrade_sync_authorizations(
     app: AppHandle,
@@ -81,88 +77,75 @@ pub async fn snaptrade_sync_authorizations(
     let keys = load_app_keys(&app)?;
     let client = SnapTradeClient::new(&keys.client_id, &keys.consumer_key)?;
     let accounts = client.list_accounts().await?;
-
-    let mut by_authorization: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
-    for acct in &accounts {
-        if let Some(auth_id) = map::authorization_id(acct) {
-            by_authorization.entry(auth_id).or_default().push(acct.clone());
+    let mut groups: BTreeMap<String, discovery::Authorization> = BTreeMap::new();
+    for raw in &accounts {
+        let auth = map::authorization_id(raw).filter(|id| !id.trim().is_empty())
+            .ok_or("SnapTrade returned an account without an authorization ID. Nothing was changed.")?;
+        let account = map::account(raw).ok_or("SnapTrade returned an account without an account ID. Nothing was changed.")?;
+        groups.entry(auth.clone()).or_insert_with(|| discovery::Authorization {
+            id: auth,
+            institution: map::institution_name(raw).unwrap_or_else(|| "SnapTrade".into()),
+            accounts: Vec::new(),
+        }).accounts.push(account);
+    }
+    let groups: Vec<_> = groups.into_values().collect();
+    let device_id = load_config(&app)?.device_id;
+    // Serialize discovery with the database and all other browser/desktop
+    // callers. Never hold this lock across the remote HTTP request above.
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id FROM broker_connections WHERE provider = 'snaptrade'").map_err(|e| e.to_string())?;
+    let ids = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+    let mut known = HashMap::new();
+    for id in ids {
+        if let Some(blob) = secrets::get_secret(&app, &secrets::broker_reference(&id))? {
+            let credentials: crate::brokers::types::Credentials = serde_json::from_str(&blob)
+                .map_err(|_| "Saved SnapTrade credentials could not be read. Nothing was changed.")?;
+            if let Some(auth) = credentials.get("authorization_id") { known.insert(id, auth.clone()); }
         }
     }
-
-    // An authorization already has a connection row if some existing
-    // snaptrade row's stored credentials name it — that field is not a
-    // database column (see `brokers::snaptrade`'s module doc for why), so
-    // this reads it back out of the keychain rather than querying for it.
-    let connection_ids: Vec<String> = state.with_conn(|conn| {
-        let mut stmt =
-            conn.prepare("SELECT id FROM broker_connections WHERE provider = 'snaptrade'")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        rows.collect::<rusqlite::Result<_>>()
-    })?;
-
-    let existing: HashSet<String> = connection_ids
-        .into_iter()
-        .filter_map(|connection_id| {
-            secrets::get_secret(&app, &secrets::broker_reference(&connection_id))
-                .ok()
-                .flatten()
-                .and_then(|blob| {
-                    serde_json::from_str::<crate::brokers::types::Credentials>(&blob).ok()
-                })
-                .and_then(|c| c.get("authorization_id").cloned())
-        })
-        .collect();
-
-    let device_id = load_config(&app).device_id;
-    let mut created = 0usize;
-
-    for (auth_id, raw_accounts) in by_authorization {
-        if existing.contains(&auth_id) {
-            continue;
+    let duplicates: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM broker_accounts a JOIN broker_connections c ON c.id = a.connection_id WHERE c.provider = 'snaptrade' GROUP BY a.provider_account_id HAVING COUNT(*) > 1)",
+        [], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    let repeated_authorizations = known.values().collect::<HashSet<_>>().len() < known.len();
+    if duplicates || repeated_authorizations {
+        crate::commands::sync::backup_broker_database(&app, &conn)?;
+    }
+    let mut touched = Vec::new();
+    let result = (|| -> Result<discovery::Outcome, String> {
+        let txn = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let outcome = discovery::reconcile(&txn, &groups, &known, &device_id)?;
+        for (id, auth) in &outcome.bindings {
+            let reference = secrets::broker_reference(id);
+            let previous = secrets::get_secret(&app, &reference)?;
+            touched.push((reference.clone(), previous));
+            let credentials = snaptrade::credentials(&keys.client_id, &keys.consumer_key, auth);
+            let blob = serde_json::to_string(&credentials).map_err(|e| e.to_string())?;
+            secrets::set_secret(&app, &reference, &blob)?;
         }
-
-        let institution = raw_accounts
-            .first()
-            .and_then(map::institution_name)
-            .unwrap_or_else(|| "SnapTrade".to_string());
-
-        let connection_id = Uuid::new_v4().to_string();
-        let reference = secrets::broker_reference(&connection_id);
-        let creds = snaptrade::credentials(&keys.client_id, &keys.consumer_key, &auth_id);
-        let blob = serde_json::to_string(&creds).map_err(|e| e.to_string())?;
-        secrets::set_secret(&app, &reference, &blob)?;
-
-        let result = state.with_txn(|conn| {
-            conn.execute(
-                "INSERT INTO broker_connections \
-                   (id, provider, environment, label, credential_ref, device_id, created_at) \
-                 VALUES (?1, 'snaptrade', ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![
-                    connection_id,
-                    snaptrade::ENVIRONMENT,
-                    format!("{institution} (via SnapTrade)"),
-                    reference,
-                    device_id,
-                    store::now_secs(),
-                ],
-            )?;
-
-            for raw in &raw_accounts {
-                if let Some(remote) = map::account(raw) {
-                    // Hidden by default — a person opts each one in.
-                    store::upsert_account(conn, &connection_id, &remote, false)?;
-                }
+        txn.commit().map_err(|e| e.to_string())?;
+        Ok(outcome)
+    })();
+    match result {
+        Ok(outcome) => {
+            for id in outcome.removed { let _ = secrets::delete_secret(&app, &secrets::broker_reference(&id)); }
+            Ok(outcome.created)
+        }
+        Err(error) => {
+            // The transaction has rolled back. Restore credentials as well,
+            // including removing entries created for uncommitted connections.
+            let mut restore_failed = false;
+            for (reference, previous) in touched.into_iter().rev() {
+                let restored = match previous {
+                    Some(blob) => secrets::set_secret(&app, &reference, &blob),
+                    None => secrets::delete_secret(&app, &reference),
+                };
+                restore_failed |= restored.is_err();
             }
-            Ok(())
-        });
-
-        // Don't leave a keychain entry behind if the database write failed.
-        if let Err(e) = result {
-            let _ = secrets::delete_secret(&app, &reference);
-            return Err(e.to_string());
+            if restore_failed { Err(format!("{error} Accounts were rolled back, but some device credentials could not be restored. Re-enter your SnapTrade keys and retry discovery.")) }
+            else { Err(error) }
         }
-        created += 1;
     }
-
-    Ok(created)
 }

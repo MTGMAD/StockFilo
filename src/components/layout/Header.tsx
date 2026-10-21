@@ -172,14 +172,14 @@ export function Header({
             >
               {syncStatus === "syncing" ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-              ) : syncStatus === "error" ? (
+              ) : (syncStatus === "error" || syncStatus === "attention") ? (
                 <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               ) : syncStatus === "success" ? (
                 <CheckCircle className="w-3.5 h-3.5 shrink-0 text-green-500" />
               ) : (
                 <Cloud className="w-3.5 h-3.5 shrink-0" />
               )}
-              <span>{syncStatus === "syncing" ? "Syncing…" : "Sync"}</span>
+              <span>{syncStatus === "syncing" ? "Checking…" : syncStatus === "attention" ? "Review sync" : "Sync"}</span>
               {formattedSyncTime && (
                 <span className="text-xs font-normal text-muted-foreground/70">
                   {formattedSyncTime}

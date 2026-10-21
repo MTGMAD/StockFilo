@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/platform";
 import type { Stock, ComparisonStats, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
 import { SparkLine } from "./SparkLine";

@@ -1,12 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, State};
 
-use crate::commands::config::{load_config, save_config_to_disk, AppConfig, SyncTarget};
+use crate::commands::config::{load_config, update_config, AppConfig, SyncTarget};
 use crate::db::manager::DbManager;
+
+// Desktop and browser sessions share a database and staging path.
+mod safety;
+pub use safety::{SyncPreview, SyncBackup};
+pub(crate) use safety::backup_broker_database;
+
+static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// A sync makes several sequential requests against the same WebDAV target
 /// (check the lock, acquire it, GET or PUT the database, release the lock) —
@@ -30,6 +36,7 @@ pub struct SyncResult {
     /// True when the remote was newer and the local DB file was replaced.
     /// The caller must reopen the DB connection.
     pub downloaded: bool,
+    pub confirmation: Option<SyncPreview>,
 }
 
 // ── WebDAV helpers ─────────────────────────────────────────────────────────
@@ -49,47 +56,16 @@ async fn webdav_get(url: &str, username: &str, password: &str) -> Result<Vec<u8>
     resp.bytes().await.map(|b| b.to_vec()).map_err(|e| e.to_string())
 }
 
-async fn webdav_put(url: &str, username: &str, password: &str, body: Vec<u8>) -> Result<(), String> {
-    // Ensure parent collection exists (MKCOL is idempotent — 405 Method Not Allowed
-    // is returned when it already exists, which is fine).
-    if let Some(parent) = url.rfind('/').map(|i| &url[..i]).filter(|p| !p.is_empty()) {
-        let client = http_client();
-        let _ = client
-            .request(reqwest::Method::from_bytes(b"MKCOL").unwrap(), parent)
-            .basic_auth(username, Some(password))
-            .send()
-            .await;
+async fn webdav_metadata(url: &str, username: &str, password: &str) -> Result<(bool, Option<i64>), String> {
+    let response = http_client().head(url).basic_auth(username, Some(password))
+        .send().await.map_err(|e| e.to_string())?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND { return Ok((false, None)); }
+    if !response.status().is_success() {
+        return Err(format!("WebDAV HEAD returned HTTP {}", response.status().as_u16()));
     }
-
-    let client = http_client();
-    let resp = client
-        .put(url)
-        .basic_auth(username, Some(password))
-        .body(body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() && resp.status().as_u16() != 201 {
-        return Err(format!("WebDAV PUT {} returned {}", url, resp.status()));
-    }
-    Ok(())
-}
-
-async fn webdav_head_mtime(url: &str, username: &str, password: &str) -> Option<i64> {
-    let client = http_client();
-    let resp = client
-        .head(url)
-        .basic_auth(username, Some(password))
-        .send()
-        .await
-        .ok()?;
-
-    resp.headers()
-        .get("last-modified")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
-        .map(|dt| dt.timestamp())
+    let modified = response.headers().get("last-modified").and_then(|h| h.to_str().ok())
+        .and_then(|date| chrono::DateTime::parse_from_rfc2822(date).ok()).map(|date| date.timestamp());
+    Ok((true, modified))
 }
 
 // ── Lock file management ───────────────────────────────────────────────────
@@ -98,7 +74,7 @@ async fn webdav_head_mtime(url: &str, username: &str, password: &str) -> Option<
 /// If the URL has no extension and doesn't already end with ".db", append
 /// "/stockfolio.db" (stripping any trailing slash first).
 fn normalize_webdav_url(url: &str) -> String {
-    let trimmed = url.trim_end_matches('/');
+    let trimmed = url.trim().trim_end_matches('/');
     // Check whether the last path segment looks like a filename (has a dot)
     let last_segment = trimmed.rsplit('/').next().unwrap_or("");
     if last_segment.contains('.') {
@@ -108,34 +84,13 @@ fn normalize_webdav_url(url: &str) -> String {
     }
 }
 
-fn lock_url(db_url: &str) -> String {
-    format!("{}.lock", db_url)
-}
-
-async fn acquire_lock(url: &str, username: &str, password: &str, device_id: &str) -> Result<(), String> {
-    let payload = serde_json::json!({
-        "device_id": device_id,
-        "acquired_at": now_secs(),
-    })
-    .to_string()
-    .into_bytes();
-
-    // Check for existing (non-stale) lock
-    if let Ok(existing) = webdav_get(url, username, password).await {
-        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&existing) {
-            let acquired_at = v["acquired_at"].as_i64().unwrap_or(0);
-            if now_secs() - acquired_at < 120 {
-                return Err("Remote is locked by another sync in progress".into());
-            }
-        }
+fn normalize_local_path(path: &str) -> PathBuf {
+    let path = PathBuf::from(path.trim());
+    if path.is_file() || matches!(path.extension().and_then(|ext| ext.to_str()), Some("db" | "sqlite" | "sqlite3")) {
+        path
+    } else {
+        path.join("stockfolio.db")
     }
-    webdav_put(url, username, password, payload).await
-}
-
-async fn release_lock(url: &str, username: &str, password: &str) {
-    // Overwrite with an expired timestamp — best effort
-    let payload = serde_json::json!({ "acquired_at": 0 }).to_string().into_bytes();
-    let _ = webdav_put(url, username, password, payload).await;
 }
 
 // ── Safe local DB replacement ──────────────────────────────────────────────
@@ -155,240 +110,56 @@ fn wal_path(p: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-fn shm_path(p: &Path) -> PathBuf {
-    let mut s = p.as_os_str().to_owned();
-    s.push("-shm");
-    PathBuf::from(s)
-}
-
-/// Deterministic temp-file location for an in-progress download, derived
-/// from the live DB path so both the downloader and the installer agree on
-/// it without needing to thread an extra field through `SyncResult`.
-fn sync_temp_path(local_db_path: &Path) -> PathBuf {
-    local_db_path
-        .parent()
-        .map(|p| p.join("stockfolio.db.sync_tmp"))
-        .unwrap_or_else(|| PathBuf::from("stockfolio.db.sync_tmp"))
-}
-
 /// Atomically install an already-downloaded database file as the live
 /// database. Holds both the path and connection locks for the whole swap,
 /// so no other command can open or query the file half-replaced.
+#[cfg(test)]
 fn install_downloaded_db(db_state: &DbManager, temp_path: &Path) -> Result<(), String> {
-    let path_guard = db_state.path.lock().map_err(|e| e.to_string())?;
-    let mut conn_guard = db_state.conn.lock().map_err(|e| e.to_string())?;
-
-    // Flush the outgoing connection's WAL, then drop it — its WAL/SHM belong
-    // to the file we're about to discard and must not carry over.
-    let _ = conn_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-    let _ = fs::remove_file(wal_path(&path_guard));
-    let _ = fs::remove_file(shm_path(&path_guard));
-
-    // Prefer an atomic rename; fall back to copy+delete across mount points.
-    if let Err(e) = fs::rename(temp_path, &*path_guard) {
-        fs::copy(temp_path, &*path_guard)
-            .map_err(|_| e.to_string())?;
-        let _ = fs::remove_file(temp_path);
-    }
-
-    use crate::db::migrations;
-    use rusqlite::Connection;
-    let new_conn = Connection::open(&*path_guard).map_err(|e| e.to_string())?;
-    new_conn
-        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-        .map_err(|e| e.to_string())?;
-    migrations::run_all(&new_conn).map_err(|e| e.to_string())?;
-    *conn_guard = new_conn;
-
-    Ok(())
+    let backup_dir = db_state.get_path().parent().unwrap().join("backups");
+    safety::install(db_state, temp_path, &backup_dir, None)
 }
 
-// ── Sync algorithm ─────────────────────────────────────────────────────────
-
-async fn sync_path_target(
-    local_db_path: &PathBuf,
-    remote_path: &PathBuf,
-    never_synced: bool,
-) -> Result<SyncResult, String> {
-    let local_mtime = fs::metadata(local_db_path)
-        .and_then(|m| m.modified())
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
-        .unwrap_or(0);
-
-    let remote_mtime = if remote_path.exists() {
-        fs::metadata(remote_path)
-            .and_then(|m| m.modified())
-            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
-            .unwrap_or(0)
-    } else {
-        0
-    };
-
-    if let Some(parent) = remote_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    // On first sync, always trust the remote if it exists — the local DB is
-    // brand-new and has no user data, so uploading it would wipe the remote.
-    let prefer_remote = remote_mtime > local_mtime || (never_synced && remote_path.exists());
-
-    if prefer_remote {
-        // Remote is authoritative — download to a temp file; the caller
-        // installs it atomically once this returns (see `install_downloaded_db`).
-        let temp_path = sync_temp_path(local_db_path);
-        fs::copy(remote_path, &temp_path).map_err(|e| e.to_string())?;
-        Ok(SyncResult {
-            success: true,
-            message: "Downloaded newer database from remote path".into(),
-            synced_at: now_secs(),
-            downloaded: true,
-        })
-    } else {
-        // Local is same age or newer — upload to remote
-        // Back up remote first if it exists
-        if remote_path.exists() {
-            let bak = remote_path.with_extension("db.bak");
-            let _ = fs::copy(remote_path, &bak);
-        }
-        fs::copy(local_db_path, remote_path).map_err(|e| e.to_string())?;
-        Ok(SyncResult {
-            success: true,
-            message: "Uploaded local database to remote path".into(),
-            synced_at: now_secs(),
-            downloaded: false,
-        })
-    }
+/// A standalone SQLite snapshot includes committed WAL transactions even if
+/// another UI session writes while the network transfer is in progress.
+struct UploadSnapshot(PathBuf);
+impl Drop for UploadSnapshot {
+    fn drop(&mut self) { let _ = fs::remove_file(&self.0); }
+}
+fn upload_snapshot(db: &DbManager) -> Result<UploadSnapshot, String> {
+    let path = db.get_path().with_extension(format!("upload-{}.db", uuid::Uuid::new_v4()));
+    let snapshot = UploadSnapshot(path);
+    db.with_conn(|conn| conn.execute("VACUUM INTO ?1", [snapshot.0.to_string_lossy().as_ref()]))?;
+    Ok(snapshot)
 }
 
-async fn sync_webdav_target(
-    local_db_path: &PathBuf,
-    url: &str,
-    username: &str,
-    password: &str,
-    device_id: &str,
-    never_synced: bool,
-) -> Result<SyncResult, String> {
-    let lock = lock_url(url);
-    acquire_lock(&lock, username, password, device_id).await?;
-
-    let result = async {
-        let local_mtime = fs::metadata(local_db_path)
-            .and_then(|m| m.modified())
-            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
-            .unwrap_or(0);
-
-        let remote_mtime = webdav_head_mtime(url, username, password).await.unwrap_or(0);
-        let remote_exists = remote_mtime > 0;
-
-        // On first sync, always trust the remote if it has any data — the local
-        // DB is brand-new and has no user data, so uploading it would wipe the remote.
-        let prefer_remote = remote_mtime > local_mtime || (never_synced && remote_exists);
-
-        if prefer_remote {
-            // Remote is authoritative — download to a temp file; the caller
-            // installs it atomically once this returns (see `install_downloaded_db`).
-            let bytes = webdav_get(url, username, password).await?;
-            let temp_path = sync_temp_path(local_db_path);
-            let mut f = fs::File::create(&temp_path).map_err(|e| e.to_string())?;
-            f.write_all(&bytes).map_err(|e| e.to_string())?;
-            Ok(SyncResult {
-                success: true,
-                message: "Downloaded newer database from WebDAV".into(),
-                synced_at: now_secs(),
-                downloaded: true,
-            })
-        } else {
-            // Local is same age or newer — upload
-            let bytes = fs::read(local_db_path).map_err(|e| e.to_string())?;
-            webdav_put(url, username, password, bytes).await?;
-            Ok(SyncResult {
-                success: true,
-                message: "Uploaded local database to WebDAV".into(),
-                synced_at: now_secs(),
-                downloaded: false,
-            })
-        }
-    }
-    .await;
-
-    release_lock(&lock, username, password).await;
-    result
-}
-
-// ── Tauri commands ─────────────────────────────────────────────────────────
+// ── Reviewed sync commands ────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn sync_now(
-    target_id: String,
-    app: AppHandle,
-    db_state: State<'_, DbManager>,
-) -> Result<SyncResult, String> {
-    let mut cfg = load_config(&app);
+pub async fn sync_now(target_id: String, app: AppHandle, db_state: State<'_, DbManager>) -> Result<SyncResult, String> {
+    let _guard = SYNC_LOCK.lock().await;
+    safety::prepare(&app, &db_state, &target_id).await
+}
 
-    let target = cfg
-        .sync_targets
-        .iter()
-        .find(|t| t.id == target_id)
-        .cloned()
-        .ok_or_else(|| format!("Sync target '{}' not found", target_id))?;
+#[tauri::command]
+pub fn cancel_sync_review(confirmation_id: String) -> Result<(), String> {
+    safety::cancel_review(&confirmation_id)
+}
 
-    let local_db_path = {
-        // Checkpoint WAL before copying so the copy is a consistent snapshot
-        let _ = db_state.with_conn(|conn| {
-            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-                .map(|_| ())
-        });
-        db_state.get_path()
-    };
+#[tauri::command]
+pub async fn confirm_sync(confirmation_id: String, direction: String, allow_empty_upload: bool, app: AppHandle, db_state: State<'_, DbManager>) -> Result<SyncResult, String> {
+    let _guard = SYNC_LOCK.lock().await;
+    safety::confirm(&app, &db_state, &confirmation_id, &direction, allow_empty_upload).await
+}
 
-    let result = match target.kind.as_str() {
-        "path" => {
-            let path = target
-                .path
-                .as_deref()
-                .ok_or_else(|| "path target missing 'path' field".to_string())?;
-            let remote = PathBuf::from(path);
-            let never_synced = target.last_synced_at.is_none();
-            sync_path_target(&local_db_path, &remote, never_synced).await
-        }
-        "webdav" => {
-            let raw_url = target
-                .url
-                .as_deref()
-                .ok_or_else(|| "webdav target missing 'url' field".to_string())?;
-            let url = normalize_webdav_url(raw_url);
-            let username = target.username.as_deref().unwrap_or("");
-            let password = resolve_password(&app, &cfg, &target);
-            let never_synced = target.last_synced_at.is_none();
-            sync_webdav_target(&local_db_path, &url, username, &password, &cfg.device_id, never_synced).await
-        }
-        other => Err(format!("Unknown sync target kind: {}", other)),
-    };
+#[tauri::command]
+pub fn list_sync_backups(app: AppHandle) -> Result<Vec<SyncBackup>, String> {
+    safety::list_backups(&app)
+}
 
-    // Update last_synced_at regardless of outcome
-    let now = now_secs();
-    for t in &mut cfg.sync_targets {
-        if t.id == target_id {
-            t.last_synced_at = Some(now);
-            t.last_sync_status = Some(match &result {
-                Ok(_) => "ok".into(),
-                Err(e) => e.clone(),
-            });
-        }
-    }
-    let _ = save_config_to_disk(&app, &cfg);
-
-    // If the remote was newer, a temp file with the downloaded DB is now
-    // waiting at `sync_temp_path` — install it atomically so the rest of the
-    // app immediately sees the new data via a fresh connection.
-    if let Ok(ref r) = result {
-        if r.downloaded {
-            let temp_path = sync_temp_path(&local_db_path);
-            install_downloaded_db(&db_state, &temp_path)?;
-        }
-    }
-
-    result
+#[tauri::command]
+pub async fn prepare_restore_backup(backup_id: String, app: AppHandle, db_state: State<'_, DbManager>) -> Result<SyncResult, String> {
+    let _guard = SYNC_LOCK.lock().await;
+    safety::prepare_restore(&app, &db_state, &backup_id).await
 }
 
 #[tauri::command]
@@ -399,7 +170,7 @@ pub async fn test_sync_connection(target: SyncTarget) -> Result<bool, String> {
                 .path
                 .as_deref()
                 .ok_or_else(|| "path target missing 'path' field".to_string())?;
-            let p = PathBuf::from(path);
+            let p = normalize_local_path(path);
             if let Some(parent) = p.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
@@ -533,7 +304,7 @@ fn now_secs() -> i64 {
 /// Returns true if a Stockfolio database file already exists at the sync target.
 #[tauri::command]
 pub async fn check_remote_db_exists(target_id: String, app: AppHandle) -> Result<bool, String> {
-    let cfg = load_config(&app);
+    let cfg = load_config(&app)?;
     let target = cfg
         .sync_targets
         .iter()
@@ -547,7 +318,7 @@ pub async fn check_remote_db_exists(target_id: String, app: AppHandle) -> Result
                 .path
                 .as_deref()
                 .ok_or_else(|| "path target missing 'path' field".to_string())?;
-            let p = PathBuf::from(path);
+            let p = normalize_local_path(path);
             Ok(p.is_file() && p.metadata().map(|m| m.len() > 0).unwrap_or(false))
         }
         "webdav" => {
@@ -558,79 +329,94 @@ pub async fn check_remote_db_exists(target_id: String, app: AppHandle) -> Result
             let url = normalize_webdav_url(raw_url);
             let username = target.username.as_deref().unwrap_or("");
             let password = resolve_password(&app, &cfg, &target);
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .map_err(|e| e.to_string())?;
-            let resp = client
-                .head(&url)
-                .basic_auth(username, Some(&password))
-                .send()
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(resp.status().is_success())
+            webdav_metadata(&url, username, &password).await.map(|(exists, _)| exists)
         }
         _ => Ok(false),
     }
 }
 
-/// Force-download the remote DB and replace the local database, then reopen
-/// the Rusqlite connection so the rest of the app immediately uses the new data.
+/// Legacy callers can request a review, but cannot bypass confirmation.
 #[tauri::command]
-pub async fn import_remote_db(
-    target_id: String,
-    app: AppHandle,
-    db_state: State<'_, DbManager>,
-) -> Result<(), String> {
-    let cfg = load_config(&app);
-    let target = cfg
-        .sync_targets
-        .iter()
-        .find(|t| t.id == target_id)
-        .cloned()
-        .ok_or_else(|| format!("Sync target '{}' not found", target_id))?;
+pub async fn import_remote_db(target_id: String, app: AppHandle, db_state: State<'_, DbManager>) -> Result<SyncResult, String> {
+    sync_now(target_id, app, db_state).await
+}
 
-    let local_db_path = db_state.get_path();
-    let temp_path = local_db_path
-        .parent()
-        .ok_or("Cannot determine DB directory")?
-        .join("stockfolio.db.import_tmp");
-
-    // Step 1 — download to a temp file (no mutex held so network I/O doesn't block queries)
-    match target.kind.as_str() {
-        "path" => {
-            let path = target
-                .path
-                .as_deref()
-                .ok_or_else(|| "path target missing 'path' field".to_string())?;
-            let remote = PathBuf::from(path);
-            if !remote.is_file() {
-                return Err("No database found at the specified path".into());
-            }
-            fs::copy(&remote, &temp_path).map_err(|e| e.to_string())?;
-        }
-        "webdav" => {
-            let raw_url = target
-                .url
-                .as_deref()
-                .ok_or_else(|| "webdav target missing 'url' field".to_string())?;
-            let url = normalize_webdav_url(raw_url);
-            let username = target.username.as_deref().unwrap_or("");
-            let password = resolve_password(&app, &cfg, &target);
-            let bytes = webdav_get(&url, username, &password).await?;
-            if bytes.is_empty() {
-                return Err("Remote database is empty".into());
-            }
-            fs::write(&temp_path, bytes).map_err(|e| e.to_string())?;
-        }
-        other => return Err(format!("Unknown sync target kind: {}", other)),
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn test_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("stockfolio-import-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
-
-    // Step 2 — atomically swap the downloaded temp file in as the live DB
-    install_downloaded_db(&db_state, &temp_path)?;
-
-    // Clean up temp file in case rename failed and we fell back to copy
-    let _ = fs::remove_file(&temp_path);
-
-    Ok(())
+    fn add_portfolio(db: &DbManager, name: &str) {
+        db.with_conn(|conn| conn.execute("INSERT INTO portfolios (name, sort_order, is_starred, created_at) VALUES (?1, 0, 0, 1)", [name])).unwrap();
+    }
+    fn has_portfolio(db: &DbManager, name: &str) -> bool {
+        db.with_conn(|conn| conn.query_row("SELECT COUNT(*) FROM portfolios WHERE name=?1", [name], |row| row.get::<_, i64>(0))).unwrap() > 0
+    }
+    #[test]
+    fn upload_snapshot_includes_committed_wal_rows() {
+        let dir = test_dir();
+        let local = DbManager::open(&dir.join("local.db")).unwrap();
+        add_portfolio(&local, "Committed in WAL");
+        let snapshot = upload_snapshot(&local).unwrap();
+        let copied = DbManager::open(&snapshot.0).unwrap();
+        assert!(has_portfolio(&copied, "Committed in WAL"));
+        drop(copied); drop(snapshot); drop(local);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn invalid_download_keeps_the_live_database_usable() {
+        let dir = test_dir();
+        let local = DbManager::open(&dir.join("local.db")).unwrap();
+        add_portfolio(&local, "Local sentinel");
+        let incoming = dir.join("incoming.db");
+        fs::write(&incoming, b"<html>Authentication required</html>").unwrap();
+        assert!(install_downloaded_db(&local, &incoming).is_err());
+        assert!(has_portfolio(&local, "Local sentinel"));
+        add_portfolio(&local, "Still writable");
+        assert!(has_portfolio(&local, "Still writable"));
+        drop(local);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn import_reopens_the_database_and_preserves_a_local_backup() {
+        let dir = test_dir();
+        let local = DbManager::open(&dir.join("local.db")).unwrap();
+        add_portfolio(&local, "Local sentinel");
+        let incoming_path = dir.join("incoming.db");
+        let incoming = DbManager::open(&incoming_path).unwrap();
+        add_portfolio(&incoming, "Remote sentinel");
+        drop(incoming);
+        install_downloaded_db(&local, &incoming_path).unwrap();
+        assert!(has_portfolio(&local, "Remote sentinel"));
+        assert!(!has_portfolio(&local, "Local sentinel"));
+        let backup = fs::read_dir(dir.join("backups")).unwrap().map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|extension| extension == "db")).unwrap();
+        let backup = DbManager::open(&backup).unwrap();
+        assert!(has_portfolio(&backup, "Local sentinel"));
+        drop(backup);
+        drop(local);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn remote_without_modified_header_is_still_an_existing_database() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = axum::Router::new().route("/stockfolio.db", axum::routing::head(|| async { axum::http::StatusCode::OK }));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let metadata = webdav_metadata(&format!("http://{address}/stockfolio.db"), "user", "password").await.unwrap();
+        assert_eq!(metadata, (true, None));
+        server.abort();
+    }
+    #[tokio::test]
+    async fn authentication_failure_is_not_treated_as_a_missing_remote() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = axum::Router::new().route("/stockfolio.db", axum::routing::head(|| async { axum::http::StatusCode::UNAUTHORIZED }));
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        assert!(webdav_metadata(&format!("http://{address}/stockfolio.db"), "user", "password").await.unwrap_err().contains("401"));
+        server.abort();
+    }
 }

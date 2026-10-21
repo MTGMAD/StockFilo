@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/platform";
 import type { ChartData } from "../../types";
 import { LineChart, Line, Tooltip, ResponsiveContainer } from "recharts";
 import { getCssVar, formatCurrency } from "../../lib/utils";

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { open } from "@tauri-apps/plugin-shell";
+import { openExternal as open } from "../../lib/platform";
 import type { Purchase, Sale, Stock } from "../../types";
 import {
   formatCurrency,

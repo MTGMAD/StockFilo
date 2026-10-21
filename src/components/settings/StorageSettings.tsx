@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useState, useEffect, useId } from "react";
+import { invoke } from "../../lib/platform";
+import { openDialog } from "../../lib/platform";
 import {
   HardDrive,
   Cloud,
@@ -17,7 +17,9 @@ import {
   EyeOff,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
-import type { AppConfig, SyncResult, SyncTarget } from "../../types";
+import type { AppConfig, SyncResult, SyncTarget, SyncPreview, SyncBackup } from "../../types";
+
+import { SyncReviewDialog } from "../sync/SyncReviewDialog";
 
 /** A new target before it has an id or sync timestamps assigned. */
 type NewTarget = Omit<SyncTarget, "id" | "last_synced_at" | "last_sync_status">;
@@ -32,11 +34,12 @@ function formatTs(ts: number | null | undefined): string {
 // ── Add / Edit Sync Target form ────────────────────────────────────────────
 
 interface TargetFormProps {
-  onSave: (target: NewTarget) => void;
+  onSave: (target: NewTarget) => Promise<void>;
   onCancel: () => void;
 }
 
 function TargetForm({ onSave, onCancel }: TargetFormProps) {
+  const formId = useId();
   const [kind, setKind] = useState<"path" | "webdav">("path");
   const [label, setLabel] = useState("");
   const [path, setPath] = useState("");
@@ -45,6 +48,8 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<boolean | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
 
@@ -55,10 +60,14 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
     return { label: label || url, kind: "webdav", url, username, password_enc: password };
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (kind === "path" && !path.trim()) return;
     if (kind === "webdav" && (!url.trim() || !username.trim())) return;
-    onSave(buildTarget());
+    setSaving(true);
+    setSaveError(null);
+    try { await onSave(buildTarget()); }
+    catch (e) { setSaveError(String(e)); }
+    finally { setSaving(false); }
   }
 
   async function handleTest() {
@@ -108,10 +117,10 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
 
       {/* Label */}
       <div>
-        <label className="block text-xs font-medium text-muted-foreground mb-1">
+        <label htmlFor={`${formId}-label`} className="block text-xs font-medium text-muted-foreground mb-1">
           Label (optional)
         </label>
-        <input
+        <input id={`${formId}-label`}
           type="text"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
@@ -122,10 +131,10 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
 
       {kind === "path" ? (
         <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">
+          <label htmlFor={`${formId}-path`} className="block text-xs font-medium text-muted-foreground mb-1">
             Folder Path
           </label>
-          <input
+          <input id={`${formId}-path`}
             type="text"
             value={path}
             onChange={(e) => setPath(e.target.value)}
@@ -139,10 +148,10 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
       ) : (
         <>
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">
+            <label htmlFor={`${formId}-url`} className="block text-xs font-medium text-muted-foreground mb-1">
               WebDAV URL
             </label>
-            <input
+            <input id={`${formId}-url`}
               type="url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -152,10 +161,10 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">
+              <label htmlFor={`${formId}-username`} className="block text-xs font-medium text-muted-foreground mb-1">
                 Username
               </label>
-              <input
+              <input id={`${formId}-username`}
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -165,11 +174,11 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">
+              <label htmlFor={`${formId}-password`} className="block text-xs font-medium text-muted-foreground mb-1">
                 Password
               </label>
               <div className="relative">
-                <input
+                <input id={`${formId}-password`}
                   type={showPw ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -215,10 +224,11 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
       )}
 
       {/* Actions */}
+      {saveError && <p role="alert" className="text-sm text-red-500">{saveError}</p>}
       <div className="flex items-center gap-2 pt-1">
         <button
           onClick={handleTest}
-          disabled={testing || (kind === "path" ? !path.trim() : !url.trim() || !username.trim())}
+          disabled={saving || testing || (kind === "path" ? !path.trim() : !url.trim() || !username.trim())}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-primary/50 disabled:opacity-40 transition-colors"
         >
           <RefreshCw className={cn("w-3.5 h-3.5", testing && "animate-spin")} />
@@ -226,14 +236,15 @@ function TargetForm({ onSave, onCancel }: TargetFormProps) {
         </button>
         <button
           onClick={handleSave}
-          disabled={kind === "path" ? !path.trim() : !url.trim() || !username.trim()}
+          disabled={saving || testing || (kind === "path" ? !path.trim() : !url.trim() || !username.trim())}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
-          Add Target
+          {saving ? "Saving…" : "Add Target"}
         </button>
         <button
           onClick={onCancel}
+          disabled={saving}
           className="px-3 py-1.5 rounded-md border border-border text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
         >
           Cancel
@@ -262,9 +273,18 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
   const [showAddForm, setShowAddForm] = useState(false);
   const [autoSyncVal, setAutoSyncVal] = useState<string>("0");
   const [savingAutoSync, setSavingAutoSync] = useState(false);
-  const [importPrompt, setImportPrompt] = useState<{ targetId: string; label: string } | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
+  const [review, setReview] = useState<SyncPreview | null>(null);
+  const [backups, setBackups] = useState<SyncBackup[]>([]);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  async function fetchBackups() {
+    try { setBackups(await invoke<SyncBackup[]>("list_sync_backups")); setBackupError(null); }
+    catch (error) { setBackupError(String(error)); }
+  }
+  function finishSync(result: SyncResult) {
+    setReview(null);
+    if (result.downloaded) { window.location.reload(); return; }
+    fetchConfig(); void fetchBackups(); onConfigSaved?.();
+  }
 
   function fetchConfig() {
     invoke<AppConfig>("get_config")
@@ -276,7 +296,7 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
   }
 
   // Initial load
-  useEffect(() => { fetchConfig(); }, []);
+  useEffect(() => { fetchConfig(); void fetchBackups(); }, []);
 
   // Re-fetch whenever App.tsx's auto-sync completes so timestamps stay current
   useEffect(() => {
@@ -313,6 +333,7 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
         ...m,
         [targetId]: { ok: result.success, msg: result.message },
       }));
+      if (result.confirmation) setReview(result.confirmation);
       if (result.success) {
         if (result.downloaded) {
           // Remote was newer — reload the whole app so all data refreshes
@@ -344,71 +365,23 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
     const plainPassword =
       newTarget.kind === "webdav" ? (newTarget.password_enc ?? "") : "";
 
-    const targetId = crypto.randomUUID();
-    const target: SyncTarget = {
-      ...newTarget,
-      password_enc: null,
-      id: targetId,
-      last_synced_at: null,
-      last_sync_status: null,
-    } as SyncTarget;
-    const updated: AppConfig = {
-      ...config,
-      sync_targets: [...config.sync_targets, target],
-    };
-    try {
-      if (plainPassword) {
-        // Store the secret first: a target saved without its password would
-        // fail every sync with an auth error that looks like a server problem.
-        await invoke("save_sync_password", {
-          targetId,
-          password: plainPassword,
-        });
-      }
-      await invoke("save_config", { config: updated });
-      setConfig(updated);
-      setShowAddForm(false);
-      onConfigSaved?.();
+    const updated = await invoke<AppConfig>("add_sync_target", {
+      target: { ...newTarget, password_enc: null, id: "", last_synced_at: null, last_sync_status: null },
+      password: plainPassword || null,
+    });
+    const target = updated.sync_targets[updated.sync_targets.length - 1];
+    setConfig(updated);
+    setShowAddForm(false);
+    onConfigSaved?.();
 
-      // Check if a remote database already exists at this target
-      try {
-        const exists = await invoke<boolean>("check_remote_db_exists", { targetId: target.id });
-        if (exists) {
-          setImportPrompt({ targetId: target.id, label: target.label });
-          setImportError(null);
-        }
-      } catch {
-        // If check fails, silently skip — the user can sync manually
-      }
-    } catch (e) {
-      alert(`Failed to save config: ${e}`);
-    }
-  }
-
-  async function handleImportRemoteDb() {
-    if (!importPrompt) return;
-    setImporting(true);
-    setImportError(null);
-    try {
-      await invoke("import_remote_db", { targetId: importPrompt.targetId });
-      // Reload the app so all hooks re-fetch from the imported database
-      window.location.reload();
-    } catch (e) {
-      setImportError(String(e));
-      setImporting(false);
-    }
+    // Saving never transfers data. The first source choice is mandatory.
+    await handleSyncNow(target.id);
   }
 
   async function handleRemoveTarget(id: string) {
     if (!config) return;
-    const updated: AppConfig = {
-      ...config,
-      sync_targets: config.sync_targets.filter((t) => t.id !== id),
-    };
     try {
-      await invoke("save_config", { config: updated });
-      // Don't leave an orphaned credential behind in the keychain.
-      await invoke("delete_sync_password", { targetId: id }).catch(() => {});
+      const updated = await invoke<AppConfig>("remove_sync_target", { targetId: id });
       setConfig(updated);
       onConfigSaved?.();
     } catch (e) {
@@ -420,12 +393,8 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
     if (!config) return;
     setSavingAutoSync(true);
     const mins = parseInt(autoSyncVal, 10);
-    const updated: AppConfig = {
-      ...config,
-      auto_sync_minutes: isNaN(mins) || mins <= 0 ? null : mins,
-    };
     try {
-      await invoke("save_config", { config: updated });
+      const updated = await invoke<AppConfig>("set_auto_sync_minutes", { minutes: isNaN(mins) || mins <= 0 ? null : mins });
       setConfig(updated);
       onConfigSaved?.();
     } catch (e) {
@@ -543,6 +512,11 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
+                      onClick={() => void handleSyncNow(target.id)}
+                      title="Review sync direction"
+                      className="px-2 py-1.5 text-xs rounded-md border border-border hover:text-primary"
+                    >Review sync</button>
+                    <button
                       onClick={() => handleSyncNow(target.id)}
                       disabled={syncing === target.id}
                       title="Sync now"
@@ -598,54 +572,31 @@ export function StorageSettings({ syncTick = 0, onConfigSaved }: StorageSettings
             </button>
           )}
 
-          {/* Import prompt — shown after adding a target when a remote DB exists */}
-          {importPrompt && (
-            <div className="rounded-lg border border-primary/40 bg-primary/5 p-4 space-y-3">
-              <div className="flex items-start gap-3">
-                <CheckCircle className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-foreground">
-                    Database found at "{importPrompt.label}"
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    An existing Stockfolio database was found at this sync location.
-                    Would you like to import it now? This will replace your current local data.
-                  </p>
-                </div>
-              </div>
-              {importError && (
-                <div className="flex items-center gap-2 text-xs text-red-500">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  {importError}
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleImportRemoteDb}
-                  disabled={importing}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
-                >
-                  <RefreshCw className={cn("w-3.5 h-3.5", importing && "animate-spin")} />
-                  {importing ? "Importing…" : "Import Remote Database"}
-                </button>
-                <button
-                  onClick={() => setImportPrompt(null)}
-                  disabled={importing}
-                  className="px-3 py-1.5 rounded-md border border-border text-sm font-medium text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
-                >
-                  Keep Local Data
-                </button>
-              </div>
-            </div>
-          )}
+
+        </div>
+      </StorageRow>
+
+      {review && <SyncReviewDialog key={review.confirmation_id} review={review} onClose={() => setReview(null)} onReviewChange={setReview} onComplete={finishSync} />}
+      <StorageRow icon={<HardDrive className="w-4 h-4" />} title="Recovery Backups" description="Verified versions saved before database replacements. Backups are never overwritten by sync.">
+        <div className="space-y-3">
+          <button className="text-sm border border-border rounded-md px-3 py-2" onClick={() => void fetchBackups()}>Refresh backups</button>
+          {backupError && <p role="alert" className="text-sm text-red-600">{backupError}</p>}
+          {backups.length === 0 && <p className="text-sm text-muted-foreground">No recovery backups yet. A verified backup is required before replacing an existing database.</p>}
+          {backups.map(backup => <div key={backup.id} className="border border-border rounded-md p-3 flex items-center justify-between gap-3">
+            <div className="min-w-0 text-sm"><p>{new Date(backup.created_at * 1000).toLocaleString()} · {backup.id.startsWith("remote-") ? "Remote copy" : "This device"}</p><p className="text-xs text-muted-foreground truncate">{backup.id} · {Math.ceil(backup.size / 1024)} KB</p></div>
+            <button className="border border-border rounded-md px-3 py-2 text-sm" onClick={async () => {
+              try { const result = await invoke<SyncResult>("prepare_restore_backup", { backupId: backup.id }); if (result.confirmation) setReview(result.confirmation); }
+              catch (error) { setBackupError(String(error)); }
+            }}>Review restore</button>
+          </div>)}
         </div>
       </StorageRow>
 
       {/* ── Auto Sync ── */}
       <StorageRow
         icon={<RefreshCw className="w-4 h-4" />}
-        title="Auto-Sync"
-        description="Automatically sync on a schedule while the app is open."
+        title="Automatic Sync Checks"
+        description="Check for changes on a schedule. Transfers always require your approval."
       >
         <div className="flex items-center gap-3">
           <select

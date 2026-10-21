@@ -280,6 +280,9 @@ export interface SyncTarget {
   password_enc?: string | null;
   last_synced_at?: number | null;
   last_sync_status?: string | null;
+  sync_initialized?: boolean;
+  last_local_fingerprint?: string | null;
+  last_remote_fingerprint?: string | null;
 }
 
 export interface AppConfig {
@@ -289,14 +292,37 @@ export interface AppConfig {
   auto_sync_minutes?: number | null;
 }
 
+export interface SyncRecordSummary {
+  financial_records: number;
+  portfolios: number;
+  watchlist_items: number;
+  notes: number;
+  empty: boolean;
+}
+export interface SyncPreview {
+  confirmation_id: string;
+  target_id: string;
+  target_label: string;
+  first_sync: boolean;
+  remote_exists: boolean;
+  conflict: boolean;
+  local: SyncRecordSummary;
+  remote: SyncRecordSummary | null;
+  upload_allowed: boolean;
+  upload_blocked_reason: string | null;
+  restore: boolean;
+}
+export interface SyncBackup { id: string; created_at: number; size: number }
+
 export interface SyncResult {
   success: boolean;
   message: string;
   synced_at: number;
   downloaded: boolean;
+  confirmation?: SyncPreview | null;
 }
 
-export type SyncStatus = "idle" | "syncing" | "success" | "error";
+export type SyncStatus = "idle" | "syncing" | "success" | "error" | "attention";
 
 // ── Brokerage types ────────────────────────────────────────────────────────
 // Flat structs mirroring src-tauri/src/brokers/types.rs — same convention as

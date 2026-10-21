@@ -102,9 +102,64 @@ This command:
 | Command | Description |
 |---|---|
 | `npm run dev` | Start Vite frontend only (no native window) |
+| `npm run web` | Start the full local backend and browser app (desktop window hidden) |
 | `npm run build` | Type-check and build the frontend |
 | `npm run tauri dev` | Full dev mode (Vite + Rust + native window) |
 | `npm run tauri build` | Production build with native installers |
+
+### Using the browser app
+
+Run `npm run web`, then open <http://127.0.0.1:1422/>. During development,
+<http://localhost:1420/> also works with hot reload. The backend must stay
+running; `npm run dev` by itself only serves the frontend.
+
+The browser and desktop app use the same local SQLite database, storage
+settings, and securely stored credentials. The browser backend listens only
+on this computer. File imports use the browser's file picker, and exports
+download files. Folder targets and database locations refer to this computer.
+To use both interfaces together, start the desktop app and open either browser
+URL; do not start a second backend against the same data directory.
+
+### Safe sync and recovery
+
+Adding a target or pressing **Review sync** opens a source-selection review.
+It shows record counts for this device and the remote database. Choose
+**Load remote database**, **Upload this device**, or **Cancel**. Saving a
+configuration, canceling a review, and scheduled checks never replace either
+copy. Existing targets require a fresh review after this safety upgrade.
+
+Every replacement requires a one-use approval tied to the reviewed local and
+remote versions. Approvals expire after ten minutes. If either copy changes,
+refresh the review. Both-copy conflicts are shown explicitly; whole databases
+are not merged automatically. Uploading over an existing remote requires
+`REPLACE REMOTE`; an empty application requires `UPLOAD EMPTY DATABASE` plus
+an explicit checkbox, even after earlier successful transfers.
+
+Nextcloud/WebDAV uploads are staged and verified before a conditional MOVE
+replaces the destination. Existing remotes require a strong ETag. A server
+without that protection is blocked from overwriting an existing database.
+New remote files use create-only conditions. Network errors during the final
+move can leave the outcome uncertain; preserve backups and check the target
+before retrying.
+
+Verified local and remote recovery copies are kept in the application data
+folder's `backups` directory. An upload also saves the previous remote in
+`.stockfolio-backups` beside the sync file. These are separate versioned files
+and are not automatically pruned. Under **Storage & Sync → Recovery Backups**,
+refresh the list and choose **Review restore** to compare and restore a saved
+copy. Stored SHA-256 verification records are checked again before a restore;
+missing or mismatched verification records block automatic restoration.
+Restoring requires approval, saves the current database first, and resets
+all targets to require another source review. Local restores never upload to
+Nextcloud. Keep independent backups as well; files on one disk or cloud account
+cannot protect against loss of that entire storage location.
+
+Only one backend may open a live database at a time. Changing the database
+location copies a consistent snapshot, switches the live connection, and keeps
+the original copy. It refuses to overwrite a database already at the destination.
+
+For Nextcloud, copy the WebDAV address from Files settings and use a dedicated
+app password from Personal settings → Security → Devices & sessions.
 
 ---
 

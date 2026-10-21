@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./platform";
 import type { ChartData } from "../types";
 import type { DailyBar } from "./journal";
 

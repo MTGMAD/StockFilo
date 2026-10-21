@@ -127,8 +127,9 @@ Keep your database wherever you want and sync across devices — entirely on you
 - **Custom database location** — move the SQLite file to any local folder, mapped drive, or cloud-synced folder (OneDrive, Google Drive, Dropbox, etc.)
 - **Local / network path sync** — copy the database to a NAS, SMB share, or any folder on your network
 - **WebDAV / cloud sync** — sync directly to Nextcloud, ownCloud, or any WebDAV server using app passwords
-- **Auto-sync on a schedule** — every 5, 15, 30, or 60 minutes while the app is open
-- **Manual sync button** — trigger a sync any time from the header, with inline last-synced timestamp
+- **Scheduled sync checks** — check every 5, 15, 30, or 60 minutes; transfers require explicit approval
+- **Reviewed transfers** — choose the source, compare record counts, and approve replacements; empty uploads require an extra confirmation
+- **Conflict protection and recovery** — version-bound approvals, conditional WebDAV replacements, verified backups, and a review-before-restore interface
 - **Conflict resolution** — newer database always wins; remote is backed up before overwrite
 - **Lock file protection** — prevents two devices from writing simultaneously
 - No third-party accounts, no proprietary cloud service, no subscription

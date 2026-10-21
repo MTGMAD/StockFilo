@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/platform";
 import { ExternalLink, Play } from "lucide-react";
 import { openUrl } from "../../lib/openUrl";
 import { LinkOpenModeContext } from "../../lib/linkOpenModeContext";

@@ -5,7 +5,7 @@
  * provider-specific: the UI discovers what a provider needs from
  * listBrokerProviders(), so adding a brokerage is a Rust-only change.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./platform";
 import type {
   BrokerConnectionInfo,
   BrokerOrders,

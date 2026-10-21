@@ -1,5 +1,6 @@
 use tauri::Manager;
 
+mod browser_server;
 mod brokers;
 mod commands;
 mod db;
@@ -89,8 +90,15 @@ pub fn run() {
             // ── Config / Sync commands ─────────────────────────────────────
             commands::config::get_config,
             commands::config::save_config,
+            commands::config::add_sync_target,
+            commands::config::remove_sync_target,
+            commands::config::set_auto_sync_minutes,
             commands::config::move_database,
             commands::sync::sync_now,
+            commands::sync::confirm_sync,
+            commands::sync::cancel_sync_review,
+            commands::sync::list_sync_backups,
+            commands::sync::prepare_restore_backup,
             commands::sync::test_sync_connection,
             commands::sync::save_sync_password,
             commands::sync::delete_sync_password,
@@ -119,7 +127,7 @@ pub fn run() {
         ])
         .setup(|app| {
             // Load config and resolve DB path
-            let cfg = commands::config::load_config(app.handle());
+            let cfg = commands::config::load_config(app.handle())?;
             let db_path = commands::config::resolve_db_path(app.handle(), &cfg)
                 .expect("Failed to resolve database path");
 
@@ -127,6 +135,11 @@ pub fn run() {
             let db_manager = db::manager::DbManager::open(&db_path)
                 .expect("Failed to open database");
             app.manage(db_manager);
+            browser_server::start(app.handle().clone())?;
+            if std::env::args().any(|arg| arg == "--browser") {
+                if let Some(window) = app.get_webview_window("main") { window.hide()?; }
+                println!("Stockfolio browser app: http://127.0.0.1:{}", std::env::var("STOCKFOLIO_BROWSER_PORT").unwrap_or_else(|_| "1422".into()));
+            }
 
             // Web Inspector is deliberately NOT auto-opened in debug builds.
             // Attaching its debugger while the page is still JIT-compiling at

@@ -248,13 +248,29 @@ mod tests {
     }
 
     #[test]
+    fn synced_broker_identity_upgrade_preserves_legacy_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; PRAGMA user_version=27;
+            INSERT INTO broker_connections (id,provider,environment,label,credential_ref,created_at) VALUES ('imported','snaptrade','read','Keep my label','broker:imported',123);
+            INSERT INTO broker_accounts (id,connection_id,provider_account_id,equity,cash,visible) VALUES (99,'imported','remote-account',300,17,1);").unwrap();
+        run_all(&conn).unwrap();
+        run_all(&conn).unwrap();
+        let row: (String, Option<String>, f64, f64, i64) = conn.query_row(
+            "SELECT c.label,c.remote_authorization_id,a.equity,a.cash,a.id FROM broker_connections c JOIN broker_accounts a ON a.connection_id=c.id WHERE c.id='imported'", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
+        ).unwrap();
+        assert_eq!(row, ("Keep my label".into(),None,300.,17.,99));
+    }
+
+    #[test]
     fn fresh_database_reaches_latest_version() {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 27);
+        assert_eq!(v, 28);
     }
 
     #[test]
@@ -594,7 +610,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 27);
+        assert_eq!(v, 28);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -985,6 +1001,15 @@ CREATE TABLE IF NOT EXISTS cash_anchors (
 );
 "#;
 
+// Authorization IDs identify connections; they do not authorize API access.
+// Keep them with synced account metadata, independently of device-local keys.
+const MIGRATION_V28: &str = r#"
+ALTER TABLE broker_connections ADD COLUMN remote_authorization_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_broker_authorization
+    ON broker_connections(provider, environment, remote_authorization_id)
+    WHERE remote_authorization_id IS NOT NULL;
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1017,6 +1042,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (25, MIGRATION_V25),
         (26, MIGRATION_V26),
         (27, MIGRATION_V27),
+        (28, MIGRATION_V28),
     ];
 
     let user_version: i64 =

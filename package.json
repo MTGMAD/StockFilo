@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
+    "web": "npm run build && tauri dev -- --browser",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

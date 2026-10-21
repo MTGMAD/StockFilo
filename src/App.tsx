@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./lib/platform";
 import { addPurchase } from "./lib/db";
-import type { View, AppConfig, SyncResult, SyncStatus } from "./types";
+import type { View, AppConfig, SyncResult, SyncStatus, SyncPreview } from "./types";
 import { isBrokerPortfolio } from "./types";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Header } from "./components/layout/Header";
@@ -25,6 +25,8 @@ import { useInfoTooltips } from "./hooks/useInfoTooltips";
 import { useAlertSettings } from "./hooks/useAlertSettings";
 import { useAlertsMonitor } from "./hooks/useAlertsMonitor";
 
+import { SyncReviewDialog } from "./components/sync/SyncReviewDialog";
+
 const VIEW_TITLES: Partial<Record<View, string>> = {
   dashboard: "Dashboard",
   watchlist: "Watch List",
@@ -46,6 +48,7 @@ export default function App() {
   const alerts = useAlertsMonitor();
 
   // ── Sync state ────────────────────────────────────────────────────────────
+  const [syncReview, setSyncReview] = useState<SyncPreview | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [syncTick, setSyncTick] = useState(0);
   const [configVersion, setConfigVersion] = useState(0);
@@ -70,6 +73,12 @@ export default function App() {
         const result = await invoke<SyncResult>("sync_now", {
           targetId: target.id,
         });
+        if (result.confirmation) {
+          setSyncReview(result.confirmation);
+          setSyncStatus("attention");
+          setSyncTick(tick => tick + 1);
+          return;
+        }
         if (!result.success) anyFailed = true;
         if (result.downloaded) anyDownloaded = true;
       } catch {
@@ -77,8 +86,7 @@ export default function App() {
       }
     }
     setSyncStatus(anyFailed ? "error" : "success");
-    const now = new Date();
-    setLastSyncedAt(now);
+    // A check is not a completed transfer; retain the last transfer time.
     // Notify StorageSettings to refresh its config so last_synced_at updates
     setSyncTick((n) => n + 1);
     // If any target downloaded a newer DB, reload the whole app so all hooks
@@ -138,6 +146,7 @@ export default function App() {
   );
   const [newPortfolioTrigger, setNewPortfolioTrigger] = useState(0);
   const [openBrokerFormTrigger, setOpenBrokerFormTrigger] = useState(0);
+  const [openBrokerSettingsTrigger, setOpenBrokerSettingsTrigger] = useState(0);
 
   // Once portfolios are loaded, default to the starred one
   useEffect(() => {
@@ -167,10 +176,12 @@ export default function App() {
       c.accounts.some((a) => a.id === activePortfolio?.broker_account_id),
     ) ?? null;
   const brokerConnectionId = brokerConnection?.id ?? null;
+  const canSyncBroker = !!brokerConnection?.has_credentials && !brokerConnection.disabled;
   const broker = useBrokerPortfolio(
     isBroker ? (activePortfolio?.broker_account_id ?? null) : null,
     isBroker ? brokerConnectionId : null,
     brokerConnection?.provides_pricing ?? true,
+    canSyncBroker,
   );
 
   // From here down the views cannot tell the two apart: both produce
@@ -259,7 +270,8 @@ export default function App() {
     return max > 0 ? new Date(max * 1000) : null;
   }, [stocks]);
 
-  const showRefresh = view === "portfolio" || view === "dashboard";
+  const showRefresh = (view === "portfolio" || view === "dashboard") &&
+    (!isBroker || canSyncBroker || brokerConnection?.provides_pricing === false);
 
   // The sectioned header belongs to the portfolio view only — the dashboard
   // keeps its own layout untouched.
@@ -407,6 +419,24 @@ export default function App() {
             {error}
           </div>
         )}
+        {isBroker && brokerConnection && !brokerConnection.has_credentials && view !== "settings" && (
+          <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 px-6 py-2 bg-muted/40 border-b border-border text-sm text-muted-foreground">
+            <span>Showing saved brokerage data. Live broker refresh needs credentials on this device. Nextcloud sync is separate.</span>
+            <button type="button" className="text-primary underline underline-offset-2" onClick={() => {
+              setOpenBrokerSettingsTrigger((value) => value + 1);
+              setView("settings");
+            }}>Open brokerage settings</button>
+          </div>
+        )}
+        {syncReview && <SyncReviewDialog key={syncReview.confirmation_id} review={syncReview}
+          onClose={() => { setSyncReview(null); setSyncStatus("idle"); }}
+          onReviewChange={setSyncReview}
+          onComplete={result => {
+            setSyncReview(null);
+            if (result.downloaded) { window.location.reload(); return; }
+            if (result.synced_at > 0) setLastSyncedAt(new Date(result.synced_at * 1000));
+            setSyncStatus("success"); setSyncTick(tick => tick + 1); setConfigVersion(version => version + 1);
+          }} />}
         <main className="flex-1 overflow-hidden">
           {loading || portfoliosLoading ? (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -431,7 +461,7 @@ export default function App() {
               readOnly={isBroker}
               brokerTransactions={isBroker ? broker.transactions : undefined}
               ordersAccountId={
-                isBroker && brokerConnection?.supports_orders
+                isBroker && brokerConnection?.supports_orders && canSyncBroker
                   ? (activePortfolio?.broker_account_id ?? null)
                   : null
               }
@@ -569,6 +599,7 @@ export default function App() {
                 await Promise.all([reloadPortfolios(), reloadBrokers()]);
               }}
               openBrokerFormTrigger={openBrokerFormTrigger}
+              openBrokerSettingsTrigger={openBrokerSettingsTrigger}
             />
           )}
         </main>

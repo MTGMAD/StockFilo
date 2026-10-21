@@ -1,5 +1,4 @@
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { save, writeTextFile } from "./platform";
 
 /** Ask where to save and write the journal CSV. False if cancelled. */
 export async function saveJournalCsv(csv: string): Promise<boolean> {

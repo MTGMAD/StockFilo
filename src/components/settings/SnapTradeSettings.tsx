@@ -118,7 +118,7 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
         text:
           found > 0
             ? `Found ${found} new brokerage${found === 1 ? "" : "s"} — pick which accounts to show below.`
-            : "No new brokerages found.",
+            : "Existing brokerages reconnected on this device. Account selections and saved data were preserved. No new brokerages found.",
       });
     } catch (e) {
       setMessage({ ok: false, text: String(e) });
@@ -311,8 +311,8 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
                   <button
                     type="button"
                     onClick={() => handleSync(c.id)}
-                    disabled={syncingId === c.id}
-                    title="Sync now"
+                    disabled={syncingId === c.id || !c.has_credentials || c.disabled}
+                    title={c.has_credentials ? "Sync now" : "Check for New Accounts to reconnect on this device"}
                     className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-40 transition-colors"
                   >
                     <RefreshCw
@@ -330,6 +330,11 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
                 </div>
               </div>
 
+              {!c.has_credentials && (
+                <p className="text-xs text-muted-foreground">
+                  Saved accounts from another device. Use Check for New Accounts to reconnect them with this device’s SnapTrade keys.
+                </p>
+              )}
               <div className="space-y-1">
                 {c.accounts.map((a) => (
                   <label

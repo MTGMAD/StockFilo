@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
 import { cn } from "../../lib/utils";
 import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark, Network, Settings, Bell, Play, BellOff, BellRing } from "lucide-react";
-import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { isPermissionGranted, requestPermission } from "../../lib/platform";
 import { clearAllPurchases } from "../../lib/db";
 import { ALERT_SOUNDS, playAlertSound, type AlertSoundId } from "../../lib/alertSounds";
 import { StorageSettings } from "./StorageSettings";
@@ -29,6 +29,7 @@ interface SettingsPanelProps {
   onConfigSaved?: () => void;
   onBrokersChanged?: () => void;
   openBrokerFormTrigger?: number;
+  openBrokerSettingsTrigger?: number;
 }
 
 type NotificationPermissionState = "granted" | "denied" | "default" | "unknown";
@@ -50,7 +51,7 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "warm", label: "Warm", Icon: Leaf },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange, alertSoundId, onAlertSoundIdChange, alertSoundEnabled, onAlertSoundEnabledChange, syncTick, onConfigSaved, onBrokersChanged, openBrokerFormTrigger }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange, alertSoundId, onAlertSoundIdChange, alertSoundEnabled, onAlertSoundEnabledChange, syncTick, onConfigSaved, onBrokersChanged, openBrokerFormTrigger, openBrokerSettingsTrigger }: SettingsPanelProps) {
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -62,10 +63,10 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
   // the tab that actually has the form — same trigger BrokerSettings itself
   // already watches to auto-open it.
   useEffect(() => {
-    if (openBrokerFormTrigger && openBrokerFormTrigger > 0) {
+    if ((openBrokerFormTrigger ?? 0) > 0 || (openBrokerSettingsTrigger ?? 0) > 0) {
       setActiveTab("brokerage");
     }
-  }, [openBrokerFormTrigger]);
+  }, [openBrokerFormTrigger, openBrokerSettingsTrigger]);
 
   useEffect(() => {
     isPermissionGranted()

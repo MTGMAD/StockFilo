@@ -1,10 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { BackendConnection } from "./components/layout/BackendConnection";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <BackendConnection><App /></BackendConnection>
   </React.StrictMode>
 );

@@ -3,7 +3,7 @@ import {
   isPermissionGranted,
   requestPermission,
   sendNotification,
-} from "@tauri-apps/plugin-notification";
+} from "../lib/platform";
 import {
   listAllWatchlistItems,
   markAlertTriggered,

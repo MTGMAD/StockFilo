@@ -10,7 +10,7 @@ import {
   Target, BarChart2, Info, CalendarDays,
 } from "lucide-react";
 import { openUrl } from "../../lib/openUrl";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/platform";
 
 interface StockDetailModalProps {
   ticker: string;

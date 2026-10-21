@@ -4,14 +4,15 @@
  * SQL is now executed in Rust via invoke().  This file keeps the same
  * exported function signatures so the rest of the frontend is unchanged.
  */
-import { invoke } from "@tauri-apps/api/core";
-import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
+  invoke,
+  save,
+  openDialog,
   writeTextFile,
   readTextFile,
   writeFile,
   readFile,
-} from "@tauri-apps/plugin-fs";
+} from "./platform";
 import * as XLSX from "xlsx";
 import { calibrateCash } from "./cash";
 import { parseAmeripriseActivity, planAmeripriseImport, purchaseMatcher } from "./ameriprise";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/platform";
 
 /**
  * Brokerage icon, fetched by domain through the Rust backend and cached there.

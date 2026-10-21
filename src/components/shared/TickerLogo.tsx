@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/platform";
 
 const LOGO_COLORS = [
   "#6366f1", "#8b5cf6", "#ec4899", "#f97316",

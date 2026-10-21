@@ -7,7 +7,7 @@
  * listBrokerConnections, syncBrokerConnection, setBrokerAccountVisible, and
  * deleteBrokerConnection (all in brokers.ts) work on it unchanged.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./platform";
 
 /** Store this app's SnapTrade developer keys (Client ID + Consumer Key) on this device. */
 export async function saveSnapTradeAppKeys(
@@ -31,8 +31,8 @@ export async function connectSnapTrade(): Promise<string> {
 }
 
 /**
- * Look for brokerage authorizations SnapTrade now reports that aren't
- * connected here yet, creating a connection for each. Returns how many new
+ * Reconnect existing accounts by their SnapTrade IDs and discover new
+ * brokerage authorizations. Returns how many genuinely new connections
  * ones were found; their accounts start hidden until chosen with
  * setBrokerAccountVisible.
  */

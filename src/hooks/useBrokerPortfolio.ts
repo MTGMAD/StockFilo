@@ -25,7 +25,8 @@ const POLL_INTERVAL_MS = 30_000;
  *
  * The broker sync itself — every 30s while this portfolio is on screen,
  * re-reading positions, cash and transactions from the brokerage — runs the
- * same way regardless of provider; that detail is always the broker's.
+ * same way regardless of provider, when this device has credentials and the
+ * connection is enabled. Otherwise the saved positions remain available.
  * `providesPricing` (the connection's provider descriptor — true for Alpaca,
  * false for SnapTrade) only decides where *price* comes from:
  *
@@ -44,6 +45,7 @@ export function useBrokerPortfolio(
   brokerAccountId: number | null,
   connectionId: string | null,
   providesPricing: boolean,
+  canSync: boolean,
 ) {
   const [positions, setPositions] = useState<BrokerPosition[]>([]);
   const [transactions, setTransactions] = useState<BrokerTransaction[]>([]);
@@ -73,6 +75,7 @@ export function useBrokerPortfolio(
 
   useEffect(() => {
     const id = brokerAccountId;
+    setError(null);
     if (id !== loadedForRef.current) setLoading(true);
     loadStored()
       .catch((e) => setError(String(e)))
@@ -84,7 +87,7 @@ export function useBrokerPortfolio(
 
   /** Pull fresh positions from the brokerage, then re-read what was stored. */
   const syncNow = useCallback(async () => {
-    if (!connectionId) return;
+    if (!connectionId || !canSync) return;
     try {
       await syncBrokerConnection(connectionId);
       await loadStored();
@@ -93,13 +96,13 @@ export function useBrokerPortfolio(
       // Keep showing the last known positions rather than blanking the view.
       setError(String(e));
     }
-  }, [connectionId, loadStored]);
+  }, [connectionId, canSync, loadStored]);
 
   // Live refresh from the broker while this portfolio is on screen — detail
   // (shares, cost basis, cash, transactions) always comes from here,
   // regardless of provider.
   useEffect(() => {
-    if (!connectionId || brokerAccountId == null) return;
+    if (!connectionId || brokerAccountId == null || !canSync) return;
     let cancelled = false;
 
     const tick = async () => {
@@ -113,7 +116,7 @@ export function useBrokerPortfolio(
       cancelled = true;
       clearInterval(id);
     };
-  }, [connectionId, brokerAccountId, syncNow]);
+  }, [connectionId, brokerAccountId, canSync, syncNow]);
 
   // Broker-quoted accounts (Alpaca): reference data only (company name,
   // asset type, dividend yield, ...) — price itself is always the broker's,
