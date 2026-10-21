@@ -99,6 +99,20 @@ This command:
 
 ## Available Scripts
 
+To build a Debian package that can be installed and run alongside existing
+builds, run `./stockfolio-linux-deb-isolated`. Each invocation creates a unique
+package, executable, desktop launcher, app identifier, data/config directories,
+and keychain namespace. Its browser backend requests an unused loopback port.
+The new app starts with separate data; existing portfolios are not copied.
+
+The script runs in a separate process session at reduced CPU priority, using a
+snapshot of the current source and private dependency and build directories.
+Packages, checksums, build metadata, and logs are saved under
+`.deb-builds.local/<build-id>/`. Existing build outputs are preserved. Set
+`STOCKFOLIO_BUILD_JOBS` to override the default of four Rust compiler jobs.
+The build needs the same host prerequisites as a normal Tauri build and can
+also be launched from a Flatpak editor.
+
 | Command | Description |
 |---|---|
 | `npm run dev` | Start Vite frontend only (no native window) |
