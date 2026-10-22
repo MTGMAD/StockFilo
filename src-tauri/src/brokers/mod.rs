@@ -30,7 +30,7 @@ pub mod types;
 
 use error::{BrokerError, BrokerResult};
 use types::{
-    Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount, RemoteActivity, RemoteOrder,
+    ActivityFetch, Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount, RemoteOrder,
     RemotePosition,
 };
 
@@ -125,9 +125,12 @@ impl Provider {
         environment: &str,
         provider_account_id: &str,
         since: Option<&str>,
-    ) -> BrokerResult<Vec<RemoteActivity>> {
+    ) -> BrokerResult<ActivityFetch> {
         match self {
-            Provider::Alpaca => alpaca::Alpaca::activities(creds, environment, since).await,
+            Provider::Alpaca => Ok(ActivityFetch {
+                activities: alpaca::Alpaca::activities(creds, environment, since).await?,
+                history_complete: true,
+            }),
             Provider::SnapTrade => {
                 snaptrade::SnapTrade::activities(creds, provider_account_id, since).await
             }

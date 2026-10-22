@@ -208,27 +208,65 @@ fn side_of(action: &str) -> Option<&'static str> {
     }
 }
 
-/// One `UniversalActivity` from `GET /accounts/{id}/activities`. Only share
-/// trades are kept (BUY, SELL, and REI — a dividend reinvestment buys shares);
-/// the request already filters to those types, this re-checks defensively.
+/// One `UniversalActivity` from `GET /accounts/{id}/activities`. Every type
+/// is kept: BUY, SELL and REI (a dividend reinvestment buys shares) become
+/// fills; cash types map to their own kinds; anything else is `OTHER`, with
+/// SnapTrade's own type still in `raw`.
+///
+/// `amount` is SnapTrade's, but its sign is normalised wherever the type
+/// fixes the direction, because brokerages behind SnapTrade disagree on
+/// whether a withdrawal or a buy is reported negative. Dividends, interest
+/// and transfers keep the sign as reported — a withholding-tax adjustment
+/// is a negative dividend, and a transfer can go either way.
 pub fn activity(v: &Value) -> Option<RemoteActivity> {
+    use super::super::types::activity_kind as k;
+
     let external_id = text(v, "id")?;
-    let side = match text(v, "type")?.to_ascii_uppercase().as_str() {
-        "BUY" | "REI" => "buy",
-        "SELL" => "sell",
-        _ => return None,
+    let kind_raw = text(v, "type")?.to_ascii_uppercase();
+    let occurred_at = text(v, "trade_date")
+        .or_else(|| text(v, "settlement_date"))
+        .as_deref()
+        .and_then(date_only)?;
+    let reported = num(v.get("amount"));
+    let into = |sign: f64| reported.map(|a| sign * a.abs());
+
+    let (kind, side, amount) = match kind_raw.as_str() {
+        "BUY" | "REI" => (k::FILL, Some("buy"), into(-1.0)),
+        "SELL" => (k::FILL, Some("sell"), into(1.0)),
+        "DIVIDEND" => (k::DIVIDEND, None, reported),
+        // Crypto brokerages report staking and inflation rewards as their own
+        // types; like interest, they are income the account earned.
+        "INTEREST" | "CRYPTO_STAKING_REWARD" | "INFLATION_REWARD" => (k::INTEREST, None, reported),
+        "FEE" => (k::FEE, None, into(-1.0)),
+        "CONTRIBUTION" | "DEPOSIT" => (k::DEPOSIT, None, into(1.0)),
+        "WITHDRAWAL" => (k::WITHDRAWAL, None, into(-1.0)),
+        "TRANSFER" | "EXTERNAL_ASSET_TRANSFER_IN" | "EXTERNAL_ASSET_TRANSFER_OUT"
+        | "CRYPTO_SEND" | "CRYPTO_RECEIVE" => (k::TRANSFER, None, reported),
+        "SPLIT" => (k::SPLIT, None, reported),
+        _ => (k::OTHER, None, reported),
     };
-    let provider_symbol = v.get("symbol").and_then(universal_ticker)?;
-    let occurred_at = date_only(&text(v, "trade_date")?)?;
+
+    let provider_symbol = v.get("symbol").and_then(universal_ticker);
+    // A trade without a security can't be placed in any holding.
+    if kind == k::FILL && provider_symbol.is_none() {
+        return None;
+    }
 
     Some(RemoteActivity {
         external_id,
-        kind: "fill".to_string(),
-        side: Some(side.to_string()),
-        provider_symbol,
+        kind: kind.to_string(),
+        side: side.map(str::to_string),
+        provider_symbol: provider_symbol.unwrap_or_default(),
         // Some brokerages sign units by direction; the side already says it.
-        qty: num(v.get("units")).map(f64::abs),
+        qty: num(v.get("units")).map(|q| if kind == k::FILL { q.abs() } else { q }),
         price: num(v.get("price")),
+        amount,
+        currency: v
+            .get("currency")
+            .and_then(|c| c.get("code"))
+            .and_then(|c| c.as_str())
+            .map(str::to_string),
+        description: text(v, "description"),
         occurred_at,
         raw: Some(v.to_string()),
     })
@@ -254,6 +292,10 @@ pub fn executed_order_as_activity(v: &Value) -> Option<RemoteActivity> {
         provider_symbol,
         qty: Some(filled.abs()),
         price: num(v.get("execution_price")),
+        // Left for the history row that replaces this one to report exactly.
+        amount: None,
+        currency: None,
+        description: None,
         occurred_at: date_only(&when)?,
         raw: Some(v.to_string()),
     })
@@ -340,9 +382,61 @@ mod order_tests {
                           "trade_date": "2026-09-20", "symbol": { "symbol": "VTI" } });
         assert_eq!(activity(&rei).unwrap().side.as_deref(), Some("buy"));
 
+    }
+
+    #[test]
+    fn history_activity_keeps_cash_rows_with_a_signed_amount() {
         let div = json!({ "id": "a4", "type": "DIVIDEND", "trade_date": "2026-09-20",
+                          "amount": 12.34, "currency": { "code": "USD" },
                           "symbol": { "symbol": "VTI" } });
-        assert!(activity(&div).is_none());
+        let d = activity(&div).unwrap();
+        assert_eq!((d.kind.as_str(), d.side.as_deref()), ("dividend", None));
+        assert_eq!(d.amount, Some(12.34));
+        assert_eq!(d.currency.as_deref(), Some("USD"));
+        assert_eq!(d.provider_symbol, "VTI");
+
+        let dep = json!({ "id": "c1", "type": "CONTRIBUTION", "trade_date": "2026-01-05",
+                          "amount": 500, "symbol": null, "description": "ACH DEPOSIT" });
+        let d = activity(&dep).unwrap();
+        assert_eq!((d.kind.as_str(), d.amount), ("deposit", Some(500.0)));
+        assert_eq!(d.provider_symbol, "");
+        assert_eq!(d.description.as_deref(), Some("ACH DEPOSIT"));
+
+        // Whichever sign the brokerage used, a withdrawal or fee is cash out
+        // and a contribution is cash in.
+        for raw in [200.0, -200.0] {
+            let w = json!({ "id": "w", "type": "WITHDRAWAL", "trade_date": "2026-02-01", "amount": raw });
+            assert_eq!(activity(&w).unwrap().amount, Some(-200.0));
+            let f = json!({ "id": "f", "type": "FEE", "trade_date": "2026-02-01", "amount": raw });
+            assert_eq!(activity(&f).unwrap().amount, Some(-200.0));
+            let c = json!({ "id": "c", "type": "CONTRIBUTION", "trade_date": "2026-02-01", "amount": raw });
+            assert_eq!(activity(&c).unwrap().amount, Some(200.0));
+        }
+
+        let buy = json!({ "id": "b", "type": "BUY", "trade_date": "2026-02-01", "amount": 125,
+                          "units": 10, "price": 12.5, "symbol": { "symbol": "VTI" } });
+        assert_eq!(activity(&buy).unwrap().amount, Some(-125.0));
+    }
+
+    #[test]
+    fn unknown_activity_types_are_kept_not_dropped() {
+        let v = json!({ "id": "x", "type": "OPTIONEXPIRATION", "trade_date": "2026-03-20",
+                        "units": -1, "symbol": null });
+        let a = activity(&v).unwrap();
+        assert_eq!(a.kind, "other");
+        assert_eq!(a.side, None, "only fills carry a side");
+        assert!(a.raw.unwrap().contains("OPTIONEXPIRATION"));
+
+        let reward = json!({ "id": "r", "type": "CRYPTO_STAKING_REWARD", "trade_date": "2026-03-20",
+                             "amount": 0.37, "description": "SOL Staking Reward" });
+        assert_eq!(activity(&reward).unwrap().kind, "interest");
+        let send = json!({ "id": "s", "type": "CRYPTO_SEND", "trade_date": "2026-03-20", "amount": -54 });
+        assert_eq!((activity(&send).unwrap().kind.as_str(), activity(&send).unwrap().amount), ("transfer", Some(-54.0)));
+        let dep = json!({ "id": "d", "type": "DEPOSIT", "trade_date": "2026-03-20", "amount": 878 });
+        assert_eq!(activity(&dep).unwrap().kind, "deposit");
+
+        let no_symbol_buy = json!({ "id": "y", "type": "BUY", "trade_date": "2026-03-20", "units": 1 });
+        assert!(activity(&no_symbol_buy).is_none());
     }
 
     #[test]

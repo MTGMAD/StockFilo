@@ -251,7 +251,7 @@ mod tests {
     fn synced_broker_identity_upgrade_preserves_legacy_rows() {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
-        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; PRAGMA user_version=27;
+        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; ALTER TABLE broker_transactions DROP COLUMN amount; ALTER TABLE broker_transactions DROP COLUMN currency; ALTER TABLE broker_transactions DROP COLUMN description; ALTER TABLE broker_accounts DROP COLUMN history_version; DROP TABLE broker_account_snapshots; PRAGMA user_version=27;
             INSERT INTO broker_connections (id,provider,environment,label,credential_ref,created_at) VALUES ('imported','snaptrade','read','Keep my label','broker:imported',123);
             INSERT INTO broker_accounts (id,connection_id,provider_account_id,equity,cash,visible) VALUES (99,'imported','remote-account',300,17,1);").unwrap();
         run_all(&conn).unwrap();
@@ -270,7 +270,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 29);
+        assert_eq!(v, 30);
     }
 
     #[test]
@@ -610,7 +610,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 29);
+        assert_eq!(v, 30);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1017,6 +1017,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_broker_authorization
 /// transactions and portfolio stay, and reconnecting clears it.
 const MIGRATION_V29: &str = "ALTER TABLE broker_connections ADD COLUMN archived_at INTEGER;";
 
+/// Broker cash history and account-value history.
+///
+/// `broker_transactions` used to hold share trades only; it now keeps every
+/// activity a broker reports (dividends, interest, fees, deposits,
+/// withdrawals, transfers), so it gains the cash `amount` those rows are
+/// about — signed, positive = cash into the account — plus the broker's
+/// currency and description. Existing trade rows keep NULL until the backfill
+/// below re-reads them.
+///
+/// `broker_accounts.history_version` says which version of the activity
+/// fetch an account's stored history came from. Sync normally asks only for
+/// activity since the newest stored day, which would never reach the older
+/// dividends and deposits the old trade-only fetch skipped. An account below
+/// the current version gets one full re-fetch, then is marked current.
+///
+/// `broker_account_snapshots` is one row per account per day with what the
+/// broker reported: syncing overwrites `broker_accounts.equity`/`cash` and
+/// replaces positions wholesale, so this is the only record of what an
+/// account was worth on an earlier day. Same-day syncs update that day's row.
+const MIGRATION_V30: &str = r#"
+ALTER TABLE broker_transactions ADD COLUMN amount REAL;
+ALTER TABLE broker_transactions ADD COLUMN currency TEXT;
+ALTER TABLE broker_transactions ADD COLUMN description TEXT;
+ALTER TABLE broker_accounts ADD COLUMN history_version INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS broker_account_snapshots (
+    broker_account_id INTEGER NOT NULL,
+    as_of             TEXT NOT NULL,
+    equity            REAL,
+    cash              REAL,
+    positions_value   REAL,
+    captured_at       INTEGER NOT NULL,
+    PRIMARY KEY (broker_account_id, as_of)
+);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1051,6 +1087,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (27, MIGRATION_V27),
         (28, MIGRATION_V28),
         (29, MIGRATION_V29),
+        (30, MIGRATION_V30),
     ];
 
     let user_version: i64 =

@@ -15,6 +15,27 @@ function money(v: number | null): string {
   });
 }
 
+const KIND_LABEL: Record<string, string> = {
+  dividend: "Dividend",
+  interest: "Interest",
+  fee: "Fee",
+  deposit: "Deposit",
+  withdrawal: "Withdrawal",
+  transfer: "Transfer",
+  split: "Split",
+  other: "Other",
+};
+
+/** Signed cash effect: the broker's own figure, or for a fill without one,
+ *  shares × price with the side's sign (a buy is cash out). */
+function cashAmount(t: BrokerTransaction): number | null {
+  if (t.amount != null) return t.amount;
+  if (t.kind === "fill" && t.qty != null && t.price != null) {
+    return t.side === "sell" ? t.qty * t.price : -t.qty * t.price;
+  }
+  return null;
+}
+
 function shares(v: number | null): string {
   if (v == null) return "—";
   return v.toLocaleString(undefined, { maximumFractionDigits: 6 });
@@ -61,7 +82,7 @@ export function BrokerTransactionsTable({
           <tr className="text-xs text-muted-foreground border-b border-border">
             <th className="text-left font-medium px-6 py-2">Date</th>
             <th className="text-left font-medium px-3 py-2">Symbol</th>
-            <th className="text-left font-medium px-3 py-2">Side</th>
+            <th className="text-left font-medium px-3 py-2">Type</th>
             <th className="text-right font-medium px-3 py-2">Shares</th>
             <th className="text-right font-medium px-3 py-2">Price</th>
             <th className="text-right font-medium px-6 py-2">Amount</th>
@@ -69,8 +90,7 @@ export function BrokerTransactionsTable({
         </thead>
         <tbody>
           {transactions.map((t) => {
-            const amount =
-              t.qty != null && t.price != null ? t.qty * t.price : null;
+            const amount = cashAmount(t);
             return (
               <tr
                 key={t.id}
@@ -90,8 +110,15 @@ export function BrokerTransactionsTable({
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2 font-medium text-foreground">
-                  {t.provider_symbol}
+                <td
+                  className="px-3 py-2 font-medium text-foreground"
+                  title={t.description ?? undefined}
+                >
+                  {t.provider_symbol || (
+                    <span className="font-normal text-muted-foreground truncate">
+                      {t.description ?? "—"}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   {t.side ? (
@@ -104,7 +131,9 @@ export function BrokerTransactionsTable({
                       {t.side}
                     </span>
                   ) : (
-                    <span className="text-muted-foreground">—</span>
+                    <span className="text-xs text-muted-foreground">
+                      {KIND_LABEL[t.kind] ?? t.kind}
+                    </span>
                   )}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums">
@@ -113,7 +142,12 @@ export function BrokerTransactionsTable({
                 <td className="px-3 py-2 text-right tabular-nums">
                   {money(t.price)}
                 </td>
-                <td className="px-6 py-2 text-right tabular-nums">
+                <td
+                  className={cn(
+                    "px-6 py-2 text-right tabular-nums",
+                    amount != null && amount > 0 && "text-positive",
+                  )}
+                >
                   {money(amount)}
                 </td>
               </tr>

@@ -52,20 +52,55 @@ pub fn position(v: &Value) -> Option<RemotePosition> {
     })
 }
 
-/// One element of `GET /v2/account/activities/FILL`.
+/// One element of `GET /v2/account/activities`. Fills carry
+/// `transaction_time`, `side`, `qty` and `price`; non-trade activities carry
+/// `date`, `net_amount` (already signed: negative is cash out) and
+/// `description`. A non-trade type with no kind of its own is `OTHER`, its
+/// `activity_type` still in `raw`.
 pub fn activity(v: &Value) -> Option<RemoteActivity> {
+    use super::super::types::activity_kind as k;
+
     let external_id = text(v, "id")?;
-    let provider_symbol = text(v, "symbol")?;
-    let occurred_at = date_only(&text(v, "transaction_time")?)?;
+    let activity_type = text(v, "activity_type")
+        .unwrap_or_else(|| "FILL".to_string())
+        .to_ascii_uppercase();
+
+    if activity_type == "FILL" {
+        return Some(RemoteActivity {
+            external_id,
+            kind: k::FILL.to_string(),
+            side: text(v, "side").map(|s| s.to_ascii_lowercase()),
+            provider_symbol: text(v, "symbol")?,
+            qty: num(v, "qty"),
+            price: num(v, "price"),
+            occurred_at: date_only(&text(v, "transaction_time")?)?,
+            raw: Some(v.to_string()),
+            ..Default::default()
+        });
+    }
+
+    let kind = match activity_type.as_str() {
+        t if t.starts_with("DIV") => k::DIVIDEND,
+        t if t.starts_with("INT") => k::INTEREST,
+        "FEE" | "CFEE" | "PTC" => k::FEE,
+        "CSD" => k::DEPOSIT,
+        "CSW" => k::WITHDRAWAL,
+        "JNLC" | "JNLS" | "ACATC" | "ACATS" => k::TRANSFER,
+        "SPLIT" => k::SPLIT,
+        _ => k::OTHER,
+    };
 
     Some(RemoteActivity {
         external_id,
-        kind: "fill".to_string(),
-        side: text(v, "side").map(|s| s.to_ascii_lowercase()),
-        provider_symbol,
+        kind: kind.to_string(),
+        side: None,
+        provider_symbol: text(v, "symbol").unwrap_or_default(),
         qty: num(v, "qty"),
-        price: num(v, "price"),
-        occurred_at,
+        price: num(v, "per_share_amount"),
+        amount: num(v, "net_amount"),
+        currency: None,
+        description: text(v, "description"),
+        occurred_at: date_only(&text(v, "date")?)?,
         raw: Some(v.to_string()),
     })
 }
@@ -174,6 +209,27 @@ mod tests {
         assert_eq!(a.occurred_at, "2025-06-02");
         assert_eq!(a.kind, "fill");
         assert!(a.raw.is_some());
+    }
+
+    #[test]
+    fn non_trade_activities_keep_their_signed_amount() {
+        let dep = json!({ "id": "d1", "activity_type": "CSD", "date": "2025-01-03",
+                          "net_amount": "1000", "description": "ACH" });
+        let d = activity(&dep).unwrap();
+        assert_eq!((d.kind.as_str(), d.side, d.amount), ("deposit", None, Some(1000.0)));
+        assert_eq!(d.provider_symbol, "");
+
+        let w = json!({ "id": "w1", "activity_type": "CSW", "date": "2025-02-03", "net_amount": "-250" });
+        assert_eq!(activity(&w).unwrap().amount, Some(-250.0));
+
+        let div = json!({ "id": "v1", "activity_type": "DIVNRA", "date": "2025-03-03",
+                          "symbol": "AAPL", "net_amount": "-0.45", "qty": "10" });
+        let d = activity(&div).unwrap();
+        assert_eq!((d.kind.as_str(), d.provider_symbol.as_str()), ("dividend", "AAPL"));
+        assert_eq!(d.amount, Some(-0.45));
+
+        let odd = json!({ "id": "o1", "activity_type": "REORG", "date": "2025-03-03" });
+        assert_eq!(activity(&odd).unwrap().kind, "other");
     }
 
     #[test]

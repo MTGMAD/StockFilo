@@ -23,7 +23,7 @@ const SECRET: &str = "api_secret_key";
 /// Alpaca returns at most 100 activities per page.
 const PAGE_SIZE: usize = 100;
 
-/// Stop after this many pages. At 100 fills per page this is 50,000 fills —
+/// Stop after this many pages. At 100 per page this is 50,000 activities —
 /// far beyond a personal account, and it guarantees a malformed `page_token`
 /// response can never spin forever.
 const MAX_PAGES: usize = 500;
@@ -117,8 +117,9 @@ impl Alpaca {
         Ok(arr.iter().filter_map(map::position).collect())
     }
 
-    /// Fetch FILL activities, newest first, following Alpaca's `page_token`
-    /// cursor until the history is exhausted.
+    /// Fetch every activity — fills and non-trade activities (dividends,
+    /// interest, fees, deposits, withdrawals, journals) — newest first,
+    /// following Alpaca's `page_token` cursor until the history is exhausted.
     ///
     /// `since` is an optional `YYYY-MM-DD` lower bound.
     pub async fn activities(
@@ -140,7 +141,7 @@ impl Alpaca {
             }
 
             let v = client
-                .get_json("/v2/account/activities/FILL", &query)
+                .get_json("/v2/account/activities", &query)
                 .await?;
             let arr = match v.as_array() {
                 Some(a) => a,

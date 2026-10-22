@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { invoke } from "../../lib/platform";
+import { holdBrokerSync } from "../../lib/brokers";
 import type { SyncPreview, SyncResult } from "../../types";
 
 interface Props {
@@ -19,6 +20,9 @@ export function SyncReviewDialog({ review, onClose, onReviewChange, onComplete }
   const [allowEmpty, setAllowEmpty] = useState(false);
   const phrase = review.local.empty ? "UPLOAD EMPTY DATABASE" : "REPLACE REMOTE";
   const requiresPhrase = review.remote_exists || review.local.empty;
+
+  // Broker syncs would change the local database under this review.
+  useEffect(() => holdBrokerSync(), []);
 
   function cancel() {
     void invoke("cancel_sync_review", { confirmationId: review.confirmation_id }).catch(() => {});
@@ -83,7 +87,7 @@ export function SyncReviewDialog({ review, onClose, onReviewChange, onComplete }
               </>}
             </div>}
           </>}
-          <p className="text-xs text-muted-foreground">Approval expires after 10 minutes and cannot be reused. Background checks never replace either database.</p>
+          <p className="text-xs text-muted-foreground">Approval expires after 10 minutes and cannot be reused. Sync only transfers on its own when just one copy changed; when both changed, it always asks here.</p>
           <button disabled={busy} onClick={cancel} className="px-4 py-2 rounded-md border border-border disabled:opacity-40">Cancel</button>
         </Dialog.Content>
       </Dialog.Portal>

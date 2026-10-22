@@ -29,7 +29,8 @@ pub struct StoredPosition {
     pub snapshot_at: i64,
 }
 
-/// A stored transaction, for the read-only purchases view.
+/// A stored transaction: a trade, or a cash row (dividend, deposit, fee…) —
+/// see `types::activity_kind`. Only fills carry `side`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTransaction {
     pub id: i64,
@@ -41,12 +42,35 @@ pub struct StoredTransaction {
     pub ticker: Option<String>,
     pub qty: Option<f64>,
     pub price: Option<f64>,
+    /// Signed cash effect, positive = into the account. See `RemoteActivity`.
+    pub amount: Option<f64>,
+    pub currency: Option<String>,
+    pub description: Option<String>,
     pub occurred_at: String,
     /// True for a dividend reinvestment (SnapTrade type REI) — a buy the
     /// broker made on the user's behalf, not a trading decision.
     #[serde(default)]
     pub reinvested: bool,
 }
+
+/// One day of an account's value, as the broker reported it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountSnapshot {
+    pub broker_account_id: i64,
+    /// YYYY-MM-DD, local calendar day of the sync.
+    pub as_of: String,
+    pub equity: Option<f64>,
+    pub cash: Option<f64>,
+    pub positions_value: Option<f64>,
+    pub captured_at: i64,
+}
+
+/// Bump when the activity fetch starts keeping something older history
+/// lacks, or classifies it better: every account below it gets one full
+/// re-fetch. 1 = every activity type with its cash amount (previously share
+/// trades only). 2 = crypto rewards, crypto transfers and SnapTrade's
+/// `DEPOSIT` spelling classified instead of left as `other`.
+pub const HISTORY_VERSION: i64 = 2;
 
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -201,6 +225,12 @@ pub const PROVISIONAL_PREFIX: &str = "order:";
 /// Append activities. Idempotent on `(broker_account_id, external_id)`, so
 /// re-syncing an overlapping window never duplicates a row.
 ///
+/// A row already stored keeps everything it has; only the cash fields it
+/// lacks are filled in — trade rows saved before amounts were kept get them
+/// from the backfill this way, without being duplicated or rewritten. The
+/// one exception is a row stored as `other`: once an adapter learns what that
+/// type means, the re-fetch gives it its real kind.
+///
 /// Returns how many rows were genuinely new.
 pub fn append_transactions(
     conn: &Connection,
@@ -214,8 +244,8 @@ pub fn append_transactions(
         let n = conn.execute(
             "INSERT OR IGNORE INTO broker_transactions \
                (broker_account_id, external_id, kind, side, provider_symbol, ticker, \
-                qty, price, occurred_at, raw) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                qty, price, occurred_at, raw, amount, currency, description) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
                 broker_account_id,
                 a.external_id,
@@ -226,9 +256,31 @@ pub fn append_transactions(
                 a.qty,
                 a.price,
                 a.occurred_at,
-                a.raw
+                a.raw,
+                a.amount,
+                a.currency,
+                a.description
             ],
         )?;
+        if n == 0 {
+            conn.execute(
+                "UPDATE broker_transactions SET \
+                   amount      = COALESCE(amount, ?3), \
+                   currency    = COALESCE(currency, ?4), \
+                   description = COALESCE(description, ?5), \
+                   kind        = CASE WHEN kind = ?7 THEN ?6 ELSE kind END \
+                 WHERE broker_account_id = ?1 AND external_id = ?2",
+                params![
+                    broker_account_id,
+                    a.external_id,
+                    a.amount,
+                    a.currency,
+                    a.description,
+                    a.kind,
+                    super::types::activity_kind::OTHER
+                ],
+            )?;
+        }
         inserted += n;
     }
 
@@ -242,7 +294,7 @@ pub fn list_transactions(
     let mut stmt = conn.prepare(
         "SELECT id, broker_account_id, external_id, kind, side, provider_symbol, ticker, \
                 qty, price, occurred_at, \
-                COALESCE(raw LIKE '%\"type\":\"REI\"%', 0) \
+                COALESCE(raw LIKE '%\"type\":\"REI\"%', 0), amount, currency, description \
          FROM broker_transactions WHERE broker_account_id = ?1 \
          ORDER BY occurred_at DESC, id DESC",
     )?;
@@ -259,6 +311,9 @@ pub fn list_transactions(
             price: r.get(8)?,
             occurred_at: r.get(9)?,
             reinvested: r.get::<_, i64>(10)? != 0,
+            amount: r.get(11)?,
+            currency: r.get(12)?,
+            description: r.get(13)?,
         })
     })?;
     rows.collect()
@@ -277,6 +332,78 @@ pub fn latest_activity_date(
         params![broker_account_id, PROVISIONAL_PREFIX],
         |r| r.get::<_, Option<String>>(0),
     )
+}
+
+pub fn history_version(conn: &Connection, broker_account_id: i64) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT history_version FROM broker_accounts WHERE id = ?1",
+        params![broker_account_id],
+        |r| r.get(0),
+    )
+}
+
+pub fn set_history_version(
+    conn: &Connection,
+    broker_account_id: i64,
+    version: i64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE broker_accounts SET history_version = ?1 WHERE id = ?2",
+        params![version, broker_account_id],
+    )?;
+    Ok(())
+}
+
+// ── Value history ──────────────────────────────────────────────────────────
+
+/// Record today's value for an account. One row per day: a later sync on the
+/// same day replaces the earlier figures, and a value the broker did not
+/// report this time keeps the one already stored rather than blanking it.
+pub fn record_snapshot(
+    conn: &Connection,
+    broker_account_id: i64,
+    as_of: &str,
+    equity: Option<f64>,
+    cash: Option<f64>,
+    positions_value: Option<f64>,
+) -> rusqlite::Result<()> {
+    if equity.is_none() && cash.is_none() && positions_value.is_none() {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO broker_account_snapshots \
+           (broker_account_id, as_of, equity, cash, positions_value, captured_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT(broker_account_id, as_of) DO UPDATE SET \
+           equity          = COALESCE(excluded.equity, equity), \
+           cash            = COALESCE(excluded.cash, cash), \
+           positions_value = COALESCE(excluded.positions_value, positions_value), \
+           captured_at     = excluded.captured_at",
+        params![broker_account_id, as_of, equity, cash, positions_value, now_secs()],
+    )?;
+    Ok(())
+}
+
+/// Oldest first, ready to chart.
+pub fn list_snapshots(
+    conn: &Connection,
+    broker_account_id: i64,
+) -> rusqlite::Result<Vec<AccountSnapshot>> {
+    let mut stmt = conn.prepare(
+        "SELECT broker_account_id, as_of, equity, cash, positions_value, captured_at \
+         FROM broker_account_snapshots WHERE broker_account_id = ?1 ORDER BY as_of ASC",
+    )?;
+    let rows = stmt.query_map(params![broker_account_id], |r| {
+        Ok(AccountSnapshot {
+            broker_account_id: r.get(0)?,
+            as_of: r.get(1)?,
+            equity: r.get(2)?,
+            cash: r.get(3)?,
+            positions_value: r.get(4)?,
+            captured_at: r.get(5)?,
+        })
+    })?;
+    rows.collect()
 }
 
 /// Drop provisional fills the transaction history now covers, so a trade is
@@ -437,6 +564,10 @@ pub fn delete_connection(
             "DELETE FROM broker_transactions WHERE broker_account_id = ?1",
             params![acct],
         )?;
+        conn.execute(
+            "DELETE FROM broker_account_snapshots WHERE broker_account_id = ?1",
+            params![acct],
+        )?;
 
         if keep_portfolio {
             conn.execute(
@@ -589,7 +720,7 @@ mod tests {
             qty: Some(qty),
             price: Some(10.0),
             occurred_at: day.into(),
-            raw: None,
+            ..Default::default()
         }
     }
 
@@ -666,7 +797,7 @@ mod tests {
                 qty: Some(10.0),
                 price: Some(150.0),
                 occurred_at: "2025-03-14".into(),
-                raw: None,
+                ..Default::default()
             },
             RemoteActivity {
                 external_id: "f2".into(),
@@ -676,7 +807,7 @@ mod tests {
                 qty: Some(5.0),
                 price: Some(160.0),
                 occurred_at: "2025-06-02".into(),
-                raw: None,
+                ..Default::default()
             },
         ];
 
@@ -751,6 +882,81 @@ mod tests {
         let acct2 = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
         assert_eq!(acct, acct2);
         assert_eq!(linked_portfolio(&conn, acct).unwrap(), None);
+    }
+
+    #[test]
+    fn backfill_fills_in_amounts_on_rows_stored_without_them() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        append_transactions(&conn, acct, &[fill("t1", "2024-01-02", "AAPL", "buy", 1.0)]).unwrap();
+
+        let mut again = fill("t1", "2024-01-02", "AAPL", "buy", 1.0);
+        again.amount = Some(-10.0);
+        again.currency = Some("USD".into());
+        let deposit = RemoteActivity {
+            external_id: "d1".into(),
+            kind: "deposit".into(),
+            amount: Some(500.0),
+            description: Some("ACH DEPOSIT".into()),
+            occurred_at: "2023-12-01".into(),
+            ..Default::default()
+        };
+        assert_eq!(append_transactions(&conn, acct, &[again, deposit]).unwrap(), 1, "only the deposit is new");
+
+        let rows = list_transactions(&conn, acct).unwrap();
+        assert_eq!(rows.len(), 2);
+        let t1 = rows.iter().find(|r| r.external_id == "t1").unwrap();
+        assert_eq!((t1.amount, t1.currency.as_deref()), (Some(-10.0), Some("USD")));
+        let d1 = rows.iter().find(|r| r.external_id == "d1").unwrap();
+        assert_eq!((d1.kind.as_str(), d1.side.as_deref(), d1.ticker.as_deref()), ("deposit", None, None));
+
+        // A row first stored as `other` takes its real kind once known; a
+        // known kind is never overwritten.
+        let unknown = RemoteActivity { external_id: "x1".into(), kind: "other".into(), occurred_at: "2023-01-01".into(), ..Default::default() };
+        append_transactions(&conn, acct, &[unknown]).unwrap();
+        let known = RemoteActivity { external_id: "x1".into(), kind: "interest".into(), occurred_at: "2023-01-01".into(), ..Default::default() };
+        append_transactions(&conn, acct, &[known]).unwrap();
+        let relabel = RemoteActivity { external_id: "d1".into(), kind: "other".into(), occurred_at: "2023-12-01".into(), ..Default::default() };
+        append_transactions(&conn, acct, &[relabel]).unwrap();
+        let rows = list_transactions(&conn, acct).unwrap();
+        assert_eq!(rows.iter().find(|r| r.external_id == "x1").unwrap().kind, "interest");
+        assert_eq!(rows.iter().find(|r| r.external_id == "d1").unwrap().kind, "deposit");
+
+        // A later fetch reporting no amount never erases a stored one.
+        append_transactions(&conn, acct, &[fill("t1", "2024-01-02", "AAPL", "buy", 1.0)]).unwrap();
+        let t1 = list_transactions(&conn, acct).unwrap().into_iter().find(|r| r.external_id == "t1").unwrap();
+        assert_eq!(t1.amount, Some(-10.0));
+    }
+
+    #[test]
+    fn history_version_starts_at_zero_and_is_per_account() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        assert_eq!(history_version(&conn, acct).unwrap(), 0);
+        set_history_version(&conn, acct, HISTORY_VERSION).unwrap();
+        assert_eq!(history_version(&conn, acct).unwrap(), HISTORY_VERSION);
+        // A resync of the account row leaves it alone.
+        upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        assert_eq!(history_version(&conn, acct).unwrap(), HISTORY_VERSION);
+    }
+
+    #[test]
+    fn snapshots_keep_one_row_per_day() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        record_snapshot(&conn, acct, "2026-10-21", Some(1000.0), Some(50.0), Some(950.0)).unwrap();
+        record_snapshot(&conn, acct, "2026-10-22", Some(1010.0), Some(50.0), Some(960.0)).unwrap();
+        // Same day again: updated in place; an unreported value is kept.
+        record_snapshot(&conn, acct, "2026-10-22", Some(1020.0), None, Some(970.0)).unwrap();
+        record_snapshot(&conn, acct, "2026-10-23", None, None, None).unwrap();
+
+        let snaps = list_snapshots(&conn, acct).unwrap();
+        assert_eq!(snaps.len(), 2);
+        assert_eq!(snaps[0].as_of, "2026-10-21");
+        assert_eq!((snaps[1].equity, snaps[1].cash), (Some(1020.0), Some(50.0)));
+
+        delete_connection(&conn, "c1", false).unwrap();
+        assert!(list_snapshots(&conn, acct).unwrap().is_empty());
     }
 
     #[test]
@@ -1138,6 +1344,7 @@ mod credential_leak_tests {
                 // `raw` keeps the provider's original JSON — the most likely
                 // place for a credential to end up by accident.
                 raw: Some(r#"{"id":"f1","symbol":"AAPL"}"#.into()),
+                ..Default::default()
             }],
         )
         .unwrap();

@@ -460,9 +460,37 @@ export interface BrokerTransaction {
   ticker: string | null;
   qty: number | null;
   price: number | null;
+  /** Signed cash effect on the account: positive = cash in. Null when the
+   *  broker reported none (e.g. older Alpaca fills). */
+  amount: number | null;
+  currency: string | null;
+  /** The broker's own text for the row, e.g. "ACH DEPOSIT". */
+  description: string | null;
   occurred_at: string; // YYYY-MM-DD
   /** Dividend reinvestment — a buy the broker made, not a trading decision. */
   reinvested?: boolean;
+}
+
+/** Kinds a broker transaction can have. Only "fill" rows carry a side. */
+export type BrokerTransactionKind =
+  | "fill"
+  | "dividend"
+  | "interest"
+  | "fee"
+  | "deposit"
+  | "withdrawal"
+  | "transfer"
+  | "split"
+  | "other";
+
+/** One day of a broker account's value, as the broker reported it. */
+export interface BrokerAccountSnapshot {
+  broker_account_id: number;
+  as_of: string; // YYYY-MM-DD
+  equity: number | null;
+  cash: number | null;
+  positions_value: number | null;
+  captured_at: number;
 }
 
 /** One broker's order-status vocabulary — drives the Orders view's tabs. */

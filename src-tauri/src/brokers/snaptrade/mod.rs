@@ -45,8 +45,8 @@ pub mod map;
 
 use super::error::{BrokerError, BrokerResult};
 use super::types::{
-    AccountType, Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount,
-    RemoteActivity, RemoteOrder, RemotePosition,
+    AccountType, ActivityFetch, Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount,
+    RemoteOrder, RemotePosition,
 };
 use client::SnapTradeClient;
 use std::collections::HashMap;
@@ -154,7 +154,8 @@ impl SnapTrade {
         Ok(raw.iter().filter_map(map::position).collect())
     }
 
-    /// Share trades for one account, from two sources:
+    /// Every activity for one account — trades, dividends, contributions,
+    /// withdrawals, fees, interest, transfers — from two sources:
     ///
     /// 1. The activity history — complete, but SnapTrade's *Daily* data
     ///    (refreshed once a day on every plan). Re-read at most every 30
@@ -169,9 +170,9 @@ impl SnapTrade {
         creds: &Credentials,
         provider_account_id: &str,
         since: Option<&str>,
-    ) -> BrokerResult<Vec<RemoteActivity>> {
+    ) -> BrokerResult<ActivityFetch> {
         let client = Self::client(creds)?;
-        let mut out = Vec::new();
+        let mut out = ActivityFetch::default();
 
         let history_due = since.is_none()
             || history_fetched_at()
@@ -182,7 +183,8 @@ impl SnapTrade {
         if history_due {
             match client.activities(provider_account_id, since).await {
                 Ok(raw) => {
-                    out.extend(raw.iter().filter_map(map::activity));
+                    out.activities.extend(raw.iter().filter_map(map::activity));
+                    out.history_complete = true;
                     history_fetched_at()
                         .lock()
                         .expect("history lock")
@@ -197,7 +199,7 @@ impl SnapTrade {
             .orders(provider_account_id, "executed", RECENT_FILL_DAYS)
             .await
         {
-            out.extend(raw.iter().filter_map(map::executed_order_as_activity));
+            out.activities.extend(raw.iter().filter_map(map::executed_order_as_activity));
         }
 
         Ok(out)

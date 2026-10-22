@@ -284,14 +284,40 @@ async fn make_review(app: &AppHandle, db: &DbManager, target: SyncTarget, restor
     let upload_blocked_reason = if restore { Some("Backups can only be restored to this device.".into()) }
         else if target.kind == "webdav" && remote.bytes.is_some() && !strong_etag(remote.etag.as_deref()) { Some("This server did not provide a strong file version (ETag). Protected replacement is unavailable; downloading is still safe.".into()) }
         else { None };
+    let forward = if restore { None } else {
+        fast_forward(&target, &local_fingerprint, remote_info.as_ref().map(|(fingerprint, _)| fingerprint.as_str()), local_summary.empty)
+            .filter(|direction| *direction == "download" || upload_blocked_reason.is_none())
+    };
     let id = uuid::Uuid::new_v4().to_string();
     let preview = SyncPreview { confirmation_id: id.clone(), target_id: target.id.clone(), target_label: target.label.clone(), first_sync: !target.sync_initialized,
         remote_exists: remote.bytes.is_some(), conflict, local: local_summary, remote: remote_info.map(|(_, summary)| summary), upload_allowed: upload_blocked_reason.is_none(), upload_blocked_reason, restore };
-    let mut reviews = pending().lock().map_err(io)?;
-    reviews.retain(|_, pending| pending.created.elapsed() < Duration::from_secs(600));
-    if reviews.len() >= 128 { if let Some(oldest) = reviews.iter().min_by_key(|(_, review)| review.created).map(|(id, _)| id.clone()) { reviews.remove(&oldest); } }
-    reviews.insert(id, Pending { target, local_fingerprint, remote_version: remote.version(), remote_etag: remote.etag, created: Instant::now(), restore });
+    {
+        let mut reviews = pending().lock().map_err(io)?;
+        reviews.retain(|_, pending| pending.created.elapsed() < Duration::from_secs(600));
+        if reviews.len() >= 128 { if let Some(oldest) = reviews.iter().min_by_key(|(_, review)| review.created).map(|(id, _)| id.clone()) { reviews.remove(&oldest); } }
+        reviews.insert(id.clone(), Pending { target, local_fingerprint, remote_version: remote.version(), remote_etag: remote.etag, created: Instant::now(), restore });
+    }
+    // Only one side moved since the last transfer, so nothing can be lost:
+    // carry it across without asking. `confirm` re-checks both copies and
+    // saves the same verified backups a reviewed transfer does.
+    if let Some(direction) = forward {
+        return confirm(app, db, &id, direction, false).await;
+    }
     Ok(result("Review required. No database has been replaced.", Some(preview)))
+}
+
+/// The transfer that is safe without asking, if any: exactly one copy changed
+/// since the last completed transfer. Everything else — a first sync, both
+/// copies changed, no remote, an empty local database — needs a person.
+fn fast_forward(target: &SyncTarget, local: &str, remote: Option<&str>, local_empty: bool) -> Option<&'static str> {
+    if !target.sync_initialized { return None; }
+    let last_local = target.last_local_fingerprint.as_deref()?;
+    let last_remote = target.last_remote_fingerprint.as_deref()?;
+    match (last_local != local, last_remote != remote?) {
+        (true, false) if !local_empty => Some("upload"),
+        (false, true) => Some("download"),
+        _ => None,
+    }
 }
 fn strong_etag(etag: Option<&str>) -> bool {
     etag.is_some_and(|etag| etag.starts_with('"') && etag.ends_with('"') && !etag.contains(['\r','\n','[',']']))
@@ -480,6 +506,20 @@ mod tests {
     }
     fn populated(db: &DbManager, name: &str) {
         db.with_conn(|conn| conn.execute("INSERT INTO portfolios (name,sort_order,is_starred,created_at) VALUES (?1,0,0,1)", [name])).unwrap();
+    }
+    #[test]
+    fn only_a_one_sided_change_transfers_without_asking() {
+        let mut t = target("webdav", "https://example.test/stockfolio.db");
+        t.sync_initialized = true;
+        t.last_local_fingerprint = Some("L".into()); t.last_remote_fingerprint = Some("R".into());
+        assert_eq!(fast_forward(&t, "L2", Some("R"), false), Some("upload"));
+        assert_eq!(fast_forward(&t, "L", Some("R2"), false), Some("download"));
+        assert_eq!(fast_forward(&t, "L2", Some("R2"), false), None, "both changed: a person decides");
+        assert_eq!(fast_forward(&t, "L", Some("R"), false), None);
+        assert_eq!(fast_forward(&t, "L2", Some("R"), true), None, "never push an empty database unasked");
+        assert_eq!(fast_forward(&t, "L2", None, false), None, "remote vanished: a person decides");
+        t.sync_initialized = false;
+        assert_eq!(fast_forward(&t, "L2", Some("R"), false), None, "first sync always asks");
     }
     #[test]
     fn empty_application_needs_explicit_consent_regardless_of_sync_history() {

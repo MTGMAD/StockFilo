@@ -60,10 +60,6 @@ const BASE_URL: &str = "https://api.snaptrade.com/api/v1";
 /// between our window and theirs.
 const ACCOUNT_BUDGET: usize = 8;
 const ACCOUNT_WINDOW: Duration = Duration::from_secs(60);
-/// Activity types that change a share count — everything the Purchases view
-/// shows. REI (dividend reinvestment) is a buy of shares.
-const ACTIVITY_TYPES: &str = "BUY,SELL,REI";
-
 /// Used when a 429 arrives without a parseable wait.
 const DEFAULT_RETRY_SECS: u64 = 60;
 
@@ -203,8 +199,9 @@ impl SnapTradeClient {
             .ok_or_else(|| BrokerError::Parse("expected a `results` array of positions".into()))
     }
 
-    /// Trade history (`GET /accounts/{id}/activities`), newest first, limited
-    /// to the types that move shares. SnapTrade documents this endpoint as
+    /// Activity history (`GET /accounts/{id}/activities`), newest first, every
+    /// type — no `type` filter, so a type SnapTrade adds later is still kept
+    /// (as raw JSON) rather than silently never fetched. SnapTrade documents this endpoint as
     /// *Daily* data on every plan — cached, refreshed once a day — which is why
     /// the caller supplements it with executed orders (real-time).
     ///
@@ -218,11 +215,7 @@ impl SnapTradeClient {
         for page in 0..MAX_PAGES {
             let offset = (page * PAGE).to_string();
             let limit = PAGE.to_string();
-            let mut query: Vec<(&str, &str)> = vec![
-                ("limit", &limit),
-                ("offset", &offset),
-                ("type", ACTIVITY_TYPES),
-            ];
+            let mut query: Vec<(&str, &str)> = vec![("limit", &limit), ("offset", &offset)];
             if let Some(d) = start_date {
                 query.push(("startDate", d));
             }

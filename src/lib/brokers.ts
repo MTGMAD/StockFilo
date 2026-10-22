@@ -11,6 +11,7 @@ import type {
   BrokerOrders,
   BrokerPosition,
   BrokerSyncResult,
+  BrokerAccountSnapshot,
   BrokerTransaction,
   ProviderDescriptor,
   RemoteAccount,
@@ -124,7 +125,37 @@ export async function deleteBrokerConnection(
 export async function syncBrokerConnection(
   connectionId: string,
 ): Promise<BrokerSyncResult> {
+  if (syncHolds > 0) {
+    return {
+      connection_id: connectionId,
+      success: true,
+      message: "Paused while a database sync is being reviewed",
+      synced_at: 0,
+      positions: 0,
+      new_transactions: 0,
+    };
+  }
   return invoke<BrokerSyncResult>("broker_sync_connection", { connectionId });
+}
+
+let syncHolds = 0;
+
+/**
+ * Pause broker syncing until the returned release is called. A database
+ * sync review is approved against an exact fingerprint of the local
+ * database, and every broker sync rewrites positions and timestamps — with
+ * several connections polling, the review would almost never survive long
+ * enough to be confirmed. Skipped syncs simply run on the next tick.
+ */
+export function holdBrokerSync(): () => void {
+  syncHolds += 1;
+  let released = false;
+  return () => {
+    if (!released) {
+      released = true;
+      syncHolds -= 1;
+    }
+  };
 }
 
 /** Refresh every enabled connection that has credentials on this device. */
@@ -151,6 +182,15 @@ export async function listBrokerTransactions(
   brokerAccountId: number,
 ): Promise<BrokerTransaction[]> {
   return invoke<BrokerTransaction[]>("broker_list_transactions", {
+    brokerAccountId,
+  });
+}
+
+/** One account's daily value history, oldest first. */
+export async function listBrokerSnapshots(
+  brokerAccountId: number,
+): Promise<BrokerAccountSnapshot[]> {
+  return invoke<BrokerAccountSnapshot[]>("broker_list_snapshots", {
     brokerAccountId,
   });
 }

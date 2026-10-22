@@ -11,7 +11,7 @@ use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::brokers::error::BrokerError;
-use crate::brokers::store::{self, StoredPosition, StoredTransaction};
+use crate::brokers::store::{self, AccountSnapshot, StoredPosition, StoredTransaction};
 use crate::brokers::types::{
     Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount, RemoteOrder,
 };
@@ -409,6 +409,15 @@ pub fn broker_list_transactions(
     state.with_conn(|conn| store::list_transactions(conn, broker_account_id))
 }
 
+/// One account's daily value history, oldest first.
+#[tauri::command]
+pub fn broker_list_snapshots(
+    broker_account_id: i64,
+    state: State<'_, DbManager>,
+) -> Result<Vec<AccountSnapshot>, String> {
+    state.with_conn(|conn| store::list_snapshots(conn, broker_account_id))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrokerOrders {
     pub orders: Vec<RemoteOrder>,
@@ -625,6 +634,13 @@ async fn sync_one(
                 if let Some(ref positions) = positions {
                     store::replace_positions(conn, id, positions)?;
                 }
+                // Holdings value only when every position reported one — a
+                // partial sum would read as a drop in value.
+                let positions_value = positions.as_ref().and_then(|ps| {
+                    ps.iter().map(|p| p.market_value).sum::<Option<f64>>()
+                });
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                store::record_snapshot(conn, id, &today, acct.equity, acct.cash, positions_value)?;
                 Ok((id, visible))
             })
             .map_err(BrokerError::Db)?;
@@ -636,24 +652,37 @@ async fn sync_one(
         if descriptor.supports_activities && visible {
             // Re-fetch from the last stored day rather than the day after, so a
             // fill recorded later on a day already seen is not missed. The
-            // unique index makes the overlap free.
-            let since = state
-                .with_conn(|conn| store::latest_activity_date(conn, acct_id))
+            // unique index makes the overlap free. An account whose history
+            // predates the current fetch gets everything once instead — see
+            // `store::HISTORY_VERSION`.
+            let (since, backfill) = state
+                .with_conn(|conn| {
+                    let backfill = store::history_version(conn, acct_id)? < store::HISTORY_VERSION;
+                    let since = if backfill {
+                        None
+                    } else {
+                        store::latest_activity_date(conn, acct_id)?
+                    };
+                    Ok((since, backfill))
+                })
                 .map_err(BrokerError::Db)?;
 
-            let activities = match p
+            let fetch = match p
                 .activities(&creds, environment, &acct.id, since.as_deref())
                 .await
             {
                 Ok(v) => v,
-                Err(BrokerError::RateLimited(_)) => Vec::new(),
+                Err(BrokerError::RateLimited(_)) => Default::default(),
                 Err(e) => return Err(e),
             };
 
             let new_tx = state
                 .with_txn(|conn| {
-                    let n = store::append_transactions(conn, acct_id, &activities)?;
+                    let n = store::append_transactions(conn, acct_id, &fetch.activities)?;
                     store::reconcile_provisional(conn, acct_id)?;
+                    if backfill && fetch.history_complete {
+                        store::set_history_version(conn, acct_id, store::HISTORY_VERSION)?;
+                    }
                     Ok(n)
                 })
                 .map_err(BrokerError::Db)?;

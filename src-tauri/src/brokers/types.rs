@@ -146,22 +146,61 @@ pub struct RemotePosition {
 }
 
 /// A single dated transaction from the broker's activity history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Every activity the broker reports is kept, not only trades: cash rows are
+/// what "money put in vs. growth" is computed from, and a broker may stop
+/// serving old history at any time.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RemoteActivity {
     /// The provider's own id for this activity. Used as the idempotency key,
     /// so re-syncing never duplicates a row.
     pub external_id: String,
-    /// "fill" | "div" | "split" | "xfer"
+    /// One of [`activity_kind`]'s constants. A type the adapter does not
+    /// recognise is `OTHER`, with its original type still in `raw`.
     pub kind: String,
-    /// "buy" | "sell", where applicable.
+    /// "buy" | "sell" for fills only. Every other kind leaves it `None`, which
+    /// is what keeps cash rows out of share-count and trade calculations.
     pub side: Option<String>,
+    /// Empty for rows with no security, e.g. a deposit.
     pub provider_symbol: String,
     pub qty: Option<f64>,
     pub price: Option<f64>,
+    /// Signed cash effect on the account, in `currency`: positive = cash in
+    /// (deposit, dividend, sale), negative = cash out (withdrawal, fee, buy).
+    /// `None` when the broker does not report one.
+    pub amount: Option<f64>,
+    pub currency: Option<String>,
+    /// The broker's own text for the row, e.g. "ACH DEPOSIT".
+    pub description: Option<String>,
     /// YYYY-MM-DD, matching the format `purchases.purchased_at` uses.
     pub occurred_at: String,
     /// Original JSON, so activities can be reprocessed without refetching.
     pub raw: Option<String>,
+}
+
+/// The kinds a stored activity can have. Shared by every adapter so the
+/// frontend never needs to know a broker's own vocabulary.
+pub mod activity_kind {
+    pub const FILL: &str = "fill";
+    pub const DIVIDEND: &str = "dividend";
+    pub const INTEREST: &str = "interest";
+    pub const FEE: &str = "fee";
+    pub const DEPOSIT: &str = "deposit";
+    pub const WITHDRAWAL: &str = "withdrawal";
+    /// Cash or shares moved between accounts; `amount`'s sign gives direction.
+    pub const TRANSFER: &str = "transfer";
+    pub const SPLIT: &str = "split";
+    pub const OTHER: &str = "other";
+}
+
+/// What one `activities` call returned.
+#[derive(Debug, Default)]
+pub struct ActivityFetch {
+    pub activities: Vec<RemoteActivity>,
+    /// True when the full history request (not just a real-time supplement)
+    /// succeeded. A one-time backfill is only marked done on a complete fetch,
+    /// so a throttled request is retried rather than silently skipped.
+    pub history_complete: bool,
 }
 
 /// How one broker's order statuses should be presented. Each broker names its
