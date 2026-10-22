@@ -26,9 +26,11 @@ import {
   testBrokerConnection,
   saveBrokerConnection,
   addBrokerCredentials,
+  archiveBrokerConnection,
   deleteBrokerConnection,
   syncBrokerConnection,
 } from "../../lib/brokers";
+import { DisconnectConfirm } from "./DisconnectConfirm";
 
 function formatTs(ts: number | null | undefined): string {
   if (!ts) return "Never";
@@ -480,9 +482,10 @@ export function BrokerSettings({
     }
   }
 
-  async function handleRemove(id: string, keepPortfolio: boolean) {
+  async function handleRemove(id: string, mode: "archive" | "delete") {
     try {
-      await deleteBrokerConnection(id, keepPortfolio);
+      if (mode === "archive") await archiveBrokerConnection(id);
+      else await deleteBrokerConnection(id, false);
       setConfirmRemove(null);
       await reload();
       onConnectionsChanged?.();
@@ -561,7 +564,9 @@ export function BrokerSettings({
                 <button
                   type="button"
                   onClick={() => handleSync(c.id)}
-                  disabled={syncing === c.id || !c.has_credentials}
+                  disabled={
+                    syncing === c.id || !c.has_credentials || c.archived_at != null
+                  }
                   title={
                     c.has_credentials
                       ? "Sync now"
@@ -579,7 +584,7 @@ export function BrokerSettings({
                 <button
                   type="button"
                   onClick={() => setConfirmRemove(c.id)}
-                  title="Disconnect"
+                  title={c.archived_at != null ? "Delete" : "Disconnect"}
                   className="p-1.5 rounded-md text-muted-foreground hover:text-negative hover:bg-accent transition-colors"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -589,7 +594,16 @@ export function BrokerSettings({
 
             {/* A synced database carries connections whose keys live on another
                 machine. That is expected, not an error. */}
-            {!c.has_credentials && (
+            {c.archived_at != null ? (
+              <div className="flex items-start gap-2 text-xs text-muted-foreground rounded-md border border-border bg-muted/40 p-2">
+                <KeyRound className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>
+                  Disconnected · history kept. Its portfolio shows the last
+                  holdings synced. Add the API key again to reconnect and
+                  resume syncing.
+                </span>
+              </div>
+            ) : !c.has_credentials && (
               <div className="flex items-start gap-2 text-xs text-muted-foreground rounded-md border border-border bg-muted/40 p-2">
                 <KeyRound className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 <span>
@@ -649,35 +663,13 @@ export function BrokerSettings({
             )}
 
             {confirmRemove === c.id && (
-              <div className="rounded-md border border-negative/30 bg-negative/10 p-2.5 space-y-2">
-                <p className="text-xs text-foreground">
-                  Disconnect {c.label}? Its keys are removed from this device
-                  either way.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleRemove(c.id, true)}
-                    className="btn-secondary text-xs"
-                  >
-                    Keep empty portfolio
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRemove(c.id, false)}
-                    className="px-2.5 py-1 rounded-md bg-negative text-white text-xs font-medium hover:opacity-90"
-                  >
-                    Remove portfolio too
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmRemove(null)}
-                    className="btn-secondary text-xs"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
+              <DisconnectConfirm
+                label={c.label}
+                archived={c.archived_at != null}
+                onArchive={() => handleRemove(c.id, "archive")}
+                onDelete={() => handleRemove(c.id, "delete")}
+                onCancel={() => setConfirmRemove(null)}
+              />
             )}
           </div>
         );

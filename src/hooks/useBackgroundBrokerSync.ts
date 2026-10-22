@@ -37,6 +37,7 @@ export function useBackgroundBrokerSync(onSynced: () => Promise<void> | void) {
         const due = (await listBrokerConnections()).filter(
           (c) =>
             !c.disabled &&
+            c.archived_at == null &&
             c.has_credentials &&
             c.accounts.some((a) => a.visible) &&
             (c.last_synced_at == null ||

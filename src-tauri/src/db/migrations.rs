@@ -251,7 +251,7 @@ mod tests {
     fn synced_broker_identity_upgrade_preserves_legacy_rows() {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
-        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; PRAGMA user_version=27;
+        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; PRAGMA user_version=27;
             INSERT INTO broker_connections (id,provider,environment,label,credential_ref,created_at) VALUES ('imported','snaptrade','read','Keep my label','broker:imported',123);
             INSERT INTO broker_accounts (id,connection_id,provider_account_id,equity,cash,visible) VALUES (99,'imported','remote-account',300,17,1);").unwrap();
         run_all(&conn).unwrap();
@@ -270,7 +270,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 28);
+        assert_eq!(v, 29);
     }
 
     #[test]
@@ -610,7 +610,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 28);
+        assert_eq!(v, 29);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1010,6 +1010,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_broker_authorization
     WHERE remote_authorization_id IS NOT NULL;
 "#;
 
+/// Disconnecting a brokerage archives it rather than deleting it. Some
+/// brokerages only expose a limited window of history to SnapTrade, so rows
+/// deleted here may never come back on reconnect. `archived_at` marks a
+/// connection whose keys were removed and that no longer syncs; its accounts,
+/// transactions and portfolio stay, and reconnecting clears it.
+const MIGRATION_V29: &str = "ALTER TABLE broker_connections ADD COLUMN archived_at INTEGER;";
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1043,6 +1050,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (26, MIGRATION_V26),
         (27, MIGRATION_V27),
         (28, MIGRATION_V28),
+        (29, MIGRATION_V29),
     ];
 
     let user_version: i64 =

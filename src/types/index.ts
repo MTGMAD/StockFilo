@@ -408,6 +408,9 @@ export interface BrokerConnectionInfo {
   last_synced_at: number | null;
   last_sync_status: string | null;
   disabled: boolean;
+  /** Set when the person disconnected: keys removed, no more syncing, but
+   *  every synced row kept. Reconnecting the same accounts clears it. */
+  archived_at: number | null;
   /** False when the database came from another device and the keychain here
    *  holds nothing. Surface as "add credentials here", never as an error. */
   has_credentials: boolean;

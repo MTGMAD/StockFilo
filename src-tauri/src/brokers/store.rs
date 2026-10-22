@@ -385,9 +385,37 @@ pub fn ensure_portfolio(
 
 /// Remove everything belonging to a connection.
 ///
+/// Disconnect without losing anything. The connection stops syncing (the
+/// caller removes its keys), but its accounts, positions, transactions and
+/// linked portfolio all stay, so the portfolio keeps its full history and
+/// shows the last holdings the broker reported. Reconnecting the same accounts
+/// — keys added back, or SnapTrade rediscovering the authorization — clears
+/// the mark and syncing resumes on top of the history already here.
+pub fn archive_connection(conn: &Connection, connection_id: &str) -> rusqlite::Result<()> {
+    let n = conn.execute(
+        "UPDATE broker_connections SET archived_at = ?1 WHERE id = ?2",
+        params![now_secs(), connection_id],
+    )?;
+    if n == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+pub fn unarchive_connection(conn: &Connection, connection_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE broker_connections SET archived_at = NULL WHERE id = ?1",
+        params![connection_id],
+    )?;
+    Ok(())
+}
+
+/// Permanently remove a connection and every row it synced. Irreversible: a
+/// brokerage may not hand the same history back on reconnect, which is why
+/// the UI offers `archive_connection` first.
+///
 /// `keep_portfolio` converts the linked portfolio back to an empty manual one
-/// rather than deleting it — used when the user disconnects but wants to keep
-/// the portfolio around.
+/// rather than deleting it.
 pub fn delete_connection(
     conn: &Connection,
     connection_id: &str,
@@ -723,6 +751,36 @@ mod tests {
         let acct2 = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
         assert_eq!(acct, acct2);
         assert_eq!(linked_portfolio(&conn, acct).unwrap(), None);
+    }
+
+    #[test]
+    fn archiving_keeps_every_synced_row_until_reconnect() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        let pid = ensure_portfolio(&conn, acct, "alpaca", "Alpaca — Paper").unwrap();
+        replace_positions(&conn, acct, &[pos("AAPL", 1.0, "us_equity")]).unwrap();
+        append_transactions(&conn, acct, &[fill("t1", "2025-01-02", "AAPL", "buy", 1.0)]).unwrap();
+
+        archive_connection(&conn, "c1").unwrap();
+
+        let archived: Option<i64> = conn
+            .query_row("SELECT archived_at FROM broker_connections WHERE id = 'c1'", [], |r| r.get(0))
+            .unwrap();
+        assert!(archived.is_some());
+        assert_eq!(linked_portfolio(&conn, acct).unwrap(), Some(pid));
+        assert_eq!(list_positions(&conn, acct).unwrap().len(), 1);
+        assert_eq!(ids(&conn, acct), vec!["t1"]);
+
+        unarchive_connection(&conn, "c1").unwrap();
+        let archived: Option<i64> = conn
+            .query_row("SELECT archived_at FROM broker_connections WHERE id = 'c1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(archived, None);
+    }
+
+    #[test]
+    fn archiving_an_unknown_connection_fails() {
+        assert!(archive_connection(&db(), "missing").is_err());
     }
 
     #[test]

@@ -16,9 +16,11 @@ import type { BrokerConnectionInfo } from "../../types";
 import {
   listBrokerConnections,
   syncBrokerConnection,
+  archiveBrokerConnection,
   deleteBrokerConnection,
   setBrokerAccountVisible,
 } from "../../lib/brokers";
+import { DisconnectConfirm } from "./DisconnectConfirm";
 import {
   snapTradeAppKeysConfigured,
   saveSnapTradeAppKeys,
@@ -151,9 +153,10 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
     }
   }
 
-  async function handleRemove(id: string, keepPortfolio: boolean) {
+  async function handleRemove(id: string, mode: "archive" | "delete") {
     try {
-      await deleteBrokerConnection(id, keepPortfolio);
+      if (mode === "archive") await archiveBrokerConnection(id);
+      else await deleteBrokerConnection(id, false);
       setConfirmRemove(null);
       await reload();
       onConnectionsChanged?.();
@@ -311,7 +314,12 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
                   <button
                     type="button"
                     onClick={() => handleSync(c.id)}
-                    disabled={syncingId === c.id || !c.has_credentials || c.disabled}
+                    disabled={
+                      syncingId === c.id ||
+                      !c.has_credentials ||
+                      c.disabled ||
+                      c.archived_at != null
+                    }
                     title={c.has_credentials ? "Sync now" : "Check for New Accounts to reconnect on this device"}
                     className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-40 transition-colors"
                   >
@@ -322,7 +330,7 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
                   <button
                     type="button"
                     onClick={() => setConfirmRemove(c.id)}
-                    title="Disconnect"
+                    title={c.archived_at != null ? "Delete" : "Disconnect"}
                     className="p-1.5 rounded-md text-muted-foreground hover:text-negative hover:bg-accent transition-colors"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -330,7 +338,13 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
                 </div>
               </div>
 
-              {!c.has_credentials && (
+              {c.archived_at != null ? (
+                <p className="text-xs text-muted-foreground">
+                  Disconnected · history kept. Its portfolios show the last
+                  holdings synced. Use Check for New Accounts to reconnect it
+                  and resume syncing.
+                </p>
+              ) : !c.has_credentials && (
                 <p className="text-xs text-muted-foreground">
                   Saved accounts from another device. Use Check for New Accounts to reconnect them with this device’s SnapTrade keys.
                 </p>
@@ -360,35 +374,13 @@ export function SnapTradeSettings({ onConnectionsChanged }: SnapTradeSettingsPro
               </div>
 
               {confirmRemove === c.id && (
-                <div className="rounded-md border border-negative/30 bg-negative/10 p-2.5 space-y-2">
-                  <p className="text-xs text-foreground">
-                    Disconnect {c.label}? Its keys are removed from this device
-                    either way.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleRemove(c.id, true)}
-                      className="btn-secondary text-xs"
-                    >
-                      Keep empty portfolios
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleRemove(c.id, false)}
-                      className="px-2.5 py-1 rounded-md bg-negative text-white text-xs font-medium hover:opacity-90"
-                    >
-                      Remove portfolios too
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmRemove(null)}
-                      className="btn-secondary text-xs"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
+                <DisconnectConfirm
+                  label={c.label}
+                  archived={c.archived_at != null}
+                  onArchive={() => handleRemove(c.id, "archive")}
+                  onDelete={() => handleRemove(c.id, "delete")}
+                  onCancel={() => setConfirmRemove(null)}
+                />
               )}
             </div>
           ))}

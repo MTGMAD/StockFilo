@@ -88,7 +88,8 @@ pub(super) fn reconcile(conn: &Connection, groups: &[Authorization], known: &Has
             let present: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM broker_accounts WHERE connection_id = ?1 AND provider_account_id = ?2)", params![id,remote.id], |r| r.get(0)).map_err(err)?;
             if !present { store::upsert_account(conn, &id, remote, false).map_err(err)?; }
         }
-        conn.execute("UPDATE broker_connections SET remote_authorization_id = ?1 WHERE id = ?2", params![group.id,id]).map_err(err)?;
+        // Rediscovering an archived connection's authorization is its reconnect.
+        conn.execute("UPDATE broker_connections SET remote_authorization_id = ?1, archived_at = NULL WHERE id = ?2", params![group.id,id]).map_err(err)?;
         outcome.bindings.push((id,group.id.clone()));
     }
     Ok(outcome)
@@ -142,6 +143,17 @@ mod tests {
         assert_eq!(run(&conn,&[group("auth1",&["remote1","remote2"])],&HashMap::new()).unwrap().created,0);
         assert_eq!(count(&conn,"broker_connections"),1);assert_eq!(count(&conn,"broker_accounts"),2);
         let visible:bool=conn.query_row("SELECT visible FROM broker_accounts WHERE provider_account_id='remote2'",[],|r|r.get(0)).unwrap();assert!(!visible);
+    }
+    #[test]
+    fn rediscovering_an_archived_connection_reconnects_it_with_its_history() {
+        let conn=db();connection(&conn,"original",1);
+        let account=store::upsert_account(&conn,"original",&remote("remote1"),true).unwrap();
+        conn.execute("INSERT INTO broker_transactions(broker_account_id,external_id,kind,provider_symbol,qty,occurred_at) VALUES (?1,'tx1','buy','AAPL',2,'2020-01-01')",[account]).unwrap();
+        store::archive_connection(&conn,"original").unwrap();
+        let result=run(&conn,&[group("auth1",&["remote1"])],&HashMap::new()).unwrap();
+        assert_eq!(result.created,0);assert_eq!(result.bindings,vec![("original".into(),"auth1".into())]);
+        let archived:Option<i64>=conn.query_row("SELECT archived_at FROM broker_connections WHERE id='original'",[],|r|r.get(0)).unwrap();assert_eq!(archived,None);
+        assert_eq!(count(&conn,"broker_transactions"),1);
     }
     #[test]
     fn discovery_is_idempotent_and_does_not_match_names_or_masks() {

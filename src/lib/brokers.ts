@@ -101,8 +101,17 @@ export async function updateBrokerConnection(
 }
 
 /**
- * Disconnect. `keepPortfolio` converts the linked portfolio to an empty manual
- * one instead of deleting it; either way the keychain entry is removed.
+ * Disconnect without losing anything: keys are removed and syncing stops, but
+ * the portfolio, its holdings and its full transaction history stay.
+ */
+export async function archiveBrokerConnection(id: string): Promise<void> {
+  return invoke("broker_archive_connection", { id });
+}
+
+/**
+ * Permanently delete a connection and everything it synced. `keepPortfolio`
+ * converts the linked portfolio to an empty manual one instead of deleting
+ * it; either way the keychain entry is removed.
  */
 export async function deleteBrokerConnection(
   id: string,

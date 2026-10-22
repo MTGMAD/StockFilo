@@ -62,6 +62,10 @@ pub struct BrokerConnectionInfo {
     pub last_synced_at: Option<i64>,
     pub last_sync_status: Option<String>,
     pub disabled: bool,
+    /// Set once the person disconnects. The connection's keys are gone and it
+    /// never syncs again, but every row it synced is kept; reconnecting the
+    /// same accounts clears it.
+    pub archived_at: Option<i64>,
     /// False when the database arrived from another device via sync and the
     /// keychain here holds nothing. The UI must show this as "add credentials
     /// on this device", never as an error.
@@ -199,6 +203,7 @@ pub async fn broker_add_credentials(
     secrets::set_secret(&app, &reference, &blob)?;
 
     state.with_txn(|conn| {
+        store::unarchive_connection(conn, &id)?;
         for acct in &accounts {
             let acct_id = store::upsert_account(conn, &id, acct, true)?;
             let name =
@@ -266,7 +271,7 @@ pub fn broker_list_connections(
     let mut connections = state.with_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT id, provider, environment, label, created_at, last_synced_at, \
-                    last_sync_status, disabled, device_id \
+                    last_sync_status, disabled, device_id, archived_at \
              FROM broker_connections ORDER BY created_at ASC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -316,6 +321,7 @@ pub fn broker_list_connections(
                 last_synced_at: r.get(5)?,
                 last_sync_status: r.get(6)?,
                 disabled: r.get::<_, i64>(7)? != 0,
+                archived_at: r.get(9)?,
                 has_credentials: false, // filled in below
                 device_id: r.get(8)?,
                 supports_orders,
@@ -474,6 +480,19 @@ pub fn broker_update_connection(
     })
 }
 
+/// Disconnect, keeping everything synced so far. See `store::archive_connection`.
+#[tauri::command]
+pub fn broker_archive_connection(
+    app: AppHandle,
+    id: String,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_txn(|conn| store::archive_connection(conn, &id))?;
+    let _ = secrets::delete_secret(&app, &secrets::broker_reference(&id));
+    Ok(())
+}
+
+/// Permanently delete a connection and everything it synced.
 #[tauri::command]
 pub fn broker_delete_connection(
     app: AppHandle,
@@ -506,12 +525,22 @@ pub async fn broker_sync_connection(
 ) -> Result<BrokerSyncResult, String> {
     let row = state.with_conn(|conn| {
         conn.query_row(
-            "SELECT provider, environment FROM broker_connections WHERE id = ?1",
+            "SELECT provider, environment, archived_at FROM broker_connections WHERE id = ?1",
             rusqlite::params![connection_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            },
         )
     })?;
-    let (provider, environment) = row;
+    let (provider, environment, archived_at) = row;
+    // Another device sharing this database may still hold keys for it.
+    if archived_at.is_some() {
+        return Err("This connection was disconnected. Reconnect it to resume syncing.".into());
+    }
 
     let outcome =
         sync_one(&app, &state, &connection_id, &provider, &environment).await;
@@ -643,7 +672,8 @@ pub async fn broker_sync_all(
 ) -> Result<Vec<BrokerSyncResult>, String> {
     let connections = state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, provider, environment FROM broker_connections WHERE disabled = 0",
+            "SELECT id, provider, environment FROM broker_connections \
+             WHERE disabled = 0 AND archived_at IS NULL",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok((

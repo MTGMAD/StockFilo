@@ -116,6 +116,7 @@ pub fn run() {
             commands::brokers::broker_list_transactions,
             commands::brokers::broker_list_orders,
             commands::brokers::broker_update_connection,
+            commands::brokers::broker_archive_connection,
             commands::brokers::broker_delete_connection,
             commands::brokers::broker_sync_connection,
             commands::brokers::broker_sync_all,
