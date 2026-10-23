@@ -99,10 +99,18 @@ This command:
 
 ## Available Scripts
 
+For the normal Debian installer, use `./stockfolio-linux-build --bundles deb`.
+It builds the standard `stockfolio` package and validates its software-center
+metadata. Install `appstream` and `desktop-file-utils` on the build host first.
+Release CI runs the same artifact validation. When changing the application
+version, update `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, the root
+package entry in `src-tauri/Cargo.lock`, and the releases in
+`src-tauri/linux/com.stockfolio.app.metainfo.xml` together.
+
 To build a Debian package that can be installed and run alongside existing
 builds, run `./stockfolio-linux-deb-isolated`. Each invocation creates a unique
 package, executable, desktop launcher, app identifier, data/config directories,
-and keychain namespace. Its browser backend requests an unused loopback port.
+AppStream metadata, and keychain namespace. Its browser backend requests an unused loopback port.
 The new app starts with separate data; existing portfolios are not copied.
 
 The script runs in a separate process session at reduced CPU priority, using a
@@ -112,6 +120,14 @@ Packages, checksums, build metadata, and logs are saved under
 `STOCKFOLIO_BUILD_JOBS` to override the default of four Rust compiler jobs.
 The build needs the same host prerequisites as a normal Tauri build and can
 also be launched from a Flatpak editor.
+
+Both scripts validate the built `.deb` before reporting success. A successful
+build verifies the package contents; it does not install the application.
+Use `sudo apt install ./path/to/package.deb` to install it and
+`dpkg-query -W stockfolio` to check registration of the standard package.
+Use `sudo apt remove stockfolio` to uninstall it if the software center does
+not show it. For an isolated build, use the exact package name
+`stockfolio-build-<build-id>` from its `build-info.json` instead.
 
 | Command | Description |
 |---|---|

@@ -22,7 +22,7 @@ echo "Process: $$; package/executable: stockfolio-build-$build_id"
 # sharing writable frontend output, Cargo locks, dependencies, or target files.
 cp --reflink=auto -a "$script_dir/src" "$script_dir/node_modules" "$snapshot/"
 cp --reflink=auto -a "$script_dir/"{package.json,package-lock.json,index.html,tsconfig.json,tsconfig.node.json,vite.config.ts} "$snapshot/"
-cp --reflink=auto -a "$script_dir/src-tauri/"{src,icons,capabilities,Cargo.toml,Cargo.lock,build.rs,tauri.conf.json} "$snapshot/src-tauri/"
+cp --reflink=auto -a "$script_dir/src-tauri/"{src,icons,capabilities,linux,Cargo.toml,Cargo.lock,build.rs,tauri.conf.json} "$snapshot/src-tauri/"
 original_cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 if [[ -d "$original_cargo_home/registry" ]]; then
   cp --reflink=auto -a "$original_cargo_home/registry" "$build_root/cargo-home/"
@@ -45,6 +45,18 @@ config.mainBinaryName = `stockfolio-build-${id}`;
 config.identifier = identifier;
 config.app.windows.forEach(window => { window.title = config.productName; });
 config.bundle.targets = ['deb'];
+// Give each side-by-side build its own software-center identity and file.
+const metadataSource = 'linux/com.stockfolio.app.metainfo.xml';
+const metadataTarget = `linux/${identifier}.metainfo.xml`;
+const metadata = fs.readFileSync(path.join(root, 'src-tauri', metadataSource), 'utf8')
+  .replace('<id>com.stockfolio.app</id>', `<id>${identifier}</id>`)
+  .replace('<name>Stockfolio</name>', `<name>${config.productName}</name>`)
+  .replace('Stockfolio.desktop</launchable>', `${config.productName}.desktop</launchable>`)
+  .replace('<binary>stockfolio</binary>', `<binary>${config.mainBinaryName}</binary>`);
+fs.writeFileSync(path.join(root, 'src-tauri', metadataTarget), metadata);
+config.bundle.linux.deb.files = {
+  [`/usr/share/metainfo/${identifier}.metainfo.xml`]: metadataTarget,
+};
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 function replace(file, before, after) {
   const target = path.join(root, 'src-tauri/src', file);
@@ -73,5 +85,6 @@ cd "$snapshot"
 nice -n 10 node node_modules/@tauri-apps/cli/tauri.js build --ci --bundles deb -- --locked
 find "$CARGO_TARGET_DIR/release/bundle/deb" -maxdepth 1 -name '*.deb' -exec cp -- '{}' "$build_root/" \;
 cd "$build_root"
+python3 "$script_dir/scripts/verify-deb.py" ./*.deb
 sha256sum ./*.deb > SHA256SUMS
 echo "Build complete: $build_root"

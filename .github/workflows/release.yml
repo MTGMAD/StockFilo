@@ -133,7 +133,9 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            appstream \
+            desktop-file-utils
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -161,3 +163,6 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: false
+
+      - name: Verify Debian software-center metadata
+        run: python3 scripts/verify-deb.py src-tauri/target/release/bundle/deb/*.deb

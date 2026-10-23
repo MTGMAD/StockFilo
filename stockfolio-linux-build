@@ -3,8 +3,14 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
 
+if [[ -f /.flatpak-info ]]; then
+  exec flatpak-spawn --host bash "$script_dir/stockfolio-linux-build" "$@"
+fi
+
 export PATH="$HOME/.cargo/bin:$PATH"
 export APPIMAGE_EXTRACT_AND_RUN=1
 export NO_STRIP=1
 cd "$script_dir"
-npm run tauri build
+npm run tauri build -- "$@"
+deb_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+python3 scripts/verify-deb.py src-tauri/target/release/bundle/deb/*_"$deb_version"_*.deb

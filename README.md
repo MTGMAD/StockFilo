@@ -208,6 +208,27 @@ npm run tauri build
 
 Output installers are placed in `src-tauri/target/release/bundle/`.
 
+On Linux, use `./stockfolio-linux-build --bundles deb` to build and validate
+the Debian installer, including its AppStream metadata, desktop launcher,
+executable, and icon. Install the validator tools first:
+
+```bash
+sudo apt install appstream desktop-file-utils
+```
+
+Install the package through your software manager or APT so it is registered
+with the system package database. Extracting the package and running its binary
+does not install it:
+
+```bash
+sudo apt install ./src-tauri/target/release/bundle/deb/Stockfolio_0.1.8_amd64.deb
+```
+
+GNOME Software uses the packaged AppStream metadata to identify Stockfolio.
+Ubuntu App Center's support for managing local Debian packages varies by
+version. If your software center does not list it, the registered package can
+always be removed with `sudo apt remove stockfolio`.
+
 ---
 
 ## 🤝 Contributing

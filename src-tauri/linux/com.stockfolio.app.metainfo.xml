@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.stockfolio.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>Stockfolio</name>
+  <summary>Track stock portfolios and investment research</summary>
+  <description>
+    <p>Stockfolio helps you track stock portfolios, record investment research, and review your holdings in a desktop application.</p>
+    <p>Organize portfolios and research notes in one place, with optional self-hosted synchronization between your devices.</p>
+  </description>
+  <launchable type="desktop-id">Stockfolio.desktop</launchable>
+  <provides>
+    <binary>stockfolio</binary>
+  </provides>
+  <categories>
+    <category>Office</category>
+    <category>Finance</category>
+  </categories>
+  <url type="homepage">https://github.com/MTGMAD/StockFilo</url>
+  <url type="bugtracker">https://github.com/MTGMAD/StockFilo/issues</url>
+  <releases>
+    <release version="0.1.8" date="2026-10-23">
+      <description>
+        <p>Add application metadata for Linux software centers.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>
