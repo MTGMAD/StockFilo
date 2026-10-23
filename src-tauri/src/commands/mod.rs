@@ -1,3 +1,4 @@
+pub mod app_icon;
 pub mod brokers;
 pub mod snaptrade;
 pub mod link_preview;

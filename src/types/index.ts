@@ -291,7 +291,10 @@ export interface AppConfig {
   db_path?: string | null;
   sync_targets: SyncTarget[];
   auto_sync_minutes?: number | null;
+  app_icon?: AppIcon | null;
 }
+
+export type AppIcon = "violet" | "warm";
 
 export interface SyncRecordSummary {
   financial_records: number;

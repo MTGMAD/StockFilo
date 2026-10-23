@@ -1,13 +1,15 @@
 import { useState, useEffect } from "react";
-import type { Theme, InvestorMode, LinkOpenMode } from "../../types";
+import type { Theme, InvestorMode, LinkOpenMode, AppConfig, AppIcon } from "../../types";
 import { cn } from "../../lib/utils";
 import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationCap, LineChart, Globe, AppWindow, Info, Database, Landmark, Network, Settings, Bell, Play, BellOff, BellRing } from "lucide-react";
-import { isPermissionGranted, requestPermission } from "../../lib/platform";
+import { invoke, isDesktop, isPermissionGranted, requestPermission } from "../../lib/platform";
 import { clearAllPurchases } from "../../lib/db";
 import { ALERT_SOUNDS, playAlertSound, type AlertSoundId } from "../../lib/alertSounds";
 import { StorageSettings } from "./StorageSettings";
 import { BrokerSettings } from "./BrokerSettings";
 import { SnapTradeSettings } from "./SnapTradeSettings";
+import violetIcon from "../../../src-tauri/icons/128x128.png";
+import warmIcon from "../../../src-tauri/icons/warm/128x128.png";
 
 type SettingsTab = "system" | "brokerage" | "storage";
 
@@ -44,6 +46,11 @@ const investorModes: { id: InvestorMode; label: string; description: string; Ico
   { id: "advanced", label: "Advanced", description: "Full metrics, sortable table, asset breakdown, and concentration data", Icon: LineChart },
 ];
 
+const appIcons: { id: AppIcon; label: string; src: string }[] = [
+  { id: "violet", label: "Violet", src: violetIcon },
+  { id: "warm", label: "Warm", src: warmIcon },
+];
+
 const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "system", label: "System", Icon: Monitor },
   { id: "light", label: "Light", Icon: Sun },
@@ -58,6 +65,8 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
   const [activeTab, setActiveTab] = useState<SettingsTab>("system");
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermissionState>("unknown");
+  const [appIcon, setAppIcon] = useState<AppIcon | null>(null);
+  const [appIconError, setAppIconError] = useState<string | null>(null);
 
   // Jumping here from "Add Brokerage" elsewhere in the app should land on
   // the tab that actually has the form — same trigger BrokerSettings itself
@@ -73,6 +82,25 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
       .then((granted) => setNotificationPermission(granted ? "granted" : "default"))
       .catch(() => setNotificationPermission("unknown"));
   }, []);
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    invoke<AppConfig>("get_config")
+      .then((config) => setAppIcon(config.app_icon ?? "violet"))
+      .catch(() => setAppIcon("violet"));
+  }, []);
+
+  async function handleAppIconChange(icon: AppIcon) {
+    const previous = appIcon;
+    setAppIcon(icon);
+    setAppIconError(null);
+    try {
+      await invoke<AppConfig>("set_app_icon", { icon });
+    } catch (e) {
+      setAppIcon(previous);
+      setAppIconError(String(e));
+    }
+  }
 
   async function handleRequestNotificationPermission() {
     try {
@@ -172,6 +200,42 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
             ))}
           </div>
         </div>
+
+        {/* App Icon — the window, taskbar and launcher icon; desktop only */}
+        {appIcon && (
+          <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+            <div className="min-w-0 shrink-0 w-48">
+              <h2 className="text-sm font-semibold text-foreground">App Icon</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">Shown in the taskbar, dock and app launcher.</p>
+            </div>
+            <div className="flex flex-col gap-2 flex-1">
+              <div className="flex gap-2 flex-wrap">
+                {appIcons.map(({ id, label, src }) => (
+                  <button
+                    key={id}
+                    onClick={() => void handleAppIconChange(id)}
+                    aria-pressed={appIcon === id}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors",
+                      appIcon === id
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                    )}
+                  >
+                    <img src={src} alt="" className="w-6 h-6" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {appIconError && (
+                <div className="flex items-center gap-2 text-sm text-red-600">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {appIconError}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Dashboard Mode */}
         <div className="flex items-start justify-between gap-8 py-5 border-b border-border">

@@ -51,6 +51,9 @@ pub struct AppConfig {
     pub sync_targets: Vec<SyncTarget>,
     /// How often to auto-sync (in minutes).  None or 0 = disabled.
     pub auto_sync_minutes: Option<u32>,
+    /// App icon chosen in Settings.  None = the default violet icon.
+    #[serde(default)]
+    pub app_icon: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -60,6 +63,7 @@ impl Default for AppConfig {
             db_path: None,
             sync_targets: Vec::new(),
             auto_sync_minutes: None,
+            app_icon: None,
         }
     }
 }
