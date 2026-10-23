@@ -283,6 +283,7 @@ export interface SyncTarget {
   sync_initialized?: boolean;
   last_local_fingerprint?: string | null;
   last_remote_fingerprint?: string | null;
+  last_records_fingerprint?: string | null;
 }
 
 export interface AppConfig {

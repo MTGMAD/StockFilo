@@ -10,7 +10,7 @@ use crate::db::manager::DbManager;
 // Desktop and browser sessions share a database and staging path.
 mod safety;
 pub use safety::{SyncPreview, SyncBackup};
-pub(crate) use safety::backup_broker_database;
+pub(crate) use safety::{backup_broker_database, BrokerWrites};
 
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -137,6 +137,7 @@ fn upload_snapshot(db: &DbManager) -> Result<UploadSnapshot, String> {
 #[tauri::command]
 pub async fn sync_now(target_id: String, app: AppHandle, db_state: State<'_, DbManager>) -> Result<SyncResult, String> {
     let _guard = SYNC_LOCK.lock().await;
+    let _brokers = safety::exclusive().await;
     safety::prepare(&app, &db_state, &target_id).await
 }
 
@@ -148,6 +149,7 @@ pub fn cancel_sync_review(confirmation_id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn confirm_sync(confirmation_id: String, direction: String, allow_empty_upload: bool, app: AppHandle, db_state: State<'_, DbManager>) -> Result<SyncResult, String> {
     let _guard = SYNC_LOCK.lock().await;
+    let _brokers = safety::exclusive().await;
     safety::confirm(&app, &db_state, &confirmation_id, &direction, allow_empty_upload).await
 }
 
@@ -159,6 +161,7 @@ pub fn list_sync_backups(app: AppHandle) -> Result<Vec<SyncBackup>, String> {
 #[tauri::command]
 pub async fn prepare_restore_backup(backup_id: String, app: AppHandle, db_state: State<'_, DbManager>) -> Result<SyncResult, String> {
     let _guard = SYNC_LOCK.lock().await;
+    let _brokers = safety::exclusive().await;
     safety::prepare_restore(&app, &db_state, &backup_id).await
 }
 

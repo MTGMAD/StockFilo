@@ -17,6 +17,7 @@ use crate::brokers::types::{
 };
 use crate::brokers::Provider;
 use crate::commands::config::load_config;
+use crate::commands::sync::BrokerWrites;
 use crate::db::manager::DbManager;
 use crate::secrets;
 
@@ -551,9 +552,16 @@ pub async fn broker_sync_connection(
         return Err("This connection was disconnected. Reconnect it to resume syncing.".into());
     }
 
+    let Some(writes) = BrokerWrites::begin().await else {
+        return Ok(paused(connection_id));
+    };
     let outcome =
-        sync_one(&app, &state, &connection_id, &provider, &environment).await;
+        sync_one(&app, &state, &writes, &connection_id, &provider, &environment).await;
 
+    // Recording the outcome is a write too.
+    let Some(_permit) = writes.permit().await else {
+        return Ok(paused(connection_id));
+    };
     let synced_at = store::now_secs();
     let status = match &outcome {
         Ok(_) => "ok".to_string(),
@@ -579,9 +587,22 @@ pub async fn broker_sync_connection(
     }
 }
 
+/// Nothing synced and nothing recorded; the next tick retries.
+fn paused(connection_id: String) -> BrokerSyncResult {
+    BrokerSyncResult {
+        connection_id,
+        success: true,
+        message: BrokerError::SyncPaused.to_string(),
+        synced_at: 0,
+        positions: 0,
+        new_transactions: 0,
+    }
+}
+
 async fn sync_one(
     app: &AppHandle,
     state: &State<'_, DbManager>,
+    writes: &BrokerWrites,
     connection_id: &str,
     provider: &str,
     environment: &str,
@@ -609,6 +630,7 @@ async fn sync_one(
             Some(Vec::new())
         };
 
+        let permit = writes.permit().await.ok_or(BrokerError::SyncPaused)?;
         let (acct_id, visible) = state
             .with_txn(|conn| {
                 // New accounts default to visible: every current provider
@@ -644,6 +666,7 @@ async fn sync_one(
                 Ok((id, visible))
             })
             .map_err(BrokerError::Db)?;
+        drop(permit);
 
         total_positions += positions.as_ref().map_or(0, Vec::len);
 
@@ -676,6 +699,7 @@ async fn sync_one(
                 Err(e) => return Err(e),
             };
 
+            let permit = writes.permit().await.ok_or(BrokerError::SyncPaused)?;
             let new_tx = state
                 .with_txn(|conn| {
                     let n = store::append_transactions(conn, acct_id, &fetch.activities)?;
@@ -686,6 +710,7 @@ async fn sync_one(
                     Ok(n)
                 })
                 .map_err(BrokerError::Db)?;
+            drop(permit);
             total_new_tx += new_tx;
         }
     }
@@ -714,6 +739,9 @@ pub async fn broker_sync_all(
         rows.collect::<rusqlite::Result<Vec<_>>>()
     })?;
 
+    let Some(writes) = BrokerWrites::begin().await else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
     for (id, provider, environment) in connections {
         // A connection synced from another device has no local credentials.
@@ -722,7 +750,11 @@ pub async fn broker_sync_all(
             continue;
         }
 
-        let outcome = sync_one(&app, &state, &id, &provider, &environment).await;
+        let outcome = sync_one(&app, &state, &writes, &id, &provider, &environment).await;
+        let Some(_permit) = writes.permit().await else {
+            out.push(paused(id));
+            break;
+        };
         let synced_at = store::now_secs();
         let status = match &outcome {
             Ok(_) => "ok".to_string(),

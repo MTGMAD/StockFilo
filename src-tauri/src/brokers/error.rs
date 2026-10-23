@@ -37,6 +37,11 @@ pub enum BrokerError {
 
     #[error("{0}")]
     Db(String),
+
+    /// A database sync review opened mid-sync; its approval depends on the
+    /// local records staying exactly as reviewed.
+    #[error("Paused while a database sync is being reviewed")]
+    SyncPaused,
 }
 
 /// Tauri commands return `Result<_, String>`, so this conversion is what lets

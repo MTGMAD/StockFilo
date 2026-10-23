@@ -52,6 +52,33 @@ fn pending() -> &'static Mutex<HashMap<String, Pending>> {
     static REVIEWS: OnceLock<Mutex<HashMap<String, Pending>>> = OnceLock::new();
     REVIEWS.get_or_init(|| Mutex::new(HashMap::new()))
 }
+fn review_open() -> bool {
+    pending().lock().map_or(true, |reviews| reviews.values().any(|review| review.created.elapsed() < Duration::from_secs(600)))
+}
+
+/// Broker syncs rewrite positions, balances and timestamps on their own
+/// timers, which would stale every review. Reviews and transfers hold this
+/// gate exclusively and advance its generation, so a broker sync that began
+/// earlier drops its results at its next write instead of landing them.
+static BROKER_GATE: tokio::sync::RwLock<u64> = tokio::sync::RwLock::const_new(0);
+pub(super) async fn exclusive() -> tokio::sync::RwLockWriteGuard<'static, u64> {
+    let mut generation = BROKER_GATE.write().await;
+    *generation += 1;
+    generation
+}
+pub(crate) struct BrokerWrites(u64);
+impl BrokerWrites {
+    /// None while a review is open: skip this round, the next tick retries.
+    pub(crate) async fn begin() -> Option<Self> {
+        let generation = BROKER_GATE.read().await;
+        (!review_open()).then(|| Self(*generation))
+    }
+    /// Hold across one write. None once a review began after `begin`.
+    pub(crate) async fn permit(&self) -> Option<tokio::sync::RwLockReadGuard<'static, u64>> {
+        let generation = BROKER_GATE.read().await;
+        (*generation == self.0 && !review_open()).then_some(generation)
+    }
+}
 
 fn checksum(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
 fn io(error: impl std::fmt::Display) -> String { error.to_string() }
@@ -100,19 +127,35 @@ fn check_database(conn: &Connection) -> Result<(), String> {
 
 /// Stable logical fingerprints ignore volatile quote caches and file layout.
 /// Every other user table, including unknown future tables, participates.
-fn fingerprint(conn: &Connection) -> Result<String, String> {
+fn fingerprint(conn: &Connection) -> Result<String, String> { hash_records(conn, |_, _| true) }
+/// Written by broker refreshes on their own timers and fetched again from the
+/// brokerage on the next one, so not a change a person made.
+fn broker_refreshed(table: &str, column: &str) -> bool {
+    match table {
+        "broker_positions" | "broker_transactions" | "broker_account_snapshots" => true,
+        "broker_accounts" => matches!(column, "account_mask" | "currency" | "equity" | "cash" | "buying_power" | "snapshot_at" | "history_version"),
+        "broker_connections" => matches!(column, "last_synced_at" | "last_sync_status"),
+        _ => false,
+    }
+}
+/// `fingerprint` without broker-refreshed data: what a person changed.
+fn records_fingerprint(conn: &Connection) -> Result<String, String> {
+    hash_records(conn, |table, column| !broker_refreshed(table, column))
+}
+fn hash_records(conn: &Connection, keep: impl Fn(&str, &str) -> bool) -> Result<String, String> {
     let mut tables = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('stocks','changes_log','_sf_config') ORDER BY name").map_err(io)?;
     let names = tables.query_map([], |row| row.get::<_, String>(0)).map_err(io)?.collect::<Result<Vec<_>, _>>().map_err(io)?;
     let mut hash = Sha256::new();
     for name in names {
-        hash.update((name.len() as u64).to_le_bytes()); hash.update(name.as_bytes());
         let mut stmt = conn.prepare(&format!("SELECT * FROM \"{}\"", name.replace('"', "\"\""))).map_err(io)?;
-        let columns = stmt.column_count();
+        let columns: Vec<usize> = (0..stmt.column_count()).filter(|&index| stmt.column_name(index).is_ok_and(|column| keep(&name, column))).collect();
+        if columns.is_empty() { continue; }
+        hash.update((name.len() as u64).to_le_bytes()); hash.update(name.as_bytes());
         let mut rows = stmt.query([]).map_err(io)?;
         let mut encoded = Vec::new();
         while let Some(row) = rows.next().map_err(io)? {
             let mut values = Vec::new();
-            for index in 0..columns {
+            for &index in &columns {
                 let (kind, bytes) = match row.get_ref(index).map_err(io)? {
                     ValueRef::Null => (0, Vec::new()),
                     ValueRef::Integer(value) => (1, value.to_le_bytes().to_vec()),
@@ -140,10 +183,17 @@ fn summary(conn: &Connection) -> Result<RecordSummary, String> {
     let watchlist_items = count(conn, "watchlist")? + count(conn, "favorites")?;
     Ok(RecordSummary { financial_records, portfolios: count(conn, "portfolios")?, watchlist_items, notes, empty: financial_records + notes + watchlist_items == 0 })
 }
-fn inspect(path: &Path) -> Result<(String, RecordSummary), String> {
+struct Inspection {
+    fingerprint: String,
+    records: String,
+    broker_synced_at: Option<i64>,
+    summary: RecordSummary,
+}
+fn inspect(path: &Path) -> Result<Inspection, String> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(io)?;
     check_database(&conn)?;
-    Ok((fingerprint(&conn)?, summary(&conn)?))
+    let broker_synced_at = conn.query_row("SELECT MAX(last_synced_at) FROM broker_connections", [], |row| row.get(0)).ok().flatten();
+    Ok(Inspection { fingerprint: fingerprint(&conn)?, records: records_fingerprint(&conn)?, broker_synced_at, summary: summary(&conn)? })
 }
 
 fn backup_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -270,35 +320,32 @@ async fn make_review(app: &AppHandle, db: &DbManager, target: SyncTarget, restor
     let cfg = load_config(app)?;
     let password = if restore { String::new() } else { resolve_password(app, &cfg, &target) };
     let local = upload_snapshot(db)?;
-    let (local_fingerprint, local_summary) = inspect(&local.0)?;
+    let local_state = inspect(&local.0)?;
     let remote = remote_image(&target, &password).await?;
-    let remote_info = if let Some(bytes) = &remote.bytes {
+    let remote_state = if let Some(bytes) = &remote.bytes {
         let staged = stage(db, bytes)?; validate(&staged.0)?;
         Some(inspect(&staged.0)?)
     } else { None };
-    if target.sync_initialized && remote_info.as_ref().is_some_and(|(fingerprint, _)| fingerprint == &local_fingerprint) {
+    if target.sync_initialized && remote_state.as_ref().is_some_and(|remote| remote.fingerprint == local_state.fingerprint) {
         return Ok(result("Local and remote records already match. No data was transferred.", None));
     }
-    let conflict = target.sync_initialized && target.last_local_fingerprint.as_ref().is_some_and(|old| old != &local_fingerprint)
-        && target.last_remote_fingerprint.as_ref().is_some_and(|old| remote_info.as_ref().is_none_or(|(new, _)| old != new));
+    let (forward, conflict) = if restore { (None, false) } else { plan(&target, &local_state, remote_state.as_ref()) };
     let upload_blocked_reason = if restore { Some("Backups can only be restored to this device.".into()) }
         else if target.kind == "webdav" && remote.bytes.is_some() && !strong_etag(remote.etag.as_deref()) { Some("This server did not provide a strong file version (ETag). Protected replacement is unavailable; downloading is still safe.".into()) }
         else { None };
-    let forward = if restore { None } else {
-        fast_forward(&target, &local_fingerprint, remote_info.as_ref().map(|(fingerprint, _)| fingerprint.as_str()), local_summary.empty)
-            .filter(|direction| *direction == "download" || upload_blocked_reason.is_none())
-    };
+    let forward = forward.filter(|direction| *direction == "download" || upload_blocked_reason.is_none());
     let id = uuid::Uuid::new_v4().to_string();
     let preview = SyncPreview { confirmation_id: id.clone(), target_id: target.id.clone(), target_label: target.label.clone(), first_sync: !target.sync_initialized,
-        remote_exists: remote.bytes.is_some(), conflict, local: local_summary, remote: remote_info.map(|(_, summary)| summary), upload_allowed: upload_blocked_reason.is_none(), upload_blocked_reason, restore };
+        remote_exists: remote.bytes.is_some(), conflict, local: local_state.summary, remote: remote_state.map(|state| state.summary), upload_allowed: upload_blocked_reason.is_none(), upload_blocked_reason, restore };
     {
         let mut reviews = pending().lock().map_err(io)?;
-        reviews.retain(|_, pending| pending.created.elapsed() < Duration::from_secs(600));
+        // A newer review of the same target supersedes the old one.
+        reviews.retain(|_, pending| pending.created.elapsed() < Duration::from_secs(600) && pending.target.id != target.id);
         if reviews.len() >= 128 { if let Some(oldest) = reviews.iter().min_by_key(|(_, review)| review.created).map(|(id, _)| id.clone()) { reviews.remove(&oldest); } }
-        reviews.insert(id.clone(), Pending { target, local_fingerprint, remote_version: remote.version(), remote_etag: remote.etag, created: Instant::now(), restore });
+        reviews.insert(id.clone(), Pending { target, local_fingerprint: local_state.fingerprint, remote_version: remote.version(), remote_etag: remote.etag, created: Instant::now(), restore });
     }
-    // Only one side moved since the last transfer, so nothing can be lost:
-    // carry it across without asking. `confirm` re-checks both copies and
+    // Only one side holds a person's changes since the last transfer, so
+    // nothing can be lost: carry it across without asking. `confirm` re-checks both copies and
     // saves the same verified backups a reviewed transfer does.
     if let Some(direction) = forward {
         return confirm(app, db, &id, direction, false).await;
@@ -306,18 +353,35 @@ async fn make_review(app: &AppHandle, db: &DbManager, target: SyncTarget, restor
     Ok(result("Review required. No database has been replaced.", Some(preview)))
 }
 
-/// The transfer that is safe without asking, if any: exactly one copy changed
-/// since the last completed transfer. Everything else — a first sync, both
-/// copies changed, no remote, an empty local database — needs a person.
-fn fast_forward(target: &SyncTarget, local: &str, remote: Option<&str>, local_empty: bool) -> Option<&'static str> {
-    if !target.sync_initialized { return None; }
-    let last_local = target.last_local_fingerprint.as_deref()?;
-    let last_remote = target.last_remote_fingerprint.as_deref()?;
-    match (last_local != local, last_remote != remote?) {
-        (true, false) if !local_empty => Some("upload"),
-        (false, true) => Some("download"),
-        _ => None,
-    }
+/// The transfer that is safe without asking, if any, and whether both copies
+/// hold changes a person made. Broker refreshes rewrite positions, balances
+/// and history every few minutes and are fetched again on the next refresh,
+/// so they pick the direction only when no person changed records on either
+/// side, and then the most recent refresh wins. A first sync, a person's
+/// changes on both sides, no remote, or an empty local database always ask.
+fn plan(target: &SyncTarget, local: &Inspection, remote: Option<&Inspection>) -> (Option<&'static str>, bool) {
+    if !target.sync_initialized { return (None, false); }
+    let (Some(last_local), Some(last_remote)) = (target.last_local_fingerprint.as_deref(), target.last_remote_fingerprint.as_deref()) else { return (None, false) };
+    let local_moved = last_local != local.fingerprint;
+    let Some(remote) = remote else { return (None, local_moved) };
+    let remote_moved = last_remote != remote.fingerprint;
+    let edited = target.last_records_fingerprint.as_deref().map(|last| (last != local.records, last != remote.records));
+    let direction = match edited {
+        Some((true, true)) if local.records != remote.records => return (None, true),
+        Some((true, false)) => "upload",
+        Some((false, true)) => "download",
+        // Last transferred before records were tracked apart from broker data.
+        None if local_moved && remote_moved => return (None, true),
+        _ => match (local_moved, remote_moved) {
+            (true, false) => "upload",
+            (false, true) => "download",
+            (false, false) => return (None, false),
+            (true, true) if local.broker_synced_at > remote.broker_synced_at => "upload",
+            (true, true) => "download",
+        },
+    };
+    if direction == "upload" && local.summary.empty { return (None, false); }
+    (Some(direction), false)
 }
 fn strong_etag(etag: Option<&str>) -> bool {
     etag.is_some_and(|etag| etag.starts_with('"') && etag.ends_with('"') && !etag.contains(['\r','\n','[',']']))
@@ -361,15 +425,15 @@ pub(super) async fn confirm(app: &AppHandle, db: &DbManager, id: &str, direction
     }
     let password = if review.restore { String::new() } else { resolve_password(app, &cfg, &review.target) };
     let local = upload_snapshot(db)?;
-    let (local_fingerprint, local_summary) = inspect(&local.0)?;
+    let local_state = inspect(&local.0)?;
     let remote = remote_image(&review.target, &password).await?;
-    check_review(&review, &local_fingerprint, &remote, direction, local_summary.empty, allow_empty)?;
+    check_review(&review, &local_state.fingerprint, &remote, direction, local_state.summary.empty, allow_empty)?;
     let backups = backup_dir(app)?;
-    let final_fingerprint;
+    let final_state;
     if direction == "download" {
         let staged = stage(db, remote.bytes.as_ref().unwrap())?;
         validate(&staged.0)?;
-        final_fingerprint = inspect(&staged.0)?.0;
+        final_state = inspect(&staged.0)?;
         install(db, &staged.0, &backups, Some(&review.local_fingerprint))?;
     } else {
         // Verify every recovery copy before authorizing the final replacement.
@@ -377,13 +441,14 @@ pub(super) async fn confirm(app: &AppHandle, db: &DbManager, id: &str, direction
         if let Some(bytes) = &remote.bytes { save_backup(&backups, "remote", bytes)?; }
         if review.target.kind == "path" { upload_path(&review, &remote, &local.0)?; }
         else { upload_webdav(&review.target, &password, &remote, fs::read(&local.0).map_err(io)?).await?; }
-        final_fingerprint = local_fingerprint;
+        final_state = local_state;
     }
     update_config(app, |config| {
         if review.restore {
-            for target in &mut config.sync_targets { target.sync_initialized = false; target.last_local_fingerprint = None; target.last_remote_fingerprint = None; }
+            for target in &mut config.sync_targets { target.sync_initialized = false; target.last_local_fingerprint = None; target.last_remote_fingerprint = None; target.last_records_fingerprint = None; }
         } else if let Some(target) = config.sync_targets.iter_mut().find(|target| target.id == review.target.id) {
-            target.sync_initialized = true; target.last_local_fingerprint = Some(final_fingerprint.clone()); target.last_remote_fingerprint = Some(final_fingerprint.clone());
+            target.sync_initialized = true; target.last_local_fingerprint = Some(final_state.fingerprint.clone()); target.last_remote_fingerprint = Some(final_state.fingerprint.clone());
+            target.last_records_fingerprint = Some(final_state.records.clone());
             target.last_synced_at = Some(now_secs()); target.last_sync_status = Some("ok".into());
         }
     })?;
@@ -483,7 +548,7 @@ pub(super) fn list_backups(app: &AppHandle) -> Result<Vec<SyncBackup>, String> {
 pub(super) async fn prepare_restore(app: &AppHandle, db: &DbManager, id: &str) -> Result<SyncResult, String> {
     if id.contains(['/', '\\']) || !id.ends_with(".db") || id.starts_with('.') { return Err("Invalid backup selection".into()); }
     let target = SyncTarget { id: format!("backup:{id}"), label: format!("Recovery backup: {id}"), kind: "path".into(), path: Some(backup_dir(app)?.join(id).to_string_lossy().into_owned()), url: None, username: None, password_enc: None,
-        last_synced_at: None, last_sync_status: None, sync_initialized: false, last_local_fingerprint: None, last_remote_fingerprint: None };
+        last_synced_at: None, last_sync_status: None, sync_initialized: false, last_local_fingerprint: None, last_remote_fingerprint: None, last_records_fingerprint: None };
     make_review(app, db, target, true).await
 }
 
@@ -499,7 +564,7 @@ mod tests {
     }
     fn target(kind: &str, location: &str) -> SyncTarget {
         SyncTarget { id: uuid::Uuid::new_v4().to_string(), label: "Test".into(), kind: kind.into(), path: (kind == "path").then(|| location.into()), url: (kind == "webdav").then(|| location.into()), username: None, password_enc: None,
-            last_synced_at: None, last_sync_status: None, sync_initialized: false, last_local_fingerprint: None, last_remote_fingerprint: None }
+            last_synced_at: None, last_sync_status: None, sync_initialized: false, last_local_fingerprint: None, last_remote_fingerprint: None, last_records_fingerprint: None }
     }
     fn review(target: SyncTarget, remote: &RemoteImage) -> Pending {
         Pending { target, local_fingerprint: "local-v1".into(), remote_version: remote.version(), remote_etag: remote.etag.clone(), created: Instant::now(), restore: false }
@@ -507,19 +572,36 @@ mod tests {
     fn populated(db: &DbManager, name: &str) {
         db.with_conn(|conn| conn.execute("INSERT INTO portfolios (name,sort_order,is_starred,created_at) VALUES (?1,0,0,1)", [name])).unwrap();
     }
+    fn state(fingerprint: &str, records: &str, broker_synced_at: Option<i64>, empty: bool) -> Inspection {
+        Inspection { fingerprint: fingerprint.into(), records: records.into(), broker_synced_at,
+            summary: RecordSummary { financial_records: 0, portfolios: 0, watchlist_items: 0, notes: 0, empty } }
+    }
     #[test]
     fn only_a_one_sided_change_transfers_without_asking() {
         let mut t = target("webdav", "https://example.test/stockfolio.db");
         t.sync_initialized = true;
         t.last_local_fingerprint = Some("L".into()); t.last_remote_fingerprint = Some("R".into());
-        assert_eq!(fast_forward(&t, "L2", Some("R"), false), Some("upload"));
-        assert_eq!(fast_forward(&t, "L", Some("R2"), false), Some("download"));
-        assert_eq!(fast_forward(&t, "L2", Some("R2"), false), None, "both changed: a person decides");
-        assert_eq!(fast_forward(&t, "L", Some("R"), false), None);
-        assert_eq!(fast_forward(&t, "L2", Some("R"), true), None, "never push an empty database unasked");
-        assert_eq!(fast_forward(&t, "L2", None, false), None, "remote vanished: a person decides");
+        let side = |fingerprint: &str| state(fingerprint, "U", None, false);
+        assert_eq!(plan(&t, &side("L2"), Some(&side("R"))), (Some("upload"), false));
+        assert_eq!(plan(&t, &side("L"), Some(&side("R2"))), (Some("download"), false));
+        assert_eq!(plan(&t, &side("L2"), Some(&side("R2"))), (None, true), "both changed: a person decides");
+        assert_eq!(plan(&t, &side("L"), Some(&side("R"))), (None, false));
+        assert_eq!(plan(&t, &state("L2", "U", None, true), Some(&side("R"))), (None, false), "never push an empty database unasked");
+        assert_eq!(plan(&t, &side("L2"), None), (None, true), "remote vanished: a person decides");
         t.sync_initialized = false;
-        assert_eq!(fast_forward(&t, "L2", Some("R"), false), None, "first sync always asks");
+        assert_eq!(plan(&t, &side("L2"), Some(&side("R"))), (None, false), "first sync always asks");
+    }
+    #[test]
+    fn broker_refreshes_never_turn_a_one_sided_edit_into_a_conflict() {
+        let mut t = target("webdav", "https://example.test/stockfolio.db");
+        t.sync_initialized = true;
+        t.last_local_fingerprint = Some("F".into()); t.last_remote_fingerprint = Some("F".into()); t.last_records_fingerprint = Some("U".into());
+        assert_eq!(plan(&t, &state("F2", "U", Some(200), false), Some(&state("F3", "U2", Some(100), false))), (Some("download"), false), "edited remotely, refreshed here");
+        assert_eq!(plan(&t, &state("F2", "U2", Some(100), false), Some(&state("F3", "U", Some(200), false))), (Some("upload"), false), "edited here, refreshed remotely");
+        assert_eq!(plan(&t, &state("F2", "U", Some(200), false), Some(&state("F3", "U", Some(100), false))), (Some("upload"), false), "only refreshes: newest wins");
+        assert_eq!(plan(&t, &state("F2", "U", Some(100), false), Some(&state("F3", "U", Some(200), false))), (Some("download"), false), "only refreshes: newest wins");
+        assert_eq!(plan(&t, &state("F2", "U2", None, false), Some(&state("F3", "U3", None, false))), (None, true), "a person edited both copies");
+        assert_eq!(plan(&t, &state("F2", "U2", None, true), Some(&state("F", "U", None, false))), (None, false), "never push an empty database unasked");
     }
     #[test]
     fn empty_application_needs_explicit_consent_regardless_of_sync_history() {
@@ -564,6 +646,21 @@ mod tests {
         pending().lock().unwrap().insert(id.clone(), review(target("path", "/tmp/example"), &remote));
         cancel_review(&id).unwrap(); assert!(take_review(&id).is_err());
     }
+    #[tokio::test]
+    async fn broker_writes_cannot_land_during_or_after_a_review_they_overlap() {
+        // Began before a review: dropped at its next write.
+        let started = BrokerWrites(*BROKER_GATE.read().await);
+        drop(exclusive().await);
+        assert!(started.permit().await.is_none());
+        // While a review is open: neither new nor current-generation syncs write.
+        let remote = RemoteImage { bytes: None, etag: None };
+        let id = uuid::Uuid::new_v4().to_string();
+        pending().lock().unwrap().insert(id.clone(), review(target("path", "/tmp/example"), &remote));
+        let current = BrokerWrites(*BROKER_GATE.read().await);
+        assert!(BrokerWrites::begin().await.is_none());
+        assert!(current.permit().await.is_none());
+        cancel_review(&id).unwrap();
+    }
     #[test]
     fn record_fingerprint_ignores_quote_cache_but_catches_user_changes() {
         let dir = directory(); let db = DbManager::open(&dir.join("local.db")).unwrap();
@@ -572,6 +669,27 @@ mod tests {
         assert_eq!(first, db.with_conn(|conn| Ok(fingerprint(conn).unwrap())).unwrap());
         populated(&db, "Another portfolio");
         assert_ne!(first, db.with_conn(|conn| Ok(fingerprint(conn).unwrap())).unwrap());
+        drop(db); fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn records_fingerprint_ignores_broker_refreshes_but_not_account_choices() {
+        let dir = directory(); let db = DbManager::open(&dir.join("local.db")).unwrap();
+        let records = || db.with_conn(|conn| Ok(records_fingerprint(conn).unwrap())).unwrap();
+        let full = || db.with_conn(|conn| Ok(fingerprint(conn).unwrap())).unwrap();
+        db.with_conn(|conn| conn.execute_batch(
+            "INSERT INTO broker_connections (id, provider, environment, label, credential_ref, created_at) VALUES ('c', 'alpaca', 'live', 'Broker', 'ref', 1);
+             INSERT INTO broker_accounts (connection_id, provider_account_id, equity, cash) VALUES ('c', 'a', 100, 10);")).unwrap();
+        let (before, before_full) = (records(), full());
+        db.with_conn(|conn| conn.execute_batch(
+            "UPDATE broker_accounts SET equity = 120, cash = 5, snapshot_at = 2;
+             UPDATE broker_connections SET last_synced_at = 2, last_sync_status = 'ok';
+             INSERT INTO broker_positions (broker_account_id, provider_symbol, qty, snapshot_at) VALUES (1, 'AAPL', 1, 2);
+             INSERT INTO broker_transactions (broker_account_id, external_id, kind, provider_symbol, occurred_at) VALUES (1, 'tx', 'buy', 'AAPL', '2026-01-01');
+             INSERT INTO broker_account_snapshots (broker_account_id, as_of, captured_at) VALUES (1, '2026-01-01', 2);")).unwrap();
+        assert_eq!(before, records());
+        assert_ne!(before_full, full(), "transfers still carry broker data");
+        db.with_conn(|conn| conn.execute("UPDATE broker_accounts SET visible = 0", [])).unwrap();
+        assert_ne!(before, records());
         drop(db); fs::remove_dir_all(dir).unwrap();
     }
     #[test]
@@ -594,7 +712,7 @@ mod tests {
         let remote = DbManager::open(&dir.join("incoming.db")).unwrap(); populated(&remote, "Imported"); drop(remote);
         install(&db, &dir.join("incoming.db"), &dir.join("backups"), Some(&before)).unwrap();
         let backup = fs::read_dir(dir.join("backups")).unwrap().map(|entry| entry.unwrap().path()).find(|path| path.extension().is_some_and(|ext| ext == "db")).unwrap();
-        assert_eq!(inspect(&backup).unwrap().0, before);
+        assert_eq!(inspect(&backup).unwrap().fingerprint, before);
         let restored = stage(&db, &fs::read(&backup).unwrap()).unwrap();
         install(&db, &restored.0, &dir.join("backups"), None).unwrap();
         assert_eq!(before, db.with_conn(|conn| Ok(fingerprint(conn).unwrap())).unwrap());
@@ -625,7 +743,7 @@ mod tests {
         upload_path(&review, &image, &snapshot.0).unwrap();
         let backup = fs::read_dir(dir.join(".stockfolio-backups")).unwrap().map(|entry| entry.unwrap().path()).find(|path| path.extension().is_some_and(|ext| ext == "db")).unwrap();
         assert_eq!(checksum(&fs::read(backup).unwrap()), checksum(&bytes));
-        assert_eq!(inspect(&remote_path).unwrap().0, inspect(&snapshot.0).unwrap().0);
+        assert_eq!(inspect(&remote_path).unwrap().fingerprint, inspect(&snapshot.0).unwrap().fingerprint);
         drop(snapshot); drop(local); fs::remove_dir_all(dir).unwrap();
     }
 

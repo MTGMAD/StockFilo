@@ -35,6 +35,9 @@ pub struct SyncTarget {
     pub last_local_fingerprint: Option<String>,
     #[serde(default)]
     pub last_remote_fingerprint: Option<String>,
+    /// Both copies at the last transfer, ignoring broker-refreshed data.
+    #[serde(default)]
+    pub last_records_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -151,6 +154,7 @@ pub async fn add_sync_target(app: AppHandle, mut target: SyncTarget, password: O
     target.sync_initialized = false;
     target.last_local_fingerprint = None;
     target.last_remote_fingerprint = None;
+    target.last_records_fingerprint = None;
     if let Some(url) = &mut target.url { *url = url.trim().to_string(); }
     if let Some(username) = &mut target.username { *username = username.trim().to_string(); }
     if target.kind != "path" && target.kind != "webdav" { return Err("Unknown sync target type".into()); }
@@ -213,7 +217,7 @@ mod tests {
             id: "test".into(), label: "Cloud".into(), kind: "webdav".into(), path: None,
             url: Some("https://example.com/dav/files/user/".into()), username: Some("user".into()),
             password_enc: None, last_synced_at: None, last_sync_status: None,
-            sync_initialized: false, last_local_fingerprint: None, last_remote_fingerprint: None,
+            sync_initialized: false, last_local_fingerprint: None, last_remote_fingerprint: None, last_records_fingerprint: None,
         });
         write_config(&path, &config).unwrap();
         let loaded = read_config(&path).unwrap();
