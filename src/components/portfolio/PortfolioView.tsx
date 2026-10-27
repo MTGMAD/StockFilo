@@ -545,9 +545,7 @@ export function PortfolioView({
       setCalendarError(null);
       await addEarningsCallToCalendar(ticker, eventAt);
     } catch (e) {
-      setCalendarError(
-        `Could not open calendar for ${ticker}. Please try again.`,
-      );
+      setCalendarError(e instanceof Error ? e.message : String(e));
       console.error("open_earnings_call_in_calendar failed", e);
     } finally {
       setAddingCalendarFor(null);
@@ -563,7 +561,7 @@ export function PortfolioView({
       setCalendarError(null);
       await addDividendToCalendar(ticker, dividendDate);
     } catch (e) {
-      setCalendarError(`Could not open dividend calendar for ${ticker}.`);
+      setCalendarError(e instanceof Error ? e.message : String(e));
       console.error("open_dividend_in_calendar failed", e);
     } finally {
       setAddingDividendCalendarFor(null);
@@ -1398,12 +1396,12 @@ export function PortfolioView({
                             addingDividendCalendarFor === summary.ticker
                           }
                           className="btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1.5"
-                          title="Add dividend payout date to your calendar"
+                          title={`Add the ${selectedDividendDate * 1000 < Date.now() ? "past " : ""}dividend payout on ${formatDate(selectedDividendDate)} to your calendar`}
                         >
                           <CalendarDays className="w-3.5 h-3.5" />
                           {addingDividendCalendarFor === summary.ticker
                             ? "Opening Calendar..."
-                            : "Add Dividend to Calendar"}
+                            : `Add ${selectedDividendDate * 1000 < Date.now() ? "Past Dividend" : "Dividend"} to Calendar (${formatDate(selectedDividendDate)})`}
                         </button>
                       )}
                     </div>

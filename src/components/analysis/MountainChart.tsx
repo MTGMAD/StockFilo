@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { invoke } from "../../lib/platform";
 import type { ChartData, ChartRange, ChartStyle } from "../../types";
 import { formatCurrency, cn } from "../../lib/utils";
@@ -24,6 +24,7 @@ const RANGES: { label: string; value: ChartRange; interval: string }[] = [
   { label: "1D", value: "1d", interval: "5m" },
   { label: "5D", value: "5d", interval: "15m" },
   { label: "1M", value: "1mo", interval: "30m" },
+  { label: "3M", value: "3mo", interval: "1d" },
   { label: "6M", value: "6mo", interval: "1d" },
   { label: "YTD", value: "ytd", interval: "1d" },
   { label: "1Y", value: "1y", interval: "1d" },
@@ -34,6 +35,7 @@ const RANGES: { label: string; value: ChartRange; interval: string }[] = [
 // Mutual funds / UITs only price daily — intraday intervals don't work
 const FUND_RANGES: { label: string; value: ChartRange; interval: string }[] = [
   { label: "1M", value: "1mo", interval: "1d" },
+  { label: "3M", value: "3mo", interval: "1d" },
   { label: "6M", value: "6mo", interval: "1d" },
   { label: "YTD", value: "ytd", interval: "1d" },
   { label: "1Y", value: "1y", interval: "1d" },
@@ -41,23 +43,16 @@ const FUND_RANGES: { label: string; value: ChartRange; interval: string }[] = [
   { label: "All", value: "max", interval: "1mo" },
 ];
 
-export function MountainChart({ ticker, quoteType }: MountainChartProps) {
+export function MountainChart(props: MountainChartProps) {
+  const isFund = props.quoteType === "MUTUALFUND" || props.quoteType === "UIT";
+  return <MountainChartContent key={`${props.ticker}|${isFund}`} {...props} />;
+}
+
+function MountainChartContent({ ticker, quoteType }: MountainChartProps) {
   const isFund = quoteType === "MUTUALFUND" || quoteType === "UIT";
   const ranges = isFund ? FUND_RANGES : RANGES;
-  const defaultRange = isFund ? "1mo" : "1d";
-
-  const [range, setRange] = useState<ChartRange>(defaultRange);
-  const [style, setStyle] = useState<ChartStyle>(() => {
-    const saved = localStorage.getItem("stockfolio-chart-style");
-    return saved === "line" || saved === "candles" || saved === "mountain"
-      ? saved
-      : "line";
-  });
-
-  function changeStyle(s: ChartStyle) {
-    setStyle(s);
-    localStorage.setItem("stockfolio-chart-style", s);
-  }
+  const [range, setRange] = useState<ChartRange>("3mo");
+  const [style, setStyle] = useState<ChartStyle>("mountain");
 
   // Defaults to the machine's own zone, so nothing needs configuring to read
   // correctly for the market the user actually lives in.
@@ -67,48 +62,62 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
     setTimeZone(z);
     saveZoneChoice(z);
   }
-  const [chartData, setChartData] = useState<ChartData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const requestKey = `${ticker}|${range}|${isFund}`;
+  const [result, setResult] = useState<{
+    key: string;
+    data: ChartData | null;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
 
-  // Reset to the default range whenever the ticker changes — not just when
-  // switching between a stock and a fund. Without `ticker` in the deps, this
-  // component (never mounted with a `key={ticker}` by its callers) keeps
-  // whatever range was left over from the *previous* ticker: click through a
-  // few positions and each chart opens on a random leftover timeframe
-  // instead of consistently defaulting to 1D.
   useEffect(() => {
-    setRange(defaultRange);
-  }, [defaultRange, ticker]);
-
-  const loadChart = useCallback(async () => {
+    let cancelled = false;
+    let inFlight = false;
     const r = ranges.find((r) => r.value === range) ?? ranges[0];
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await invoke<ChartData>("fetch_chart_command", {
-        ticker,
-        range: r.value,
-        interval: r.interval,
-      });
-      setChartData(data);
-    } catch (e) {
-      setError(String(e));
-      setChartData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [ticker, range, ranges]);
 
-  useEffect(() => {
-    loadChart();
-    // Auto-refresh for intraday ranges (stocks only, not funds)
-    if (!isFund && (range === "1d" || range === "5d")) {
-      const id = setInterval(loadChart, 60_000);
-      return () => clearInterval(id);
+    async function loadChart() {
+      // Do not stack refreshes if the provider takes longer than a minute.
+      if (inFlight) return;
+      inFlight = true;
+      setResult((current) => ({
+        key: requestKey,
+        data: current?.key === requestKey ? current.data : null,
+        loading: true,
+        error: null,
+      }));
+      try {
+        const data = await invoke<ChartData>("fetch_chart_command", {
+          ticker,
+          range: r.value,
+          interval: r.interval,
+        });
+        if (!cancelled) {
+          setResult({ key: requestKey, data, loading: false, error: null });
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setResult({ key: requestKey, data: null, loading: false, error: String(e) });
+        }
+      } finally {
+        inFlight = false;
+      }
     }
-  }, [loadChart, range, isFund]);
 
+    void loadChart();
+    const refresh = !isFund && (range === "1d" || range === "5d")
+      ? setInterval(loadChart, 60_000)
+      : null;
+    return () => {
+      cancelled = true;
+      if (refresh !== null) clearInterval(refresh);
+    };
+  }, [ticker, range, ranges, isFund, requestKey]);
+
+  // Hide the old instrument/range immediately, even before the effect starts.
+  const current = result?.key === requestKey ? result : null;
+  const chartData = current?.data ?? null;
+  const loading = current?.loading ?? true;
+  const error = current?.error ?? null;
   const points = chartData?.points ?? [];
   const previousClose = chartData?.previous_close ?? null;
 
@@ -183,7 +192,7 @@ export function MountainChart({ ticker, quoteType }: MountainChartProps) {
           <TimeZoneMenu value={timeZone} onChange={changeTimeZone} />
           <ChartStyleMenu
             value={style}
-            onChange={changeStyle}
+            onChange={setStyle}
             candlesUnavailableReason={
               candlesReady
                 ? null

@@ -86,8 +86,8 @@ export function StockDetailModal({
     setCalendarError(null);
     try {
       await addEarningsCallToCalendar(ticker, earningsAt);
-    } catch {
-      setCalendarError("Could not open calendar. Please try again.");
+    } catch (e) {
+      setCalendarError(e instanceof Error ? e.message : String(e));
     } finally {
       setAddingToCalendar(false);
     }

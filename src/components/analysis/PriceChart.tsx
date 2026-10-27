@@ -101,7 +101,7 @@ function tickLabel(ts: number, range: ChartRange, zone: TimeZoneChoice): string 
   if (range === "5d") {
     return formatInZone(ts, zone, { weekday: "short", hour: "numeric" });
   }
-  if (range === "1mo" || range === "6mo" || range === "ytd") {
+  if (range === "1mo" || range === "3mo" || range === "6mo" || range === "ytd") {
     return formatInZone(ts, zone, { month: "short", day: "numeric" });
   }
   return formatInZone(ts, zone, { month: "short", year: "2-digit" });
@@ -224,6 +224,7 @@ export function PriceChart({
     });
 
     chartRef.current = chart;
+    fittedForRef.current = null;
 
     // Sizing is handled here rather than with the library's `autoSize`, which
     // installs its own ResizeObserver that can deliver a queued paint *after*
@@ -330,6 +331,32 @@ export function PriceChart({
         priceFormat,
       });
     }
+  }, [style]);
+
+  // Colour and precision can change on a refresh without changing the points
+  // or style. Update the existing series rather than replacing it with an
+  // empty one that the data effect would never repopulate.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const c = palette();
+    const color = isUp ? c.up : c.down;
+    series.applyOptions({
+      priceFormat: {
+        type: "price",
+        precision: priceDecimals,
+        minMove: Math.pow(10, -priceDecimals),
+      },
+      ...(style === "candles"
+        ? { upColor: c.up, downColor: c.down }
+        : style === "line"
+          ? { color }
+          : {
+              lineColor: color,
+              topColor: rgba(isUp ? c.upRgb : c.downRgb, 0.3),
+              bottomColor: rgba(isUp ? c.upRgb : c.downRgb, 0.02),
+            }),
+    });
   }, [style, isUp, priceDecimals]);
 
   // Feed data. Kept separate from series creation so a refresh does not
@@ -394,7 +421,8 @@ export function PriceChart({
   // would be an arbitrary horizontal line with no meaning.
   useEffect(() => {
     const series = seriesRef.current;
-    if (!series) return;
+    const chart = chartRef.current;
+    if (!series || !chart) return;
     const intraday = range === "1d" || range === "5d";
     if (!intraday || previousClose == null) return;
 
@@ -407,10 +435,10 @@ export function PriceChart({
       title: "prev",
     });
     return () => {
-      try {
+      // Chart teardown and style replacement run before this cleanup. Calling
+      // a disposed series can queue a canvas paint even without throwing here.
+      if (chartRef.current === chart && seriesRef.current === series) {
         series.removePriceLine(line);
-      } catch {
-        // The series may already be gone if the style changed in the same tick.
       }
     };
   }, [previousClose, range, style, points]);

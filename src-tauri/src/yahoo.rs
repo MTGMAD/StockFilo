@@ -1161,7 +1161,7 @@ async fn fetch_chart_with_query(ticker: &str, query: &str) -> Result<ChartData, 
 }
 
 /// Fetch historical chart data for a single ticker.
-/// `range` is one of: 1d, 5d, 1mo, 6mo, ytd, 1y, 5y, max
+/// `range` is one of: 1d, 5d, 1mo, 3mo, 6mo, ytd, 1y, 5y, max
 /// `interval` is one of: 1m, 2m, 5m, 15m, 30m, 60m, 1d, 1wk, 1mo
 pub async fn fetch_chart(
     ticker: &str,

@@ -14,6 +14,7 @@ const LONG_NAMES: Record<ChartRange, string> = {
   "1d": "1 Day",
   "5d": "5 Days",
   "1mo": "1 Month",
+  "3mo": "3 Months",
   "6mo": "6 Months",
   ytd: "Year to Date",
   "1y": "1 Year",

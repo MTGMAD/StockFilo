@@ -216,6 +216,7 @@ export type ChartRange =
   | "1d"
   | "5d"
   | "1mo"
+  | "3mo"
   | "6mo"
   | "ytd"
   | "1y"

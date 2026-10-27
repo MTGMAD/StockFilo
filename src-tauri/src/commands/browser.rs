@@ -86,35 +86,7 @@ pub async fn open_dividend_in_calendar(ticker: String, dividend_date: i64) -> Re
     file.write_all(ics.as_bytes())
         .map_err(|e| format!("Failed to write calendar invite: {e}"))?;
 
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/c", "start", "", path.to_string_lossy().as_ref()])
-            .spawn()
-            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
-        return Ok(());
-    }
-
-    #[allow(unreachable_code)]
-    Ok(())
+    open_calendar_invite(&path)
 }
 
 #[tauri::command]
@@ -150,35 +122,67 @@ pub async fn open_earnings_call_in_calendar(ticker: String, event_at: i64) -> Re
     file.write_all(ics.as_bytes())
         .map_err(|e| format!("Failed to write calendar invite: {e}"))?;
 
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/c", "start", "", path.to_string_lossy().as_ref()])
-            .spawn()
-            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
-        return Ok(());
-    }
+    open_calendar_invite(&path)
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
-        return Ok(());
-    }
-
+/// A generic file opener can resolve text/calendar to a text editor through its
+/// text/plain fallback. Launch a calendar handler explicitly on Linux instead.
+fn open_calendar_invite(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open calendar invite: {e}"))?;
-        return Ok(());
+        use gio::prelude::*;
+        // Honour the OS associations first, then its recommendations. Some
+        // desktop setups have an installed calendar but no MIME association;
+        // discover those through GIO as a final fallback, without changing it.
+        let candidates = ["text/calendar", "application/ics", "text/x-vcalendar"]
+            .iter()
+            .filter_map(|mime| gio::AppInfo::default_for_type(mime, false))
+            .chain(gio::AppInfo::default_for_uri_scheme("webcal"))
+            .chain(gio::AppInfo::recommended_for_type("text/calendar"))
+            .chain(gio::AppInfo::all().into_iter().filter(|app| app.should_show()));
+        let calendar = select_calendar_app(candidates)
+            .ok_or_else(|| "No calendar app is configured to import events. Install a calendar app and set it as the default for calendar (.ics) files, then try again.".to_string())?;
+
+        return calendar
+            .launch(&[gio::File::for_path(path)], None::<&gio::AppLaunchContext>)
+            .map_err(|e| format!("Could not open your calendar app: {e}"));
+    }
+
+    #[cfg(target_os = "windows")]
+    let status = Command::new("cmd")
+        .args(["/c", "start", "", path.to_string_lossy().as_ref()])
+        .status();
+
+    #[cfg(target_os = "macos")]
+    let status = Command::new("open").arg(path).status();
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let status = status.map_err(|e| format!("Could not open your calendar app: {e}"))?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err("Could not open your calendar app. Set a default app for calendar (.ics) files and try again.".into())
+        };
     }
 
     #[allow(unreachable_code)]
-    Ok(())
+    Err("Opening calendar events is not supported on this platform.".into())
+}
+
+#[cfg(target_os = "linux")]
+fn select_calendar_app(candidates: impl IntoIterator<Item = gio::AppInfo>) -> Option<gio::AppInfo> {
+    candidates.into_iter().find(is_calendar_app)
+}
+
+#[cfg(target_os = "linux")]
+fn is_calendar_app(app: &gio::AppInfo) -> bool {
+    use gio::prelude::*;
+    // Require an explicit calendar format. Text editors that inherit support
+    // through text/plain are not calendar importers, even if listed as default.
+    app.supported_types().iter().any(|mime| {
+        matches!(mime.as_str(), "text/calendar" | "application/ics" | "text/x-vcalendar")
+    })
 }
 
 fn launch_app_mode(url: &str, geo: &BrowserGeometry) -> Result<(), String> {
@@ -260,3 +264,57 @@ fn launch_app_mode(url: &str, geo: &BrowserGeometry) -> Result<(), String> {
     Ok(())
 }
 
+
+#[cfg(all(test, target_os = "linux"))]
+mod calendar_tests {
+    use super::*;
+    use gio::prelude::*;
+
+    fn app_with_types(types: &str) -> gio::AppInfo {
+        let key = gio::glib::KeyFile::new();
+        key.load_from_data(
+            &format!("[Desktop Entry]\nType=Application\nName=Calendar launch test\nExec=/bin/true %F\nMimeType={types}\n"),
+            gio::glib::KeyFileFlags::NONE,
+        ).unwrap();
+        gio::DesktopAppInfo::from_keyfile(&key).unwrap().upcast()
+    }
+
+    #[test]
+    fn prefers_os_default_over_other_installed_calendars() {
+        let preferred = app_with_types("text/calendar;");
+        let alternative = app_with_types("text/calendar;");
+        let selected = select_calendar_app([preferred.clone(), alternative]).unwrap();
+        assert_eq!(selected, preferred);
+    }
+
+    #[test]
+    fn finds_installed_calendar_when_default_is_a_text_editor() {
+        let editor = app_with_types("text/plain;");
+        let calendar = app_with_types("text/calendar;");
+        let selected = select_calendar_app([editor, calendar.clone()]).unwrap();
+        assert_eq!(selected, calendar);
+    }
+
+    #[test]
+    fn no_calendar_does_not_launch_a_text_editor() {
+        assert!(select_calendar_app([app_with_types("text/plain;")]).is_none());
+        assert!(select_calendar_app([]).is_none());
+    }
+
+    #[test]
+    fn rejects_text_editor_fallback() {
+        assert!(!is_calendar_app(&app_with_types("text/plain;application/x-zerosize;")));
+    }
+
+    #[test]
+    fn accepts_calendar_importers() {
+        for mime in ["text/calendar", "application/ics", "text/x-vcalendar"] {
+            assert!(is_calendar_app(&app_with_types(&format!("{mime};"))));
+        }
+    }
+
+    #[test]
+    fn rejects_browser_that_only_handles_webcal_links() {
+        assert!(!is_calendar_app(&app_with_types("text/html;x-scheme-handler/webcal;")));
+    }
+}

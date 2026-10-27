@@ -33,6 +33,9 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 axum = "0.8"
 fs2 = "0.4"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gio = "0.18"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
