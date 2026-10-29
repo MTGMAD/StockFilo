@@ -134,6 +134,7 @@ export default function App() {
 
   const {
     portfolios,
+    groups: portfolioGroups,
     loading: portfoliosLoading,
     starredPortfolio,
     create,
@@ -142,6 +143,10 @@ export default function App() {
     star,
     reorder,
     setPositionSortMode,
+    move: movePortfolio,
+    createGroup,
+    renameGroup,
+    removeGroup,
     reload: reloadPortfolios,
   } = usePortfolios();
 
@@ -394,6 +399,11 @@ export default function App() {
         newPortfolioTrigger={newPortfolioTrigger}
         onStarPortfolio={star}
         onReorderPortfolios={reorder}
+        groups={portfolioGroups}
+        onMovePortfolio={movePortfolio}
+        onCreateGroup={createGroup}
+        onRenameGroup={renameGroup}
+        onDeleteGroup={removeGroup}
         brokerBadges={brokerBadges}
         onAddBrokerage={() => {
           setView("settings");

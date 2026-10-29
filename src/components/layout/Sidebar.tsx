@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useRef } from "react";
-import type { View, Portfolio } from "../../types";
+import type { View, Portfolio, PortfolioGroup } from "../../types";
 import { accountKindStyle } from "../../lib/accountTypes";
 import {
   LayoutDashboard,
@@ -18,6 +18,10 @@ import {
   GripVertical,
   PencilLine,
   Landmark,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  FolderInput,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { AppLogoMark } from "../shared/AppLogoMark";
@@ -31,6 +35,16 @@ const MAX_WIDTH = 480;
 /** Movement before a press on a portfolio row becomes a drag, so a plain
  *  click still selects the portfolio. */
 const DRAG_THRESHOLD_PX = 4;
+const COLLAPSED_GROUPS_KEY = "stockfolio-collapsed-groups";
+
+/** Where a dragged portfolio would land: slot `index` in the list of
+ *  `groupId` (null = ungrouped). `onHeader` means the pointer is over a
+ *  group's own row, which drops at the end of that group. */
+interface DropTarget {
+  groupId: number | null;
+  index: number;
+  onHeader: boolean;
+}
 
 interface SidebarProps {
   view: View;
@@ -45,6 +59,13 @@ interface SidebarProps {
   onDeletePortfolio: (id: number) => Promise<void>;
   onStarPortfolio: (id: number) => Promise<void>;
   onReorderPortfolios: (ids: number[]) => Promise<void>;
+  groups: PortfolioGroup[];
+  /** Puts a portfolio in a group (null = ungrouped) and applies the full
+   *  portfolio order `ids`. */
+  onMovePortfolio: (id: number, groupId: number | null, ids: number[]) => Promise<void>;
+  onCreateGroup: (name: string) => Promise<number>;
+  onRenameGroup: (id: number, name: string) => Promise<void>;
+  onDeleteGroup: (id: number) => Promise<void>;
   newPortfolioTrigger?: number;
   /** Account-type chip per linked portfolio, keyed by broker_account_id. */
   brokerBadges?: Record<
@@ -70,6 +91,11 @@ export function Sidebar({
   onDeletePortfolio,
   onStarPortfolio,
   onReorderPortfolios,
+  groups,
+  onMovePortfolio,
+  onCreateGroup,
+  onRenameGroup,
+  onDeleteGroup,
   newPortfolioTrigger,
   brokerBadges,
   onAddBrokerage,
@@ -84,6 +110,22 @@ export function Sidebar({
   const [choosingKind, setChoosingKind] = useState(false);
   const [newName, setNewName] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  /** Portfolio whose "move to group" picker is open in place of its row. */
+  const [movingId, setMovingId] = useState<number | null>(null);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
+  const [confirmDeleteGroupId, setConfirmDeleteGroupId] = useState<number | null>(null);
+  // Which groups are folded is a per-device view preference, so it stays in
+  // localStorage like the Portfolios section's own open state; the groups
+  // and their members are what live in the database.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(COLLAPSED_GROUPS_KEY) ?? "[]");
+      return new Set(Array.isArray(stored) ? stored.filter(Number.isInteger) : []);
+    } catch {
+      return new Set();
+    }
+  });
   const [portfoliosOpen, setPortfoliosOpen] = useState<boolean>(() => {
     return localStorage.getItem("stockfolio-portfolios-open") !== "false";
   });
@@ -91,6 +133,19 @@ export function Sidebar({
   useEffect(() => {
     localStorage.setItem("stockfolio-portfolios-open", String(portfoliosOpen));
   }, [portfoliosOpen]);
+
+  useEffect(() => {
+    localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...collapsedGroups]));
+  }, [collapsedGroups]);
+
+  function toggleGroup(id: number) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const [width, setWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
@@ -169,36 +224,114 @@ export function Sidebar({
     }
   }
 
+  // ── Groups ───────────────────────────────────────────────────────────
+  // The full list renders each group's portfolios under its header, then
+  // the ungrouped ones. A group_id that no longer matches a group counts as
+  // ungrouped, so a row can never disappear from the list.
+  const groupIds = new Set(groups.map((g) => g.id));
+  const groupOf = (p: Portfolio): number | null =>
+    p.group_id != null && groupIds.has(p.group_id) ? p.group_id : null;
+  /** Render order of the sections; null (ungrouped) always comes last. */
+  const sectionIds: (number | null)[] = [...groups.map((g) => g.id), null];
+  const itemsOf = (gid: number | null) => portfolios.filter((p) => groupOf(p) === gid);
+  const isSectionOpen = (gid: number | null) => gid == null || !collapsedGroups.has(gid);
+  const ungrouped = itemsOf(null);
+
+  /** Moves `id` to `target` and applies the resulting order, which is the
+   *  sections flattened in render order so `sort_order` matches what shows. */
+  function arrange(id: number, target: DropTarget) {
+    const moving = portfolios.find((p) => p.id === id);
+    if (!moving) return;
+    const fromGid = groupOf(moving);
+    const order = new Map(sectionIds.map((gid) => [gid, itemsOf(gid).map((p) => p.id)]));
+    const src = order.get(fromGid)!;
+    const from = src.indexOf(id);
+    src.splice(from, 1);
+    const at = fromGid === target.groupId && target.index > from ? target.index - 1 : target.index;
+    order.get(target.groupId)!.splice(at, 0, id);
+    const ids = sectionIds.flatMap((gid) => order.get(gid)!);
+    if (fromGid !== target.groupId) void onMovePortfolio(id, target.groupId, ids);
+    else void onReorderPortfolios(ids);
+  }
+
+  function moveTo(id: number, groupId: number | null) {
+    setMovingId(null);
+    arrange(id, { groupId, index: itemsOf(groupId).length, onHeader: false });
+  }
+
+  async function handleDeleteGroup(id: number) {
+    await onDeleteGroup(id);
+    setConfirmDeleteGroupId(null);
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
   // ── Drag to reorder ──────────────────────────────────────────────────
   // Pointer events rather than HTML5 drag-and-drop: Tauri's webview can
   // claim native drag events for its own file-drop handling.
   const rowRefs = useRef(new Map<number, HTMLDivElement>());
+  const groupRefs = useRef(new Map<number, HTMLDivElement>());
+  /** Drop zone shown while dragging when no portfolio is ungrouped, so a
+   *  grouped one can still be dragged back out. */
+  const ungroupZoneRef = useRef<HTMLDivElement | null>(null);
   const suppressClickRef = useRef(false);
   const [dragId, setDragId] = useState<number | null>(null);
-  /** Insertion index into `portfolios` (0…length) where the row would land. */
-  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
 
-  function insertionIndex(clientY: number): number {
-    for (let i = 0; i < portfolios.length; i++) {
-      const el = rowRefs.current.get(portfolios[i].id);
-      if (!el) continue;
-      const r = el.getBoundingClientRect();
-      if (clientY < r.top + r.height / 2) return i;
+  /** Top edge of a section — its header, or for the ungrouped list its first
+   *  row (or the drop zone standing in for an empty list). */
+  function sectionTop(gid: number | null | undefined): number | null {
+    if (gid === undefined) return null;
+    const first = gid == null ? ungrouped[0] : undefined;
+    const el =
+      gid != null
+        ? groupRefs.current.get(gid)
+        : first
+        ? rowRefs.current.get(first.id)
+        : ungroupZoneRef.current;
+    return el?.getBoundingClientRect().top ?? null;
+  }
+
+  function dropTargetAt(clientY: number): DropTarget {
+    for (let s = 0; s < sectionIds.length; s++) {
+      const gid = sectionIds[s];
+      const items = itemsOf(gid);
+      if (gid != null) {
+        const header = groupRefs.current.get(gid)?.getBoundingClientRect();
+        if (header && clientY < header.bottom) {
+          return { groupId: gid, index: items.length, onHeader: true };
+        }
+      }
+      if (isSectionOpen(gid)) {
+        for (let i = 0; i < items.length; i++) {
+          const r = rowRefs.current.get(items[i].id)?.getBoundingClientRect();
+          if (r && clientY < r.top + r.height / 2) return { groupId: gid, index: i, onHeader: false };
+        }
+      }
+      const nextTop = sectionTop(sectionIds[s + 1]);
+      if (nextTop == null || clientY < nextTop) {
+        return { groupId: gid, index: items.length, onHeader: !isSectionOpen(gid) };
+      }
     }
-    return portfolios.length;
+    return { groupId: null, index: ungrouped.length, onHeader: false };
   }
 
   /** Dropping a row directly above or below itself changes nothing. */
-  function isNoopDrop(id: number, target: number): boolean {
-    const from = portfolios.findIndex((p) => p.id === id);
-    return target === from || target === from + 1;
+  function isNoopDrop(id: number, target: DropTarget): boolean {
+    const moving = portfolios.find((p) => p.id === id);
+    if (!moving || groupOf(moving) !== target.groupId) return false;
+    const from = itemsOf(target.groupId).findIndex((p) => p.id === id);
+    return target.index === from || target.index === from + 1;
   }
 
   function startRowPress(e: React.PointerEvent, id: number) {
-    if (e.button !== 0 || editingId != null || confirmDeleteId != null) return;
+    if (e.button !== 0 || editingId != null || confirmDeleteId != null || movingId != null) return;
     const startY = e.clientY;
     let active = false;
-    let target: number | null = null;
+    let target: DropTarget | null = null;
 
     const move = (ev: PointerEvent) => {
       if (!active) {
@@ -208,8 +341,8 @@ export function Sidebar({
         document.body.style.userSelect = "none";
         document.body.style.cursor = "grabbing";
       }
-      target = insertionIndex(ev.clientY);
-      setDropIndex(target);
+      target = dropTargetAt(ev.clientY);
+      setDropTarget(target);
     };
     const finish = (commit: boolean) => {
       window.removeEventListener("pointermove", move);
@@ -219,18 +352,12 @@ export function Sidebar({
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
       setDragId(null);
-      setDropIndex(null);
+      setDropTarget(null);
       // The click that follows pointerup must not select the dragged row. It
       // fires before any timer, so clearing on the next tick is enough.
       suppressClickRef.current = true;
       setTimeout(() => (suppressClickRef.current = false), 0);
-      if (commit && target != null && !isNoopDrop(id, target)) {
-        const from = portfolios.findIndex((p) => p.id === id);
-        const next = [...portfolios];
-        const [moved] = next.splice(from, 1);
-        next.splice(target > from ? target - 1 : target, 0, moved);
-        void onReorderPortfolios(next.map((p) => p.id));
-      }
+      if (commit && target != null && !isNoopDrop(id, target)) arrange(id, target);
     };
     const onUp = () => finish(true);
     const onCancel = () => finish(false);
@@ -239,19 +366,347 @@ export function Sidebar({
     window.addEventListener("pointercancel", onCancel);
   }
 
-  const showDropLine = (idx: number) =>
-    dragId != null && dropIndex === idx && !isNoopDrop(dragId, idx);
+  const showDropLine = (gid: number | null, idx: number) =>
+    dragId != null &&
+    dropTarget != null &&
+    !dropTarget.onHeader &&
+    dropTarget.groupId === gid &&
+    dropTarget.index === idx &&
+    !isNoopDrop(dragId, dropTarget);
   const dropLine = <div className="mx-2 h-0.5 rounded-full bg-primary" />;
 
   // Collapsing the Portfolios section — or collapsing the whole sidebar
   // down to its icon rail — hides the full list, but a starred row stays
   // pinned in view either way. Reordering only makes sense against the full
   // list, so drag affordances below are gated on this too, not just which
-  // rows render.
+  // rows render. Groups only show with the full list; pinned rows are flat.
   const showFullList = !collapsed && portfoliosOpen;
   const visiblePortfolios = showFullList
     ? portfolios
     : portfolios.filter((p) => p.is_starred === 1);
+
+  function renderGroupHeader(g: PortfolioGroup, count: number) {
+    const open = !collapsedGroups.has(g.id);
+    const dropping =
+      dragId != null && dropTarget?.onHeader === true && dropTarget.groupId === g.id;
+    return (
+      <div
+        ref={(el) => {
+          if (el) groupRefs.current.set(g.id, el);
+          else groupRefs.current.delete(g.id);
+        }}
+        className={cn("group relative rounded-md", dropping && "ring-1 ring-primary bg-primary/10")}
+      >
+        {editingGroupId === g.id ? (
+          <NameInput
+            initial={g.name}
+            onCommit={async (name) => {
+              await onRenameGroup(g.id, name);
+              setEditingGroupId(null);
+            }}
+            onCancel={() => setEditingGroupId(null)}
+          />
+        ) : confirmDeleteGroupId === g.id ? (
+          <div className="flex flex-col gap-1 px-2 py-1.5 bg-destructive/10 rounded-md">
+            <span className="text-xs text-destructive font-medium truncate">
+              Delete group "{g.name}"?
+            </span>
+            <span className="text-[10px] text-muted-foreground leading-snug">
+              Its portfolios are kept and move back under Portfolios.
+            </span>
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleDeleteGroup(g.id)}
+                className="flex-1 text-xs bg-destructive text-destructive-foreground rounded px-2 py-0.5 hover:opacity-90"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setConfirmDeleteGroupId(null)}
+                className="flex-1 text-xs bg-muted text-muted-foreground rounded px-2 py-0.5 hover:opacity-90"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors">
+            <button
+              onClick={() => toggleGroup(g.id)}
+              aria-expanded={open}
+              className="flex-1 min-w-0 flex items-center gap-1.5 pl-2 pr-1 py-1.5 text-left text-sm font-semibold"
+            >
+              <ChevronDown
+                className={cn("w-3 h-3 shrink-0 transition-transform", !open && "-rotate-90")}
+              />
+              {open ? (
+                <FolderOpen className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <Folder className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span className="truncate">{g.name}</span>
+              <span className="shrink-0 text-[10px] font-normal opacity-70">{count}</span>
+            </button>
+            <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pr-1 gap-0.5">
+              <button
+                onClick={() => setEditingGroupId(g.id)}
+                className="p-1 rounded transition-colors hover:bg-accent"
+                title="Rename group"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+              <button
+                onClick={() => setConfirmDeleteGroupId(g.id)}
+                className="p-1 rounded transition-colors hover:bg-destructive/10 hover:text-destructive"
+                title="Delete group (keeps its portfolios)"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderRow(p: Portfolio) {
+    return (
+      <div
+        ref={(el) => {
+          if (el) rowRefs.current.set(p.id, el);
+          else rowRefs.current.delete(p.id);
+        }}
+        onPointerDown={showFullList ? (e) => startRowPress(e, p.id) : undefined}
+        onClickCapture={(e) => {
+          if (suppressClickRef.current) {
+            e.stopPropagation();
+            e.preventDefault();
+          }
+        }}
+        className={cn("group relative", dragId === p.id && "opacity-40")}
+      >
+        {editingId === p.id ? (
+          // Inline rename input
+          <div className="flex items-center gap-1 px-2 py-1">
+            <input
+              autoFocus
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitEdit();
+                if (e.key === "Escape") { setEditingId(null); setEditName(""); }
+              }}
+              className="flex-1 min-w-0 bg-background border border-border rounded px-2 py-1 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+            />
+            <button onClick={commitEdit} className="text-positive hover:opacity-80 shrink-0" title="Save">
+              <Check className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => { setEditingId(null); setEditName(""); }}
+              className="text-muted-foreground hover:opacity-80 shrink-0"
+              title="Cancel"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : confirmDeleteId === p.id ? (
+          // Delete confirmation
+          <div className="flex flex-col gap-1 px-2 py-1.5 bg-destructive/10 rounded-md">
+            <span className="text-xs text-destructive font-medium truncate">
+              Delete "{p.name}"?
+            </span>
+            <div className="flex gap-1">
+              <button
+                onClick={() => handleDelete(p.id)}
+                className="flex-1 text-xs bg-destructive text-destructive-foreground rounded px-2 py-0.5 hover:opacity-90"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="flex-1 text-xs bg-muted text-muted-foreground rounded px-2 py-0.5 hover:opacity-90"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : movingId === p.id ? (
+          <div className="flex flex-col gap-0.5 p-1.5 rounded-md border border-border bg-card">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground px-1 pb-0.5 truncate">
+              Move "{p.name}" to
+            </span>
+            {[
+              ...groups.map((g) => ({ id: g.id as number | null, name: g.name })),
+              { id: null, name: "Portfolios (no group)" },
+            ].map((t) => {
+              const current = groupOf(p) === t.id;
+              return (
+                <button
+                  key={t.id ?? "none"}
+                  disabled={current}
+                  onClick={() => moveTo(p.id, t.id)}
+                  className="flex items-center gap-2 w-full px-2 py-1 rounded text-left text-xs text-foreground hover:bg-accent transition-colors disabled:opacity-50 disabled:hover:bg-transparent"
+                >
+                  {t.id == null ? (
+                    <Landmark className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <Folder className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="flex-1 truncate">{t.name}</span>
+                  {current && <Check className="w-3 h-3 shrink-0" />}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setMovingId(null)}
+              className="w-full px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors text-left"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : collapsed ? (
+          // Collapsed: show the brokerage's own logo for a broker-linked
+          // portfolio (same lookup Header/Settings already use), or the
+          // plain briefcase icon for a manual one — highlight if active.
+          <button
+            onClick={() => { onSelectPortfolio(p.id); onNavigate("portfolio"); }}
+            title={p.name}
+            className={cn(
+              "flex items-center justify-center w-full rounded-md py-2.5 transition-colors",
+              view === "portfolio" && activePortfolioId === p.id
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            )}
+          >
+            {p.broker_account_id != null &&
+            brokerBadges?.[p.broker_account_id] ? (
+              <BrokerLogo
+                domain={brokerBadges[p.broker_account_id].domain}
+                name={p.name}
+                className="w-5 h-5"
+              />
+            ) : (
+              <Landmark className="w-4 h-4 shrink-0" />
+            )}
+          </button>
+        ) : (
+          // Expanded: full portfolio row
+          <div
+            className={cn(
+              "flex items-center rounded-md transition-colors",
+              view === "portfolio" && activePortfolioId === p.id
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            )}
+          >
+            {/* Star button */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onStarPortfolio(p.id); }}
+              title={
+                p.is_starred
+                  ? "Starred — stays visible when Portfolios is collapsed"
+                  : "Star to keep visible when Portfolios is collapsed"
+              }
+              className={cn(
+                "pl-2 pr-1 py-2 shrink-0 transition-colors",
+                p.is_starred === 1
+                  ? view === "portfolio" && activePortfolioId === p.id
+                    ? "text-yellow-200"
+                    : "text-yellow-500"
+                  : view === "portfolio" && activePortfolioId === p.id
+                  ? "text-primary-foreground/40 hover:text-yellow-200"
+                  : "opacity-0 group-hover:opacity-100 hover:text-yellow-500"
+              )}
+            >
+              <Star className={cn("w-3.5 h-3.5", p.is_starred === 1 && "fill-current")} />
+            </button>
+
+            {/* Name button */}
+            <button
+              onClick={() => { onSelectPortfolio(p.id); onNavigate("portfolio"); }}
+              className="flex-1 text-left px-1 py-2 text-sm font-medium truncate min-w-0 flex items-center gap-1.5"
+            >
+              <span className="truncate">{p.name}</span>
+              {/* Account-type chip, so a mirrored brokerage account is
+                  never mistaken for one you maintain by hand. Its usual
+                  kind-tinted colors (amber/blue/green) wash out against
+                  the highlighted row's own green background, so the
+                  active row gets a plain white-on-translucent chip
+                  instead — only while active; unselected rows keep the
+                  kind color unchanged. */}
+              {p.broker_account_id != null &&
+                brokerBadges?.[p.broker_account_id] && (
+                  <span
+                    className={cn(
+                      "shrink-0 text-[9px] font-semibold px-1 py-px rounded uppercase tracking-wide",
+                      view === "portfolio" && activePortfolioId === p.id
+                        ? "bg-white/20 text-white"
+                        : accountKindStyle(
+                            brokerBadges[p.broker_account_id].kind,
+                          ).chip,
+                    )}
+                  >
+                    {brokerBadges[p.broker_account_id].label}
+                  </span>
+                )}
+            </button>
+
+            {/* Action buttons (show on hover) */}
+            <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pr-1 gap-0.5">
+              {showFullList && (
+                <span
+                  className="p-0.5 cursor-grab active:cursor-grabbing"
+                  title="Drag to reorder"
+                >
+                  <GripVertical className="w-3 h-3" />
+                </span>
+              )}
+              {showFullList && groups.length > 0 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setMovingId(p.id); }}
+                  className={cn(
+                    "p-1 rounded transition-colors",
+                    view === "portfolio" && activePortfolioId === p.id
+                      ? "hover:bg-primary-foreground/20"
+                      : "hover:bg-accent"
+                  )}
+                  title="Move to group"
+                >
+                  <FolderInput className="w-3 h-3" />
+                </button>
+              )}
+              <button
+                onClick={(e) => { e.stopPropagation(); startEdit(p); }}
+                className={cn(
+                  "p-1 rounded transition-colors",
+                  view === "portfolio" && activePortfolioId === p.id
+                    ? "hover:bg-primary-foreground/20"
+                    : "hover:bg-accent"
+                )}
+                title="Rename"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+              {p.broker_account_id == null && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(p.id); }}
+                  className={cn(
+                    "p-1 rounded transition-colors",
+                    view === "portfolio" && activePortfolioId === p.id
+                      ? "hover:bg-primary-foreground/20 text-primary-foreground/70"
+                      : "hover:bg-destructive/10 hover:text-destructive"
+                  )}
+                  title="Delete portfolio"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <aside
@@ -327,198 +782,51 @@ export function Sidebar({
           <div className="my-1 border-t border-border/50" />
         )}
 
-        {visiblePortfolios.map((p, idx) => (
-          <Fragment key={p.id}>
-          {showFullList && showDropLine(idx) && dropLine}
-          <div
-            ref={(el) => {
-              if (el) rowRefs.current.set(p.id, el);
-              else rowRefs.current.delete(p.id);
-            }}
-            onPointerDown={showFullList ? (e) => startRowPress(e, p.id) : undefined}
-            onClickCapture={(e) => {
-              if (suppressClickRef.current) {
-                e.stopPropagation();
-                e.preventDefault();
-              }
-            }}
-            className={cn("group relative", dragId === p.id && "opacity-40")}
-          >
-            {editingId === p.id ? (
-              // Inline rename input
-              <div className="flex items-center gap-1 px-2 py-1">
-                <input
-                  autoFocus
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitEdit();
-                    if (e.key === "Escape") { setEditingId(null); setEditName(""); }
-                  }}
-                  className="flex-1 min-w-0 bg-background border border-border rounded px-2 py-1 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
-                />
-                <button onClick={commitEdit} className="text-positive hover:opacity-80 shrink-0" title="Save">
-                  <Check className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => { setEditingId(null); setEditName(""); }}
-                  className="text-muted-foreground hover:opacity-80 shrink-0"
-                  title="Cancel"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : confirmDeleteId === p.id ? (
-              // Delete confirmation
-              <div className="flex flex-col gap-1 px-2 py-1.5 bg-destructive/10 rounded-md">
-                <span className="text-xs text-destructive font-medium truncate">
-                  Delete "{p.name}"?
-                </span>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => handleDelete(p.id)}
-                    className="flex-1 text-xs bg-destructive text-destructive-foreground rounded px-2 py-0.5 hover:opacity-90"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    onClick={() => setConfirmDeleteId(null)}
-                    className="flex-1 text-xs bg-muted text-muted-foreground rounded px-2 py-0.5 hover:opacity-90"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : collapsed ? (
-              // Collapsed: show the brokerage's own logo for a broker-linked
-              // portfolio (same lookup Header/Settings already use), or the
-              // plain briefcase icon for a manual one — highlight if active.
-              <button
-                onClick={() => { onSelectPortfolio(p.id); onNavigate("portfolio"); }}
-                title={p.name}
-                className={cn(
-                  "flex items-center justify-center w-full rounded-md py-2.5 transition-colors",
-                  view === "portfolio" && activePortfolioId === p.id
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                )}
-              >
-                {p.broker_account_id != null &&
-                brokerBadges?.[p.broker_account_id] ? (
-                  <BrokerLogo
-                    domain={brokerBadges[p.broker_account_id].domain}
-                    name={p.name}
-                    className="w-5 h-5"
-                  />
-                ) : (
-                  <Landmark className="w-4 h-4 shrink-0" />
-                )}
-              </button>
-            ) : (
-              // Expanded: full portfolio row
-              <div
-                className={cn(
-                  "flex items-center rounded-md transition-colors",
-                  view === "portfolio" && activePortfolioId === p.id
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                )}
-              >
-                {/* Star button */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); onStarPortfolio(p.id); }}
-                  title={
-                    p.is_starred
-                      ? "Starred — stays visible when Portfolios is collapsed"
-                      : "Star to keep visible when Portfolios is collapsed"
-                  }
-                  className={cn(
-                    "pl-2 pr-1 py-2 shrink-0 transition-colors",
-                    p.is_starred === 1
-                      ? view === "portfolio" && activePortfolioId === p.id
-                        ? "text-yellow-200"
-                        : "text-yellow-500"
-                      : view === "portfolio" && activePortfolioId === p.id
-                      ? "text-primary-foreground/40 hover:text-yellow-200"
-                      : "opacity-0 group-hover:opacity-100 hover:text-yellow-500"
-                  )}
-                >
-                  <Star className={cn("w-3.5 h-3.5", p.is_starred === 1 && "fill-current")} />
-                </button>
-
-                {/* Name button */}
-                <button
-                  onClick={() => { onSelectPortfolio(p.id); onNavigate("portfolio"); }}
-                  className="flex-1 text-left px-1 py-2 text-sm font-medium truncate min-w-0 flex items-center gap-1.5"
-                >
-                  <span className="truncate">{p.name}</span>
-                  {/* Account-type chip, so a mirrored brokerage account is
-                      never mistaken for one you maintain by hand. Its usual
-                      kind-tinted colors (amber/blue/green) wash out against
-                      the highlighted row's own green background, so the
-                      active row gets a plain white-on-translucent chip
-                      instead — only while active; unselected rows keep the
-                      kind color unchanged. */}
-                  {p.broker_account_id != null &&
-                    brokerBadges?.[p.broker_account_id] && (
-                      <span
-                        className={cn(
-                          "shrink-0 text-[9px] font-semibold px-1 py-px rounded uppercase tracking-wide",
-                          view === "portfolio" && activePortfolioId === p.id
-                            ? "bg-white/20 text-white"
-                            : accountKindStyle(
-                                brokerBadges[p.broker_account_id].kind,
-                              ).chip,
-                        )}
-                      >
-                        {brokerBadges[p.broker_account_id].label}
-                      </span>
-                    )}
-                </button>
-
-                {/* Action buttons (show on hover) */}
-                <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity pr-1 gap-0.5">
-                  {showFullList && (
-                    <span
-                      className="p-0.5 cursor-grab active:cursor-grabbing"
-                      title="Drag to reorder"
-                    >
-                      <GripVertical className="w-3 h-3" />
-                    </span>
-                  )}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); startEdit(p); }}
-                    className={cn(
-                      "p-1 rounded transition-colors",
-                      view === "portfolio" && activePortfolioId === p.id
-                        ? "hover:bg-primary-foreground/20"
-                        : "hover:bg-accent"
-                    )}
-                    title="Rename"
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                  {p.broker_account_id == null && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(p.id); }}
-                      className={cn(
-                        "p-1 rounded transition-colors",
-                        view === "portfolio" && activePortfolioId === p.id
-                          ? "hover:bg-primary-foreground/20 text-primary-foreground/70"
-                          : "hover:bg-destructive/10 hover:text-destructive"
+        {showFullList ? (
+          <>
+            {groups.map((g) => {
+              const items = itemsOf(g.id);
+              return (
+                <div key={`group-${g.id}`} className="flex flex-col gap-1">
+                  {renderGroupHeader(g, items.length)}
+                  {isSectionOpen(g.id) && (
+                    <div className="ml-3.5 pl-1.5 border-l border-border/60 flex flex-col gap-1">
+                      {items.map((p, idx) => (
+                        <Fragment key={p.id}>
+                          {showDropLine(g.id, idx) && dropLine}
+                          {renderRow(p)}
+                        </Fragment>
+                      ))}
+                      {showDropLine(g.id, items.length) && dropLine}
+                      {items.length === 0 && !showDropLine(g.id, 0) && (
+                        <p className="px-2 py-1 text-[11px] italic text-muted-foreground/70">
+                          Empty — drag a portfolio here
+                        </p>
                       )}
-                      title="Delete portfolio"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    </div>
                   )}
                 </div>
+              );
+            })}
+            {ungrouped.map((p, idx) => (
+              <Fragment key={p.id}>
+                {showDropLine(null, idx) && dropLine}
+                {renderRow(p)}
+              </Fragment>
+            ))}
+            {showDropLine(null, ungrouped.length) && dropLine}
+            {dragId != null && ungrouped.length === 0 && (
+              <div
+                ref={ungroupZoneRef}
+                className="mx-1 rounded-md border border-dashed border-border px-2 py-1.5 text-[11px] text-muted-foreground text-center"
+              >
+                Drop here to take it out of its group
               </div>
             )}
-          </div>
-          </Fragment>
-        ))}
-        {showFullList && showDropLine(portfolios.length) && dropLine}
+          </>
+        ) : (
+          visiblePortfolios.map((p) => <Fragment key={p.id}>{renderRow(p)}</Fragment>)
+        )}
 
         {/* New portfolio button / input — part of the section, so it hides
             with the list rather than floating under a collapsed header. */}
@@ -595,6 +903,27 @@ export function Sidebar({
                 New Portfolio
               </button>
             )
+          )
+        )}
+        {!collapsed && portfoliosOpen && !creatingNew && !choosingKind && (
+          creatingGroup ? (
+            <NameInput
+              placeholder="Group name…"
+              submitTitle="Create group"
+              onCommit={async (name) => {
+                await onCreateGroup(name);
+                setCreatingGroup(false);
+              }}
+              onCancel={() => setCreatingGroup(false)}
+            />
+          ) : (
+            <button
+              onClick={() => setCreatingGroup(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors w-full"
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+              New Group
+            </button>
           )
         )}
         {collapsed && (
@@ -704,3 +1033,46 @@ export function Sidebar({
   );
 }
 
+/** Inline name field with save/cancel, used for creating and renaming
+ *  groups. An empty name cancels rather than saving. */
+function NameInput({
+  initial = "",
+  placeholder,
+  submitTitle = "Save",
+  onCommit,
+  onCancel,
+}: {
+  initial?: string;
+  placeholder?: string;
+  submitTitle?: string;
+  onCommit: (name: string) => void | Promise<void>;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  function commit() {
+    const trimmed = value.trim();
+    if (trimmed) void onCommit(trimmed);
+    else onCancel();
+  }
+  return (
+    <div className="flex items-center gap-1 px-2 py-1">
+      <input
+        autoFocus
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") onCancel();
+        }}
+        className="flex-1 min-w-0 bg-background border border-border rounded px-2 py-1 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary"
+      />
+      <button onClick={commit} className="text-positive hover:opacity-80 shrink-0" title={submitTitle}>
+        <Check className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={onCancel} className="text-muted-foreground hover:opacity-80 shrink-0" title="Cancel">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}

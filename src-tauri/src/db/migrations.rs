@@ -251,7 +251,7 @@ mod tests {
     fn synced_broker_identity_upgrade_preserves_legacy_rows() {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
-        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; ALTER TABLE broker_transactions DROP COLUMN amount; ALTER TABLE broker_transactions DROP COLUMN currency; ALTER TABLE broker_transactions DROP COLUMN description; ALTER TABLE broker_accounts DROP COLUMN history_version; DROP TABLE broker_account_snapshots; PRAGMA user_version=27;
+        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; ALTER TABLE broker_transactions DROP COLUMN amount; ALTER TABLE broker_transactions DROP COLUMN currency; ALTER TABLE broker_transactions DROP COLUMN description; ALTER TABLE broker_accounts DROP COLUMN history_version; DROP TABLE broker_account_snapshots; ALTER TABLE portfolios DROP COLUMN group_id; DROP TABLE portfolio_groups; PRAGMA user_version=27;
             INSERT INTO broker_connections (id,provider,environment,label,credential_ref,created_at) VALUES ('imported','snaptrade','read','Keep my label','broker:imported',123);
             INSERT INTO broker_accounts (id,connection_id,provider_account_id,equity,cash,visible) VALUES (99,'imported','remote-account',300,17,1);").unwrap();
         run_all(&conn).unwrap();
@@ -270,7 +270,18 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 30);
+        assert_eq!(v, 31);
+    }
+
+    #[test]
+    fn v31_leaves_existing_portfolios_ungrouped() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        assert!(table_exists(&conn, "portfolio_groups"));
+        let group: Option<i64> = conn
+            .query_row("SELECT group_id FROM portfolios WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(group, None);
     }
 
     #[test]
@@ -610,7 +621,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 30);
+        assert_eq!(v, 31);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1053,6 +1064,20 @@ CREATE TABLE IF NOT EXISTS broker_account_snapshots (
 );
 "#;
 
+/// Named sidebar groupings for portfolios. Purely organisational: a group
+/// owns nothing, so deleting one only clears `portfolios.group_id` on its
+/// members, which then sit directly under Portfolios again. NULL means
+/// ungrouped, which is where every existing portfolio starts.
+const MIGRATION_V31: &str = r#"
+CREATE TABLE IF NOT EXISTS portfolio_groups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+ALTER TABLE portfolios ADD COLUMN group_id INTEGER;
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1088,6 +1113,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (28, MIGRATION_V28),
         (29, MIGRATION_V29),
         (30, MIGRATION_V30),
+        (31, MIGRATION_V31),
     ];
 
     let user_version: i64 =

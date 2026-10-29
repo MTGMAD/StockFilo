@@ -23,13 +23,24 @@ pub struct Portfolio {
     /// 'pnl' | 'custom'. 'custom' means a person has dragged rows by hand;
     /// anything else is computed live from `TickerSummary` fields.
     pub position_sort_mode: String,
+    /// The sidebar grouping this portfolio sits under; None sits directly
+    /// under Portfolios.
+    pub group_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PortfolioGroup {
+    pub id: i64,
+    pub name: String,
+    pub sort_order: i64,
+    pub created_at: i64,
 }
 
 #[tauri::command]
 pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id, last_import_at, position_sort_mode \
+            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id, last_import_at, position_sort_mode, group_id \
              FROM portfolios ORDER BY sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -43,6 +54,7 @@ pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>,
                 broker_account_id: r.get(6)?,
                 last_import_at: r.get(7)?,
                 position_sort_mode: r.get(8)?,
+                group_id: r.get(9)?,
             })
         })?;
         rows.collect()
@@ -178,6 +190,79 @@ pub fn db_reorder_portfolios(ids: Vec<i64>, state: State<'_, DbManager>) -> Resu
                 params![i as i64, id],
             )?;
         }
+        Ok(())
+    })
+}
+
+// ── Groups ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn db_list_portfolio_groups(state: State<'_, DbManager>) -> Result<Vec<PortfolioGroup>, String> {
+    state.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, sort_order, created_at FROM portfolio_groups ORDER BY sort_order ASC, id ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(PortfolioGroup {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                sort_order: r.get(2)?,
+                created_at: r.get(3)?,
+            })
+        })?;
+        rows.collect()
+    })
+}
+
+#[tauri::command]
+pub fn db_create_portfolio_group(name: String, state: State<'_, DbManager>) -> Result<i64, String> {
+    state.with_conn(|conn| {
+        let next_order: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM portfolio_groups",
+            [],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO portfolio_groups (name, sort_order, created_at) VALUES (?1, ?2, ?3)",
+            params![name, next_order, now_secs()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    })
+}
+
+#[tauri::command]
+pub fn db_rename_portfolio_group(id: i64, name: String, state: State<'_, DbManager>) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute("UPDATE portfolio_groups SET name = ?1 WHERE id = ?2", params![name, id])?;
+        Ok(())
+    })
+}
+
+/// Removes the group only. Its portfolios are kept and drop back to sitting
+/// directly under Portfolios.
+#[tauri::command]
+pub fn db_delete_portfolio_group(id: i64, state: State<'_, DbManager>) -> Result<(), String> {
+    state.with_conn(|conn| {
+        let txn = conn.unchecked_transaction()?;
+        txn.execute("UPDATE portfolios SET group_id = NULL WHERE group_id = ?1", params![id])?;
+        txn.execute("DELETE FROM portfolio_groups WHERE id = ?1", params![id])?;
+        txn.commit()
+    })
+}
+
+/// Moves a portfolio into a group, or out of every group when `group_id` is
+/// None.
+#[tauri::command]
+pub fn db_set_portfolio_group(
+    portfolio_id: i64,
+    group_id: Option<i64>,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE portfolios SET group_id = ?1 WHERE id = ?2",
+            params![group_id, portfolio_id],
+        )?;
         Ok(())
     })
 }

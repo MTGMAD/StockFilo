@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { Portfolio } from "../types";
+import type { Portfolio, PortfolioGroup } from "../types";
 import {
   listPortfolios,
   createPortfolio as dbCreate,
@@ -8,16 +8,23 @@ import {
   starPortfolio as dbStar,
   reorderPortfolios as dbReorder,
   setPositionSortMode as dbSetPositionSortMode,
+  listPortfolioGroups,
+  createPortfolioGroup as dbCreateGroup,
+  renamePortfolioGroup as dbRenameGroup,
+  deletePortfolioGroup as dbDeleteGroup,
+  setPortfolioGroup as dbSetGroup,
 } from "../lib/db";
 
 export function usePortfolios() {
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+  const [groups, setGroups] = useState<PortfolioGroup[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
-      const p = await listPortfolios();
+      const [p, g] = await Promise.all([listPortfolios(), listPortfolioGroups()]);
       setPortfolios(p);
+      setGroups(g);
     } catch (e) {
       console.error("Failed to load portfolios:", e);
     } finally {
@@ -92,10 +99,56 @@ export function usePortfolios() {
     [load]
   );
 
+  /** Puts a portfolio in `groupId` (null = ungrouped) and applies the full
+   *  order `ids`, which a drag across groups changes along with the group. */
+  const move = useCallback(
+    async (id: number, groupId: number | null, ids: number[]) => {
+      setPortfolios((prev) => {
+        const byId = new Map(
+          prev.map((p) => [p.id, p.id === id ? { ...p, group_id: groupId } : p]),
+        );
+        return ids.flatMap((pid) => byId.get(pid) ?? []);
+      });
+      try {
+        await dbSetGroup(id, groupId);
+        await dbReorder(ids);
+      } finally {
+        await load();
+      }
+    },
+    [load]
+  );
+
+  const createGroup = useCallback(
+    async (name: string): Promise<number> => {
+      const id = await dbCreateGroup(name);
+      await load();
+      return id;
+    },
+    [load]
+  );
+
+  const renameGroup = useCallback(
+    async (id: number, name: string) => {
+      await dbRenameGroup(id, name);
+      await load();
+    },
+    [load]
+  );
+
+  const removeGroup = useCallback(
+    async (id: number) => {
+      await dbDeleteGroup(id);
+      await load();
+    },
+    [load]
+  );
+
   const starredPortfolio = portfolios.find((p) => p.is_starred === 1) ?? portfolios[0] ?? null;
 
   return {
     portfolios,
+    groups,
     loading,
     starredPortfolio,
     create,
@@ -104,6 +157,10 @@ export function usePortfolios() {
     star,
     reorder,
     setPositionSortMode,
+    move,
+    createGroup,
+    renameGroup,
+    removeGroup,
     reload: load,
   };
 }

@@ -31,6 +31,7 @@ import type {
   PositionOrder,
   UpcomingEarningsEvent,
   Portfolio,
+  PortfolioGroup,
   Watchlist,
   DividendInfo,
   AlertDirection,
@@ -60,6 +61,30 @@ export async function starPortfolio(id: number): Promise<void> {
 
 export async function reorderPortfolios(ids: number[]): Promise<void> {
   return invoke("db_reorder_portfolios", { ids });
+}
+
+export async function listPortfolioGroups(): Promise<PortfolioGroup[]> {
+  return invoke<PortfolioGroup[]>("db_list_portfolio_groups");
+}
+
+export async function createPortfolioGroup(name: string): Promise<number> {
+  return invoke<number>("db_create_portfolio_group", { name });
+}
+
+export async function renamePortfolioGroup(id: number, name: string): Promise<void> {
+  return invoke("db_rename_portfolio_group", { id, name });
+}
+
+/** Deletes the group only; its portfolios become ungrouped. */
+export async function deletePortfolioGroup(id: number): Promise<void> {
+  return invoke("db_delete_portfolio_group", { id });
+}
+
+export async function setPortfolioGroup(
+  portfolioId: number,
+  groupId: number | null,
+): Promise<void> {
+  return invoke("db_set_portfolio_group", { portfolioId, groupId });
 }
 
 export async function setPositionSortMode(

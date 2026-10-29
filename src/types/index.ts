@@ -146,6 +146,18 @@ export interface Portfolio {
   /** How the positions list is ordered: "gainers" | "ticker" | "pnl" | "custom".
    *  "custom" means a person dragged rows by hand. */
   position_sort_mode: string;
+  /** The sidebar grouping this portfolio sits under; null sits directly
+   *  under Portfolios. */
+  group_id: number | null;
+}
+
+/** A named sidebar grouping of portfolios. Deleting one keeps its
+ *  portfolios; they move back to sitting directly under Portfolios. */
+export interface PortfolioGroup {
+  id: number;
+  name: string;
+  sort_order: number;
+  created_at: number;
 }
 
 /** A ticker's manually dragged position within a portfolio's positions list —
