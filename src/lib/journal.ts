@@ -505,14 +505,18 @@ export interface IncomeEvent {
   occurred_at: string;
 }
 
-/** Dividends, interest and fees for a ticker while a trade was on. Sale
- *  proceeds are excluded — they are the trade itself, not extra return. */
+/** Sale proceeds are the trade itself, and deposits/withdrawals are money
+ *  moved in or out — neither is extra return. */
+const isIncome = (e: IncomeEvent) =>
+  e.kind !== "sale" && e.kind !== "deposit" && e.kind !== "withdrawal";
+
+/** Dividends, interest and fees for a ticker while a trade was on. */
 export function tradeIncome(t: JournalTrade, events: IncomeEvent[]): number {
   const end = t.closeDate ?? "9999-12-31";
   return events
     .filter(
       (e) =>
-        e.kind !== "sale" &&
+        isIncome(e) &&
         e.ticker === t.ticker &&
         e.occurred_at >= t.openDate &&
         e.occurred_at <= end,
@@ -525,7 +529,7 @@ export function periodIncome(events: IncomeEvent[], from?: string, to?: string):
   return events
     .filter(
       (e) =>
-        e.kind !== "sale" && (!from || e.occurred_at >= from) && (!to || e.occurred_at <= to),
+        isIncome(e) && (!from || e.occurred_at >= from) && (!to || e.occurred_at <= to),
     )
     .reduce((s, e) => s + e.amount, 0);
 }

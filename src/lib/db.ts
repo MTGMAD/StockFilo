@@ -15,7 +15,13 @@ import {
 } from "./platform";
 import * as XLSX from "xlsx";
 import { calibrateCash } from "./cash";
-import { parseAmeripriseActivity, planAmeripriseImport, purchaseMatcher } from "./ameriprise";
+import {
+  applyTransfers,
+  parseAmeripriseActivity,
+  planAmeripriseImport,
+  purchaseMatcher,
+  type ParsedTransfer,
+} from "./ameriprise";
 import type {
   Purchase,
   CashEvent,
@@ -1026,7 +1032,13 @@ export async function importAmeripriseCSV(
 
   // Parsing and duplicate matching live in ameriprise.ts (pure, tested
   // against real exports); this only reads the file and writes the result.
-  const parsed = parseAmeripriseActivity(await readTextFile(path as string));
+  const raw = parseAmeripriseActivity(await readTextFile(path as string));
+  // Share transfers carry no price; look up each one's close that day.
+  const transferPrices = new Map<ParsedTransfer, number | null>();
+  for (const t of raw.transfers) {
+    transferPrices.set(t, t.price ?? (await fetchPriceOnDate(t.ticker, t.date).catch(() => null)));
+  }
+  const parsed = applyTransfers(raw, (t) => transferPrices.get(t) ?? null);
   if (
     parsed.purchases.length + parsed.sales.length + parsed.cashEvents.length === 0 &&
     Object.keys(parsed.unhandled).length === 0
@@ -1050,7 +1062,7 @@ export async function importAmeripriseCSV(
     if (p.reinvest) await hintStockQuoteType(p.ticker, "MUTUALFUND");
   }
   for (const e of plan.cashEvents) {
-    await addCashEvent(portfolioId, e.kind, e.ticker, e.amount, e.date, null);
+    await addCashEvent(portfolioId, e.kind, e.ticker, e.amount, e.date, e.note ?? null);
   }
   for (const s of plan.sales) {
     // Reduces the position and credits its proceeds to cash in one step

@@ -14,12 +14,28 @@ export interface ParsedPurchase {
   price: number;
   date: string;
   reinvest: boolean;
+  /** Shares moved in from another account rather than bought; priced at
+   *  that day's close, so the price is not a reliable match key. */
+  transfer?: boolean;
 }
 
 export interface ParsedSale {
   ticker: string;
   shares: number;
   price: number;
+  date: string;
+  /** Shares moved out to another account rather than sold. */
+  transfer?: boolean;
+}
+
+/** Shares journaled between accounts. No cash changes hands, so the export
+ *  gives no amount and usually no price; the importer looks the price up. */
+export interface ParsedTransfer {
+  ticker: string;
+  shares: number;
+  direction: "in" | "out";
+  /** Known without a lookup: the Price column, or $1 for a money market fund. */
+  price: number | null;
   date: string;
 }
 
@@ -28,6 +44,7 @@ export interface ParsedCashEvent {
   ticker: string | null;
   amount: number;
   date: string;
+  note?: string | null;
 }
 
 export interface ParsedActivity {
@@ -35,6 +52,8 @@ export interface ParsedActivity {
   purchases: ParsedPurchase[];
   sales: ParsedSale[];
   cashEvents: ParsedCashEvent[];
+  /** Waiting on a price before they become purchases/sales; see applyTransfers. */
+  transfers: ParsedTransfer[];
   /** Every completed row's signed cash effect, for the cash calibration. */
   activity: ActivityRow[];
   /** Rows deliberately not imported, by label → count. */
@@ -111,6 +130,7 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
     purchases: [],
     sales: [],
     cashEvents: [],
+    transfers: [],
     activity: [],
     unhandled: {},
   };
@@ -181,6 +201,23 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
     const isFee = /\bFEE\b/i.test(description);
     const isJournal = /^JOURNAL\b/i.test(description);
     const isInterest = /^INTEREST PAYMENT/i.test(description);
+    // A note leaving the account at the issuer's hand (called, redeemed or
+    // matured) — a sale in every way that matters here.
+    const isRedemption = /\b(REDEMPTION|MATURITY|MATURED|CALLED)\b/i.test(description);
+    const isForeignTax = /FOREIGN W\/H|FRGN-W\/H|WITHHOLDING/i.test(description);
+    // Ameriprise's internal bookkeeping: posted as a +/- pair on the same
+    // day that cancels out. Its amounts still count toward the cash
+    // calibration above; there is nothing else to record.
+    const isOpenItemAdjustment = /^ADJUST OPEN ITEM/i.test(description);
+    // Money moved in or out. Ameriprise words an ACH pull from the bank as a
+    // "DIRECT WITHDRAWAL" even when it lands in this account, so the
+    // direction comes from the amount's sign, never the wording.
+    const isCashTransfer =
+      !hasSymbol &&
+      (isJournal ||
+        /AUTO CLEARING HOUSE|\bACH\b|\bWIRE\b|ELECTRONIC FUNDS|\bDEPOSIT\b|\bCONTRIBUTION\b/i.test(
+          description,
+        ));
 
     if (section === "pending") {
       bump(
@@ -212,12 +249,43 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
       }
       if (price == null || !Number.isFinite(price) || price <= 0) continue;
       out.purchases.push({ ticker: symbol, shares, price, date, reinvest: isReinvest });
-    } else if (isSell) {
+    } else if (isSell || (isRedemption && hasSymbol)) {
       if (!hasSymbol || quantity == null || Math.abs(quantity) <= 0) continue;
       const shares = Math.abs(quantity);
       const price = magnitude && magnitude > 0 ? magnitude / shares : priceCol;
       if (price == null || !Number.isFinite(price) || price <= 0) continue;
       out.sales.push({ ticker: symbol, shares, price, date });
+    } else if (isJournal && hasSymbol && quantity != null && quantity !== 0) {
+      out.transfers.push({
+        ticker: symbol,
+        shares: Math.abs(quantity),
+        direction: quantity > 0 ? "in" : "out",
+        price:
+          priceCol != null && priceCol > 0 ? priceCol : /MONEY MARKET/i.test(description) ? 1 : null,
+        date,
+      });
+    } else if (isCashTransfer) {
+      if (signed == null || signed === 0) continue;
+      out.cashEvents.push({
+        kind: signed > 0 ? "deposit" : "withdrawal",
+        ticker: null,
+        amount: signed,
+        date,
+        note: isJournal
+          ? "Journal between accounts"
+          : /AUTO CLEARING HOUSE|\bACH\b/i.test(description)
+            ? "ACH transfer"
+            : description.split(" - ")[0] || null,
+      });
+    } else if (isForeignTax) {
+      if (signed == null || signed === 0) continue;
+      out.cashEvents.push({
+        kind: "fee",
+        ticker: hasSymbol ? symbol : null,
+        amount: signed,
+        date,
+        note: "Foreign tax withheld",
+      });
     } else if (isCashDividend || isFee || isInterest) {
       if (magnitude == null || magnitude <= 0) continue;
       const kind: CashEvent["kind"] = isFee ? "fee" : isInterest ? "interest" : "dividend";
@@ -227,9 +295,7 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
         amount: kind === "fee" ? -magnitude : magnitude,
         date,
       });
-    } else if (isJournal) {
-      bump("deposit/transfer");
-    } else if (rawAmount) {
+    } else if (rawAmount && !isOpenItemAdjustment) {
       bump("other transaction");
     }
   }
@@ -239,6 +305,44 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
       'Could not find a header row containing "Transaction Date". ' +
         "Make sure this is an Ameriprise account activity CSV.",
     );
+  }
+  return out;
+}
+
+/**
+ * Turns each share transfer into a purchase (in) or sale (out) at `priceOf`,
+ * plus a deposit/withdrawal of the same value. The pair nets to zero cash,
+ * like a reinvested dividend, while recording the holding's cost basis and
+ * the value moved into or out of the account. A transfer with no price is
+ * left out and reported instead of being booked at a made-up value.
+ */
+export function applyTransfers(
+  parsed: ParsedActivity,
+  priceOf: (t: ParsedTransfer) => number | null,
+): ParsedActivity {
+  const out: ParsedActivity = {
+    ...parsed,
+    purchases: [...parsed.purchases],
+    sales: [...parsed.sales],
+    cashEvents: [...parsed.cashEvents],
+    transfers: [],
+    unhandled: { ...parsed.unhandled },
+  };
+  for (const t of parsed.transfers) {
+    const price = priceOf(t);
+    if (price == null || !Number.isFinite(price) || price <= 0) {
+      const label = `shares transferred ${t.direction} (no price found)`;
+      out.unhandled[label] = (out.unhandled[label] ?? 0) + 1;
+      continue;
+    }
+    const value = Math.round(t.shares * price * 100) / 100;
+    if (t.direction === "in") {
+      out.purchases.push({ ticker: t.ticker, shares: t.shares, price, date: t.date, reinvest: false, transfer: true });
+      out.cashEvents.push({ kind: "deposit", ticker: t.ticker, amount: value, date: t.date, note: "Shares transferred in" });
+    } else {
+      out.sales.push({ ticker: t.ticker, shares: t.shares, price, date: t.date, transfer: true });
+      out.cashEvents.push({ kind: "withdrawal", ticker: t.ticker, amount: -value, date: t.date, note: "Shares transferred out" });
+    }
   }
   return out;
 }
@@ -266,16 +370,28 @@ function sameTrade(
   );
 }
 
+/** A share transfer is priced from a lookup that can shift between imports
+ *  (adjusted closes move), so it matches on shares and date, not cost. */
+function sameTransfer(
+  a: { ticker: string; shares: number; date: string },
+  b: { ticker: string; shares: number; date: string },
+): boolean {
+  return a.ticker === b.ticker && Math.abs(a.shares - b.shares) < 0.0005 && daysApart(a.date, b.date) <= 3;
+}
+
 /** Dividends recur with identical amounts every month, so cash events do
- *  keep the date — but allow a few days' drift between exports. */
+ *  keep the date — but allow a few days' drift between exports. The value
+ *  booked for a share transfer comes from a price lookup, so for those the
+ *  amount is not compared. */
 function sameCashEvent(
   a: { kind: string; ticker: string | null; amount: number; date: string },
   b: { kind: string; ticker: string | null; amount: number; date: string },
 ): boolean {
+  const shareTransfer = (a.kind === "deposit" || a.kind === "withdrawal") && a.ticker != null;
   return (
     a.kind === b.kind &&
     (a.ticker ?? "") === (b.ticker ?? "") &&
-    Math.abs(a.amount - b.amount) < 0.005 &&
+    (shareTransfer || Math.abs(a.amount - b.amount) < 0.005) &&
     daysApart(a.date, b.date) <= 3
   );
 }
@@ -333,8 +449,24 @@ export function planAmeripriseImport(parsed: ParsedActivity, existing: ExistingD
   const asTrade = (p: Purchase) => ({ ticker: p.ticker, shares: p.shares, price: p.price_per_share });
   const asSale = (s: Sale) => ({ ticker: s.ticker, shares: s.shares, price: s.price_per_share });
 
-  const pur = plan(parsed.purchases, existing.purchases, (i, e) => sameTrade(i, asTrade(e)), (i) => i.date, (e) => e.purchased_at);
-  const sal = plan(parsed.sales, existing.sales, (i, e) => sameTrade(i, asSale(e)), (i) => i.date, (e) => e.sold_at);
+  const pur = plan(
+    parsed.purchases,
+    existing.purchases,
+    (i, e) =>
+      i.transfer
+        ? sameTransfer(i, { ...asTrade(e), date: e.purchased_at })
+        : sameTrade(i, asTrade(e)),
+    (i) => i.date,
+    (e) => e.purchased_at,
+  );
+  const sal = plan(
+    parsed.sales,
+    existing.sales,
+    (i, e) =>
+      i.transfer ? sameTransfer(i, { ...asSale(e), date: e.sold_at }) : sameTrade(i, asSale(e)),
+    (i) => i.date,
+    (e) => e.sold_at,
+  );
   const cash = plan(
     parsed.cashEvents,
     // Sale proceeds are created by the sale itself, never imported directly.
@@ -349,12 +481,17 @@ export function planAmeripriseImport(parsed: ParsedActivity, existing: ExistingD
     sales: sal.add,
     cashEvents: cash.add,
     skipped: pur.skipped + sal.skipped + cash.skipped,
-    existingDuplicates: findExistingDuplicates(existing.purchases),
+    existingDuplicates: findExistingDuplicates(existing.purchases, parsed.purchases),
   };
 }
 
-/** Purchases that are the same trade recorded on two different dates. */
-export function findExistingDuplicates(purchases: Purchase[]): string[] {
+/** Purchases that are the same trade recorded on two different dates. A pair
+ *  the import file itself lists on both dates is two real, identical buys
+ *  (a recurring investment at an unchanged NAV), not a duplicate. */
+export function findExistingDuplicates(
+  purchases: Purchase[],
+  inFile: { ticker: string; shares: number; price: number; date: string }[] = [],
+): string[] {
   const out: string[] = [];
   const seen = new Set<number>();
   for (let i = 0; i < purchases.length; i++) {
@@ -363,12 +500,10 @@ export function findExistingDuplicates(purchases: Purchase[]): string[] {
     for (let j = i + 1; j < purchases.length; j++) {
       const b = purchases[j];
       if (seen.has(j) || a.purchased_at === b.purchased_at) continue;
-      if (
-        sameTrade(
-          { ticker: a.ticker, shares: a.shares, price: a.price_per_share },
-          { ticker: b.ticker, shares: b.shares, price: b.price_per_share },
-        )
-      ) {
+      const trade = { ticker: a.ticker, shares: a.shares, price: a.price_per_share };
+      if (sameTrade(trade, { ticker: b.ticker, shares: b.shares, price: b.price_per_share })) {
+        const listed = (date: string) => inFile.some((f) => f.date === date && sameTrade(f, trade));
+        if (listed(a.purchased_at) && listed(b.purchased_at)) continue;
         seen.add(j);
         const cost = (a.shares * a.price_per_share).toLocaleString("en-US", {
           style: "currency",

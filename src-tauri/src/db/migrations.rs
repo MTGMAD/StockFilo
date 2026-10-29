@@ -270,7 +270,26 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 31);
+        assert_eq!(v, 32);
+    }
+
+    #[test]
+    fn v32_cash_events_accept_deposits_and_keep_existing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO cash_events (portfolio_id, kind, ticker, amount, occurred_at, created_at) \
+             VALUES (1, 'deposit', NULL, 5000, '2026-05-04', 1), \
+                    (1, 'withdrawal', 'FNSXX', -10, '2026-05-05', 1);",
+        )
+        .expect("deposit and withdrawal kinds must be accepted");
+        assert!(conn
+            .execute(
+                "INSERT INTO cash_events (portfolio_id, kind, amount, occurred_at, created_at) \
+                 VALUES (1, 'bogus', 1, '2026-01-01', 1)",
+                [],
+            )
+            .is_err());
     }
 
     #[test]
@@ -621,7 +640,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 31);
+        assert_eq!(v, 32);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1078,6 +1097,36 @@ CREATE TABLE IF NOT EXISTS portfolio_groups (
 ALTER TABLE portfolios ADD COLUMN group_id INTEGER;
 "#;
 
+/// `cash_events.kind` gains `'deposit'` and `'withdrawal'`: money put into or
+/// taken out of an account (ACH, journals between accounts, securities
+/// transferred in or out at their value that day). The Ameriprise importer
+/// used to count these and drop them. They move cash but are not income, so
+/// income totals leave them out. Same table rebuild as V19/V23, since SQLite
+/// can't ALTER a CHECK constraint.
+const MIGRATION_V32: &str = r#"
+CREATE TABLE cash_events_new (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    portfolio_id   INTEGER NOT NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('dividend', 'fee', 'sale', 'interest', 'deposit', 'withdrawal')),
+    ticker         TEXT,
+    amount         REAL NOT NULL,
+    occurred_at    TEXT NOT NULL,
+    note           TEXT,
+    created_at     INTEGER NOT NULL,
+    source_sale_id INTEGER
+);
+
+INSERT INTO cash_events_new (id, portfolio_id, kind, ticker, amount, occurred_at, note, created_at, source_sale_id)
+    SELECT id, portfolio_id, kind, ticker, amount, occurred_at, note, created_at, source_sale_id FROM cash_events;
+
+DROP TABLE cash_events;
+
+ALTER TABLE cash_events_new RENAME TO cash_events;
+
+CREATE INDEX IF NOT EXISTS idx_cash_events_portfolio ON cash_events(portfolio_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_cash_events_source_sale ON cash_events(source_sale_id);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1114,6 +1163,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (29, MIGRATION_V29),
         (30, MIGRATION_V30),
         (31, MIGRATION_V31),
+        (32, MIGRATION_V32),
     ];
 
     let user_version: i64 =

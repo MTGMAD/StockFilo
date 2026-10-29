@@ -3,6 +3,15 @@ import type { CashEvent } from "../../types";
 import { cn } from "../../lib/utils";
 import { X } from "lucide-react";
 
+/** Kinds a person can enter by hand; sale rows only come from a sale. */
+const KIND_OPTIONS: { kind: CashEvent["kind"]; label: string }[] = [
+  { kind: "dividend", label: "Dividend" },
+  { kind: "interest", label: "Interest" },
+  { kind: "fee", label: "Fee" },
+  { kind: "deposit", label: "Deposit" },
+  { kind: "withdrawal", label: "Withdrawal" },
+];
+
 interface CashEventDialogProps {
   open: boolean;
   onClose: () => void;
@@ -36,7 +45,8 @@ export function CashEventDialog({
     if (open) {
       setKind(initial?.kind ?? "dividend");
       setTicker(initial?.ticker ?? "");
-      // Stored signed (fees negative) — the field always shows a positive amount.
+      // Stored signed (fees and withdrawals negative) — the field always
+      // shows a positive amount.
       setAmount(initial ? String(Math.abs(initial.amount)) : "");
       setDate(initial?.occurred_at ?? new Date().toISOString().slice(0, 10));
       setNote(initial?.note ?? "");
@@ -62,7 +72,7 @@ export function CashEventDialog({
     setSaving(true);
     try {
       const magnitude = Math.abs(parseFloat(amount));
-      const signed = kind === "fee" ? -magnitude : magnitude;
+      const signed = kind === "fee" || kind === "withdrawal" ? -magnitude : magnitude;
       const t = ticker.trim().toUpperCase();
       await onSave(kind, t || null, signed, date, note.trim() || null);
       onClose();
@@ -92,43 +102,22 @@ export function CashEventDialog({
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <Field label="Type">
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setKind("dividend")}
-                className={cn(
-                  "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-                  kind === "dividend"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Dividend
-              </button>
-              <button
-                type="button"
-                onClick={() => setKind("interest")}
-                className={cn(
-                  "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-                  kind === "interest"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Interest
-              </button>
-              <button
-                type="button"
-                onClick={() => setKind("fee")}
-                className={cn(
-                  "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors",
-                  kind === "fee"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Fee
-              </button>
+            <div className="grid grid-cols-3 gap-2">
+              {KIND_OPTIONS.map((o) => (
+                <button
+                  key={o.kind}
+                  type="button"
+                  onClick={() => setKind(o.kind)}
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-sm font-medium transition-colors",
+                    kind === o.kind
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {o.label}
+                </button>
+              ))}
             </div>
           </Field>
 
@@ -145,7 +134,9 @@ export function CashEventDialog({
                   ? "e.g. VTI"
                   : kind === "interest"
                     ? "Cash sweep interest, usually no ticker"
-                    : "Account fee, no ticker"
+                    : kind === "deposit" || kind === "withdrawal"
+                      ? "Cash transfer, usually no ticker"
+                      : "Account fee, no ticker"
               }
               autoComplete="off"
             />

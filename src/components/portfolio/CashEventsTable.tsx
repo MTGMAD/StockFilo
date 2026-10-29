@@ -21,6 +21,12 @@ const KIND_STYLE: Record<
   },
   sale: { label: "Sale", badgeClass: "bg-positive/10 text-positive", down: false },
   fee: { label: "Fee", badgeClass: "bg-red-500/10 text-red-600", down: true },
+  deposit: { label: "Deposit", badgeClass: "bg-sky-500/10 text-sky-600", down: false },
+  withdrawal: {
+    label: "Withdrawal",
+    badgeClass: "bg-amber-500/10 text-amber-600",
+    down: true,
+  },
 };
 
 const FILTERS: { kind: "all" | CashEvent["kind"]; label: string }[] = [
@@ -29,6 +35,8 @@ const FILTERS: { kind: "all" | CashEvent["kind"]; label: string }[] = [
   { kind: "interest", label: "Interest" },
   { kind: "fee", label: "Fees" },
   { kind: "sale", label: "Sales" },
+  { kind: "deposit", label: "Deposits" },
+  { kind: "withdrawal", label: "Withdrawals" },
 ];
 
 interface CashEventsTableProps {

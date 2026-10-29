@@ -20,7 +20,9 @@ export interface Purchase {
 export interface CashEvent {
   id: number;
   portfolio_id: number;
-  kind: "dividend" | "fee" | "sale" | "interest";
+  /** "deposit"/"withdrawal" are money moved in or out of the account (V32):
+   *  they change cash but are never income. */
+  kind: "dividend" | "fee" | "sale" | "interest" | "deposit" | "withdrawal";
   ticker: string | null;
   amount: number;
   occurred_at: string; // ISO date string YYYY-MM-DD
