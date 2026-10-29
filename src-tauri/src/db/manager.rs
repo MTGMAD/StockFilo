@@ -49,7 +49,7 @@ impl DbManager {
         let staged = destination.with_extension(format!("move-{}.db", uuid::Uuid::new_v4()));
         let result = (|| {
             conn.execute("VACUUM INTO ?1", [staged.to_string_lossy().as_ref()]).map_err(|e| e.to_string())?;
-            std::fs::File::open(&staged).and_then(|file| file.sync_all()).map_err(|e| e.to_string())?;
+            std::fs::OpenOptions::new().write(true).open(&staged).and_then(|file| file.sync_all()).map_err(|e| e.to_string())?;
             let copied = Connection::open(&staged).map_err(|e| e.to_string())?;
             let integrity: String = copied.query_row("PRAGMA quick_check", [], |row| row.get(0)).map_err(|e| e.to_string())?;
             if integrity != "ok" { return Err("Database copy verification failed; the original database is still in use.".into()); }

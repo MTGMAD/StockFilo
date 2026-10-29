@@ -115,7 +115,8 @@ pub(super) fn validate(path: &Path) -> Result<(), String> {
     drop(foreign_keys);
     conn.execute_batch("PRAGMA journal_mode=DELETE;").map_err(io)?;
     drop(conn);
-    fs::File::open(path).and_then(|file| file.sync_all()).map_err(io)
+    // Windows refuses FlushFileBuffers on read-only handles (os error 5).
+    fs::OpenOptions::new().write(true).open(path).and_then(|file| file.sync_all()).map_err(io)
 }
 fn check_database(conn: &Connection) -> Result<(), String> {
     let check: String = conn.query_row("PRAGMA quick_check", [], |row| row.get(0)).map_err(|e| format!("Invalid database: {e}"))?;
