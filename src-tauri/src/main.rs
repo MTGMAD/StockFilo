@@ -5,9 +5,11 @@ fn main() {
     // These must be set before WebKit initialises on Linux.
     // Without them the app exits immediately when launched from a desktop
     // shortcut (no terminal environment), because GPU compositing fails.
+    // X11 is preferred, but fall back to Wayland when no X display is handed
+    // to the app (e.g. GNOME launching a Flatpak), or GTK fails to start.
     #[cfg(target_os = "linux")]
     {
-        std::env::set_var("GDK_BACKEND", "x11");
+        std::env::set_var("GDK_BACKEND", "x11,wayland");
         std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
         std::env::set_var("WEBKIT_DISABLE_GPU_PROCTYPES", "1");
         std::env::set_var("LIBGL_ALWAYS_INDIRECT", "1");

@@ -1,0 +1,50 @@
+# Flatpak manifest used by ./stockfolio-linux-flatpak. That script copies this
+# file next to a source snapshot (`source/`) whose frontend is already built
+# and whose crates are vendored, so the sandboxed build needs no network.
+app-id: com.stockfolio.app
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: stockfolio
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  # main.rs forces GDK_BACKEND=x11, so X11 must be available even on Wayland
+  # sessions (fallback-x11 would hide it there and GTK fails to start).
+  - --socket=x11
+  - --device=dri
+  # Import/export dialogs and $HOME text-file access (see capabilities).
+  - --filesystem=home
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.Notifications
+  # Keep clear of port 1422 used by `tauri dev` and the .deb install.
+  - --env=STOCKFOLIO_BROWSER_PORT=1432
+  # WebKitGTK renders blank windows on NVIDIA with the DMA-BUF renderer.
+  - --env=WEBKIT_DISABLE_DMABUF_RENDERER=1
+modules:
+  - name: stockfolio
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      no-debuginfo: true
+      env:
+        CARGO_HOME: /run/build/stockfolio/cargo-home
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - cd src-tauri && cargo build --release --locked --offline --features tauri/custom-protocol -j "$FLATPAK_BUILDER_N_JOBS"
+      - install -Dm755 src-tauri/target/release/stockfolio /app/bin/stockfolio
+      - install -Dm644 src-tauri/linux/flatpak/com.stockfolio.app.desktop /app/share/applications/com.stockfolio.app.desktop
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/com.stockfolio.app.png
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.stockfolio.app.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/com.stockfolio.app.png
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/com.stockfolio.app.png
+      - sed 's|Stockfolio.desktop</launchable>|com.stockfolio.app.desktop</launchable>|' src-tauri/linux/com.stockfolio.app.metainfo.xml > com.stockfolio.app.metainfo.xml
+      - install -Dm644 com.stockfolio.app.metainfo.xml /app/share/metainfo/com.stockfolio.app.metainfo.xml
+    sources:
+      - type: dir
+        path: source
+        skip:
+          - node_modules

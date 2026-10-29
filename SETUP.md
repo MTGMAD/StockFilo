@@ -121,6 +121,22 @@ Packages, checksums, build metadata, and logs are saved under
 The build needs the same host prerequisites as a normal Tauri build and can
 also be launched from a Flatpak editor.
 
+To build a Flatpak bundle, run `./stockfolio-linux-flatpak` (add `--install` to
+install it for the current user afterwards). Like the isolated Debian build, it
+works on a snapshot of the current source with a private Cargo home, at reduced
+CPU priority, and never touches `dist/`, `src-tauri/target/`, or other build
+outputs. The frontend is built and crates are vendored on the host; the Rust
+compile then runs offline inside the GNOME 51 SDK using the manifest in
+`src-tauri/linux/flatpak/`. On first use the script installs
+`org.flatpak.Builder`, the GNOME 51 SDK, and the Rust SDK extension into the
+per-user Flatpak installation. Bundles, checksums, the export repository, and
+logs are saved under `.flatpak-builds.local/<build-id>/`.
+
+The Flatpak keeps its data under `~/.var/app/com.stockfolio.app/`, uses its own
+keychain namespace (`com.stockfolio.app.flatpak`), and serves its browser
+backend on port 1432, so it can run alongside the Debian install and
+`tauri dev`. Existing portfolios are not copied.
+
 Both scripts validate the built `.deb` before reporting success. A successful
 build verifies the package contents; it does not install the application.
 Use `sudo apt install ./path/to/package.deb` to install it and

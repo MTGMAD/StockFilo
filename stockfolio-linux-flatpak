@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run on the host when launched from a Flatpak editor.
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+if [[ -f /.flatpak-info ]]; then
+  exec flatpak-spawn --host bash "$script_dir/stockfolio-linux-flatpak" "$@"
+fi
+if [[ "${1:-}" != --worker ]]; then
+  exec setsid --wait bash "$script_dir/stockfolio-linux-flatpak" --worker "$@"
+fi
+shift
+install_after=false
+for arg in "$@"; do
+  case "$arg" in
+    --install) install_after=true ;;
+    *) echo "Usage: $0 [--install]" >&2; exit 2 ;;
+  esac
+done
+
+app_id=com.stockfolio.app
+build_id="$(date -u +%Y%m%d%H%M%S)-$$"
+build_root="$script_dir/.flatpak-builds.local/$build_id"
+snapshot="$build_root/source"
+mkdir -p "$snapshot/src-tauri" "$build_root/cargo-home"
+exec > >(tee "$build_root/build.log") 2>&1
+echo "Isolated Flatpak build: $build_root"
+
+# Build tooling and SDKs go to the per-user installation, never the system one.
+builder=(flatpak run org.flatpak.Builder)
+if command -v flatpak-builder >/dev/null; then builder=(flatpak-builder); fi
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+needed=()
+[[ ${builder[0]} == flatpak-builder ]] || flatpak info org.flatpak.Builder >/dev/null 2>&1 || needed+=(org.flatpak.Builder)
+for ref in org.gnome.Platform//51 org.gnome.Sdk//51 org.freedesktop.Sdk.Extension.rust-stable//26.08; do
+  flatpak info "$ref" >/dev/null 2>&1 || needed+=("$ref")
+done
+if ((${#needed[@]})); then
+  flatpak install --user --noninteractive -y flathub "${needed[@]}"
+fi
+
+# Copy the current working tree, including uncommitted source edits, without
+# sharing writable frontend output, Cargo locks, dependencies, or target files.
+cp --reflink=auto -a "$script_dir/src" "$script_dir/node_modules" "$snapshot/"
+cp --reflink=auto -a "$script_dir/"{package.json,package-lock.json,index.html,tsconfig.json,tsconfig.node.json,vite.config.ts} "$snapshot/"
+cp --reflink=auto -a "$script_dir/src-tauri/"{src,icons,capabilities,linux,Cargo.toml,Cargo.lock,build.rs,tauri.conf.json} "$snapshot/src-tauri/"
+cp --reflink=auto -a "$script_dir/src-tauri/linux/flatpak/$app_id.yml" "$build_root/"
+original_cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+if [[ -d "$original_cargo_home/registry" ]]; then
+  cp --reflink=auto -a "$original_cargo_home/registry" "$build_root/cargo-home/"
+fi
+
+# Keep this install's keychain vault apart from the .deb and dev builds, which
+# share the "com.stockfolio.app" Secret Service namespace.
+secrets="$snapshot/src-tauri/src/secrets.rs"
+grep -qF "const SERVICE: &str = \"$app_id\";" "$secrets" \
+  || { echo "Isolation patch no longer matches secrets.rs" >&2; exit 1; }
+sed -i "s|const SERVICE: &str = \"$app_id\";|const SERVICE: \\&str = \"$app_id.flatpak\";|" "$secrets"
+
+# The frontend and crate downloads happen here on the host, inside the
+# snapshot, so the sandboxed compile below runs fully offline.
+export PATH="$HOME/.cargo/bin:$PATH"
+export CARGO_HOME="$build_root/cargo-home"
+cd "$snapshot"
+nice -n 10 npm run build
+mkdir -p src-tauri/.cargo
+(cd src-tauri && cargo vendor --locked vendor > .cargo/config.toml)
+
+jobs="${STOCKFOLIO_BUILD_JOBS:-4}"
+cd "$build_root"
+# rofiles-fuse cannot start under org.flatpak.Builder or a detached session.
+nice -n 10 "${builder[@]}" --user --force-clean --disable-updates --disable-rofiles-fuse --jobs="$jobs" \
+  --state-dir=state --repo=repo build-dir "$app_id.yml"
+version="$(node -p "require('./source/src-tauri/tauri.conf.json').version")"
+bundle="Stockfolio-$version-$build_id.flatpak"
+flatpak build-bundle repo "$bundle" "$app_id"
+sha256sum "$bundle" > SHA256SUMS
+rm -rf build-dir state cargo-home source/node_modules source/src-tauri/vendor
+echo "Build complete: $build_root/$bundle"
+
+if $install_after; then
+  flatpak install --user --noninteractive -y --reinstall "$bundle"
+  echo "Installed: flatpak run $app_id"
+fi

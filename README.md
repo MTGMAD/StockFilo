@@ -221,7 +221,7 @@ with the system package database. Extracting the package and running its binary
 does not install it:
 
 ```bash
-sudo apt install ./src-tauri/target/release/bundle/deb/Stockfolio_0.1.8_amd64.deb
+sudo apt install ./src-tauri/target/release/bundle/deb/Stockfolio_0.1.9_amd64.deb
 ```
 
 GNOME Software uses the packaged AppStream metadata to identify Stockfolio.

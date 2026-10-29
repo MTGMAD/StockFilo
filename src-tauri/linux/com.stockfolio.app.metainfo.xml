@@ -19,7 +19,30 @@
   </categories>
   <url type="homepage">https://github.com/MTGMAD/StockFilo</url>
   <url type="bugtracker">https://github.com/MTGMAD/StockFilo/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Portfolio overview</caption>
+      <image>https://raw.githubusercontent.com/MTGMAD/StockFilo/main/docs/screenshots/Portfolio.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Watch list</caption>
+      <image>https://raw.githubusercontent.com/MTGMAD/StockFilo/main/docs/screenshots/Watch%20List.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Dashboard</caption>
+      <image>https://raw.githubusercontent.com/MTGMAD/StockFilo/main/docs/screenshots/Novice%20Dashboard.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Purchases</caption>
+      <image>https://raw.githubusercontent.com/MTGMAD/StockFilo/main/docs/screenshots/Purchases.png</image>
+    </screenshot>
+  </screenshots>
   <releases>
+    <release version="0.1.9" date="2026-10-28">
+      <description>
+        <p>Choose the application icon, fix refresh errors, and add a Flatpak package that starts reliably from the application menu.</p>
+      </description>
+    </release>
     <release version="0.1.8" date="2026-10-23">
       <description>
         <p>Add application metadata for Linux software centers.</p>

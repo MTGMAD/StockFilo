@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Stockfolio
+Comment=Track stock portfolios and investment research
+Exec=stockfolio
+Icon=com.stockfolio.app
+Categories=Office;Finance;
+Terminal=false

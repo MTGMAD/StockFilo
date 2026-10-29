@@ -68,6 +68,7 @@ export default function App() {
     setSyncStatus("syncing");
     let anyFailed = false;
     let anyDownloaded = false;
+    let latestTransfer = 0;
     for (const target of config.sync_targets) {
       try {
         const result = await invoke<SyncResult>("sync_now", {
@@ -81,12 +82,15 @@ export default function App() {
         }
         if (!result.success) anyFailed = true;
         if (result.downloaded) anyDownloaded = true;
+        latestTransfer = Math.max(latestTransfer, result.synced_at);
       } catch {
         anyFailed = true;
       }
     }
     setSyncStatus(anyFailed ? "error" : "success");
-    // A check is not a completed transfer; retain the last transfer time.
+    // A check is not a completed transfer (synced_at is 0); retain the last
+    // transfer time unless a target actually uploaded or downloaded.
+    if (latestTransfer > 0) setLastSyncedAt(new Date(latestTransfer * 1000));
     // Notify StorageSettings to refresh its config so last_synced_at updates
     setSyncTick((n) => n + 1);
     // If any target downloaded a newer DB, reload the whole app so all hooks
