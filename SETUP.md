@@ -129,8 +129,18 @@ outputs. The frontend is built and crates are vendored on the host; the Rust
 compile then runs offline inside the GNOME 51 SDK using the manifest in
 `src-tauri/linux/flatpak/`. On first use the script installs
 `org.flatpak.Builder`, the GNOME 51 SDK, and the Rust SDK extension into the
-per-user Flatpak installation. Bundles, checksums, the export repository, and
-logs are saved under `.flatpak-builds.local/<build-id>/`.
+per-user Flatpak installation. Bundles, checksums, and logs are saved under
+`.flatpak-builds.local/<build-id>/`.
+
+Each build is also committed to one persistent repository,
+`.flatpak-builds.local/repo`, which `--install` registers as the per-user
+remote `stockfolio-local`. A later build is then a newer commit of the same
+app, so `--install`, `flatpak update`, or GNOME Software upgrades the existing
+install in place rather than replacing it. A build whose output is identical to
+the previous one adds no commit. Copies installed by opening a `.flatpak`
+bundle from earlier builds track no repository; remove such a copy with
+`flatpak uninstall --system com.stockfolio.app` (data is kept) and use
+`--install` instead.
 
 The Flatpak keeps its data under `~/.var/app/com.stockfolio.app/`, uses its own
 keychain namespace (`com.stockfolio.app.flatpak`), and serves its browser

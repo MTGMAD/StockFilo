@@ -71,14 +71,44 @@ cd "$build_root"
 # rofiles-fuse cannot start under org.flatpak.Builder or a detached session.
 nice -n 10 "${builder[@]}" --user --force-clean --disable-updates --disable-rofiles-fuse --jobs="$jobs" \
   --state-dir=state --repo=repo build-dir "$app_id.yml"
+
+# Every build is appended to one persistent repository, so each new build is a
+# later commit of the same app: installs that track it upgrade in place with
+# `flatpak update` (or GNOME Software) instead of being replaced.
+shared_repo="$script_dir/.flatpak-builds.local/repo"
+refs=()
+while read -r ref _; do [[ $ref == */"$app_id"*/* ]] && refs+=("$ref"); done \
+  < <(flatpak repo --branches repo)
+(
+  flock 9
+  if [[ -d $shared_repo/objects ]]; then
+    flatpak build-commit-from --src-repo=repo "$shared_repo" "${refs[@]}"
+  else
+    cp -a repo "$shared_repo"
+  fi
+  flatpak build-update-repo --prune --prune-depth=5 "$shared_repo"
+) 9>"$script_dir/.flatpak-builds.local/repo.lock"
+
 version="$(node -p "require('./source/src-tauri/tauri.conf.json').version")"
 bundle="Stockfolio-$version-$build_id.flatpak"
-flatpak build-bundle repo "$bundle" "$app_id"
+# The embedded repo URL makes a bundle install on this machine track the
+# shared repository too, so later builds arrive as updates.
+flatpak build-bundle --repo-url="file://$shared_repo" "$shared_repo" "$bundle" "$app_id"
 sha256sum "$bundle" > SHA256SUMS
-rm -rf build-dir state cargo-home source/node_modules source/src-tauri/vendor
+rm -rf build-dir state repo cargo-home source/node_modules source/src-tauri/vendor
 echo "Build complete: $build_root/$bundle"
 
 if $install_after; then
-  flatpak install --user --noninteractive -y --reinstall "$bundle"
+  remote=stockfolio-local
+  flatpak remote-add --user --if-not-exists --no-gpg-verify "$remote" "file://$shared_repo"
+  if [[ "$(flatpak info --user --show-origin "$app_id" 2>/dev/null)" == "$remote" ]]; then
+    flatpak update --user --noninteractive -y "$app_id"
+  else
+    flatpak install --user --noninteractive -y --reinstall "$remote" "$app_id"
+  fi
+  if flatpak info --system "$app_id" >/dev/null 2>&1; then
+    echo "Note: an older system-wide copy is also installed. Remove it (data is kept) with:"
+    echo "  flatpak uninstall --system $app_id"
+  fi
   echo "Installed: flatpak run $app_id"
 fi
