@@ -8,7 +8,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use super::symbols;
+use super::plan_funds;
 use super::types::{RemoteAccount, RemoteActivity, RemotePosition};
 
 /// A position as stored, ready for the frontend.
@@ -17,6 +17,7 @@ pub struct StoredPosition {
     pub broker_account_id: i64,
     pub provider_symbol: String,
     pub ticker: Option<String>,
+    pub name: Option<String>,
     pub asset_class: Option<String>,
     pub qty: f64,
     pub avg_entry_price: Option<f64>,
@@ -27,6 +28,9 @@ pub struct StoredPosition {
     pub unrealized_plpc: Option<f64>,
     pub change_today: Option<f64>,
     pub snapshot_at: i64,
+    /// The last recorded price that differs from `current_price`: a fund's
+    /// previous NAV. The day change for a holding no quote source covers.
+    pub previous_price: Option<f64>,
 }
 
 /// A stored transaction: a trade, or a cash row (dividend, deposit, fee…) —
@@ -143,17 +147,18 @@ pub fn replace_positions(
     )?;
 
     let snapshot_at = now_secs();
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let mut written = 0usize;
 
     for p in positions {
-        let ticker = symbols::to_yahoo(&p.provider_symbol, p.asset_class.as_deref());
+        let ticker = plan_funds::yahoo_ticker(conn, &p.provider_symbol, p.asset_class.as_deref())?;
 
         conn.execute(
             "INSERT INTO broker_positions \
                (broker_account_id, provider_symbol, ticker, asset_class, qty, avg_entry_price, \
                 cost_basis, current_price, market_value, unrealized_pl, unrealized_plpc, \
-                change_today, snapshot_at) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                change_today, snapshot_at, name) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 broker_account_id,
                 p.provider_symbol,
@@ -167,10 +172,15 @@ pub fn replace_positions(
                 p.unrealized_pl,
                 p.unrealized_plpc,
                 p.change_today,
-                snapshot_at
+                snapshot_at,
+                p.name
             ],
         )?;
         written += 1;
+
+        if let Some(price) = p.current_price.filter(|&v| v > 0.0) {
+            plan_funds::record_price(conn, &p.provider_symbol, &today, price)?;
+        }
 
         // Give Yahoo a cache row to fill with reference data (name, asset type,
         // analyst target, dividend yield). Prices come from the broker; this is
@@ -190,8 +200,12 @@ pub fn list_positions(
     let mut stmt = conn.prepare(
         "SELECT broker_account_id, provider_symbol, ticker, asset_class, qty, avg_entry_price, \
                 cost_basis, current_price, market_value, unrealized_pl, unrealized_plpc, \
-                change_today, snapshot_at \
-         FROM broker_positions WHERE broker_account_id = ?1 \
+                change_today, snapshot_at, name, \
+                (SELECT pp.price FROM broker_position_prices pp \
+                  WHERE pp.provider_symbol = bp.provider_symbol \
+                    AND ABS(pp.price - bp.current_price) > 1e-9 \
+                  ORDER BY pp.day DESC LIMIT 1) \
+         FROM broker_positions bp WHERE broker_account_id = ?1 \
          ORDER BY market_value DESC, provider_symbol ASC",
     )?;
     let rows = stmt.query_map(params![broker_account_id], |r| {
@@ -209,6 +223,8 @@ pub fn list_positions(
             unrealized_plpc: r.get(10)?,
             change_today: r.get(11)?,
             snapshot_at: r.get(12)?,
+            name: r.get(13)?,
+            previous_price: r.get(14)?,
         })
     })?;
     rows.collect()
@@ -240,7 +256,7 @@ pub fn append_transactions(
     let mut inserted = 0usize;
 
     for a in activities {
-        let ticker = symbols::to_yahoo(&a.provider_symbol, None);
+        let ticker = plan_funds::yahoo_ticker(conn, &a.provider_symbol, None)?;
         let n = conn.execute(
             "INSERT OR IGNORE INTO broker_transactions \
                (broker_account_id, external_id, kind, side, provider_symbol, ticker, \
@@ -624,6 +640,7 @@ mod tests {
     fn pos(sym: &str, qty: f64, class: &str) -> RemotePosition {
         RemotePosition {
             provider_symbol: sym.into(),
+            name: None,
             asset_class: Some(class.into()),
             qty,
             avg_entry_price: Some(100.0),
@@ -1101,6 +1118,7 @@ mod isolation_tests {
     fn position(sym: &str, qty: f64) -> RemotePosition {
         RemotePosition {
             provider_symbol: sym.into(),
+            name: None,
             asset_class: Some("us_equity".into()),
             qty,
             avg_entry_price: Some(10.0),
@@ -1318,6 +1336,7 @@ mod credential_leak_tests {
             acct,
             &[RemotePosition {
                 provider_symbol: "AAPL".into(),
+                name: None,
                 asset_class: Some("us_equity".into()),
                 qty: 1.0,
                 avg_entry_price: Some(1.0),

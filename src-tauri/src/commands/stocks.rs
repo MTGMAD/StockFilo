@@ -1,5 +1,8 @@
+use crate::brokers::plan_funds;
+use crate::db::manager::DbManager;
 use crate::yahoo;
 use serde::Serialize;
+use tauri::State;
 
 #[derive(Debug, Serialize)]
 pub struct QuoteResult {
@@ -69,14 +72,66 @@ pub async fn fetch_quotes_command(tickers: Vec<String>) -> Result<Vec<QuoteResul
     Ok(results)
 }
 
-/// Called from the frontend to fetch chart data for a ticker.
+/// Called from the frontend to fetch chart data for a ticker. A holding
+/// Yahoo doesn't list (a plan-only 401(k) fund) is charted from the broker
+/// prices recorded on each sync instead.
 #[tauri::command]
 pub async fn fetch_chart_command(
     ticker: String,
     range: String,
     interval: String,
+    state: State<'_, DbManager>,
 ) -> Result<yahoo::ChartData, String> {
-    yahoo::fetch_chart(&ticker.to_uppercase(), &range, &interval).await
+    let ticker = ticker.to_uppercase();
+    let yahoo_err = match yahoo::fetch_chart(&ticker, &range, &interval).await {
+        Ok(data) => return Ok(data),
+        Err(e) => e,
+    };
+    let since = range_start(&range, chrono::Local::now().date_naive());
+    let rows = state.with_conn(|conn| plan_funds::history(conn, &ticker, since.as_deref()))?;
+    // Every recorded day, not just the range: a fund with one day so far
+    // says so rather than claiming a failure.
+    let recorded = state.with_conn(|conn| plan_funds::history(conn, &ticker, None))?;
+    if recorded.is_empty() {
+        return Err(yahoo_err);
+    }
+    if rows.len() < 2 {
+        return Err(format!(
+            "No price history yet for {ticker}. Yahoo Finance doesn't list it, so the app \
+             records the broker's price on each sync; the chart fills in from {}.",
+            recorded[0].0
+        ));
+    }
+    let points: Vec<yahoo::ChartPoint> = rows
+        .iter()
+        .filter_map(|(day, price)| {
+            let date = chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
+            let timestamp = date.and_hms_opt(16, 0, 0)?.and_utc().timestamp();
+            Some(yahoo::ChartPoint { timestamp, close: *price, open: None, high: None, low: None, volume: None })
+        })
+        .collect();
+    Ok(yahoo::ChartData {
+        previous_close: points.first().map(|p| p.close),
+        current_price: points.last().map(|p| p.close),
+        points,
+    })
+}
+
+/// First day (YYYY-MM-DD) a chart range covers; None means all of it.
+fn range_start(range: &str, today: chrono::NaiveDate) -> Option<String> {
+    use chrono::{Datelike, Duration};
+    let days = match range {
+        "1d" | "5d" => 7,
+        "1mo" => 31,
+        "3mo" => 92,
+        "6mo" => 183,
+        "1y" => 366,
+        "2y" => 731,
+        "5y" => 1827,
+        "ytd" => return chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).map(|d| d.to_string()),
+        _ => return None,
+    };
+    Some((today - Duration::days(days)).to_string())
 }
 
 /// Closing price on `date` (`YYYY-MM-DD`), or the most recent trading day at

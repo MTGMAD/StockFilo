@@ -132,6 +132,8 @@ pub struct RemoteAccount {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemotePosition {
     pub provider_symbol: String,
+    /// The broker's description of the instrument, e.g. "Apple Inc.".
+    pub name: Option<String>,
     pub asset_class: Option<String>,
     pub qty: f64,
     pub avg_entry_price: Option<f64>,

@@ -212,6 +212,16 @@ function MountainChartContent({ ticker, quoteType }: MountainChartProps) {
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             Loading chart…
           </div>
+        ) : error && /^No price history/.test(error) ? (
+          // A plan-only fund still collecting its own history.
+          <div className="flex items-center justify-center h-full px-6 text-center text-muted-foreground text-sm">
+            {error}
+          </div>
+        ) : error && /\b404\b|No data found/i.test(error) ? (
+          // Not a failure: Yahoo has no listing for it (a delisted ticker).
+          <div className="flex items-center justify-center h-full px-6 text-center text-muted-foreground text-sm">
+            No price history available for {ticker} — Yahoo Finance doesn't list it.
+          </div>
         ) : error ? (
           <div className="flex items-center justify-center h-full text-red-500 text-sm">
             {error}

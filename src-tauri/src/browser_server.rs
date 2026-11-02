@@ -80,7 +80,7 @@ async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Value, 
             encode(selected.map(|p| p.to_string()))
         }
         "fetch_quotes_command" => encode(commands::stocks::fetch_quotes_command(arg(&args, "tickers")?).await?),
-        "fetch_chart_command" => encode(commands::stocks::fetch_chart_command(arg(&args, "ticker")?, arg(&args, "range")?, arg(&args, "interval")?).await?),
+        "fetch_chart_command" => encode(commands::stocks::fetch_chart_command(arg(&args, "ticker")?, arg(&args, "range")?, arg(&args, "interval")?, app.state()).await?),
         "fetch_price_on_date_command" => encode(commands::stocks::fetch_price_on_date_command(arg(&args, "ticker")?, arg(&args, "date")?).await?),
         "search_tickers_command" => encode(commands::stocks::search_tickers_command(arg(&args, "query")?).await?),
         "fetch_news_command" => encode(commands::stocks::fetch_news_command(arg(&args, "ticker")?, arg(&args, "count")?).await?),

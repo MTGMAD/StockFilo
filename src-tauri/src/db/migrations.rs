@@ -251,7 +251,7 @@ mod tests {
     fn synced_broker_identity_upgrade_preserves_legacy_rows() {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
-        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; ALTER TABLE broker_transactions DROP COLUMN amount; ALTER TABLE broker_transactions DROP COLUMN currency; ALTER TABLE broker_transactions DROP COLUMN description; ALTER TABLE broker_accounts DROP COLUMN history_version; DROP TABLE broker_account_snapshots; ALTER TABLE portfolios DROP COLUMN default_tab; ALTER TABLE portfolios DROP COLUMN group_id; DROP TABLE portfolio_groups; PRAGMA user_version=27;
+        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; ALTER TABLE broker_transactions DROP COLUMN amount; ALTER TABLE broker_transactions DROP COLUMN currency; ALTER TABLE broker_transactions DROP COLUMN description; ALTER TABLE broker_accounts DROP COLUMN history_version; DROP TABLE broker_account_snapshots; ALTER TABLE portfolios DROP COLUMN default_tab; ALTER TABLE portfolios DROP COLUMN group_id; DROP TABLE portfolio_groups; ALTER TABLE broker_positions DROP COLUMN name; PRAGMA user_version=27;
             INSERT INTO broker_connections (id,provider,environment,label,credential_ref,created_at) VALUES ('imported','snaptrade','read','Keep my label','broker:imported',123);
             INSERT INTO broker_accounts (id,connection_id,provider_account_id,equity,cash,visible) VALUES (99,'imported','remote-account',300,17,1);").unwrap();
         run_all(&conn).unwrap();
@@ -270,7 +270,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 33);
+        assert_eq!(v, 35);
     }
 
     #[test]
@@ -650,7 +650,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 33);
+        assert_eq!(v, 35);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1143,6 +1143,30 @@ CREATE INDEX IF NOT EXISTS idx_cash_events_source_sale ON cash_events(source_sal
 const MIGRATION_V33: &str =
     "ALTER TABLE portfolios ADD COLUMN default_tab TEXT NOT NULL DEFAULT 'analysis';";
 
+/// V34: the broker's own name for a position. A plan-specific 401(k) fund
+/// (TransAmerica's Y8V5) has no Yahoo listing, so this is the only name it has.
+const MIGRATION_V34: &str = "ALTER TABLE broker_positions ADD COLUMN name TEXT;";
+
+/// V35: plan-only funds (see brokers/plan_funds.rs). `symbol_aliases` maps a
+/// plan code to the public fund it turned out to be, or records a search that
+/// found nothing (`ticker` NULL) and when to try again. `broker_position_prices`
+/// keeps one broker price per symbol per day, the only history a fund with no
+/// public listing has.
+const MIGRATION_V35: &str = r#"
+CREATE TABLE IF NOT EXISTS symbol_aliases (
+    provider_symbol TEXT PRIMARY KEY,
+    ticker          TEXT,
+    retry_at        INTEGER,
+    checked_at      INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS broker_position_prices (
+    provider_symbol TEXT NOT NULL,
+    day             TEXT NOT NULL,
+    price           REAL NOT NULL,
+    PRIMARY KEY (provider_symbol, day)
+);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1181,6 +1205,8 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (31, MIGRATION_V31),
         (32, MIGRATION_V32),
         (33, MIGRATION_V33),
+        (34, MIGRATION_V34),
+        (35, MIGRATION_V35),
     ];
 
     let user_version: i64 =

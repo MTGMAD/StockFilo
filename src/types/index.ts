@@ -458,6 +458,9 @@ export interface BrokerPosition {
   /** Yahoo ticker, or null for instruments Yahoo cannot quote (e.g. options).
    *  Null affects reference data only — price and P&L still come from the broker. */
   ticker: string | null;
+  /** The broker's own name for it; the only name a plan-specific 401(k)
+   *  fund (no Yahoo listing) has. */
+  name: string | null;
   asset_class: string | null;
   qty: number;
   avg_entry_price: number | null;
@@ -470,6 +473,9 @@ export interface BrokerPosition {
   /** Fraction, not percent. */
   change_today: number | null;
   snapshot_at: number;
+  /** The last recorded broker price that differs from current_price (a
+   *  fund's previous NAV); the day change for a holding Yahoo doesn't list. */
+  previous_price: number | null;
 }
 
 export interface BrokerTransaction {

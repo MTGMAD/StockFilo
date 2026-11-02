@@ -23,6 +23,7 @@
 
 pub mod alpaca;
 pub mod error;
+pub mod plan_funds;
 pub mod snaptrade;
 pub mod store;
 pub mod symbols;

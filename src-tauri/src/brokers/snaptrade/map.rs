@@ -153,6 +153,12 @@ pub fn position(v: &Value) -> Option<RemotePosition> {
 
     Some(RemotePosition {
         provider_symbol,
+        name: instrument
+            .get("description")
+            .and_then(|d| d.as_str())
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(str::to_string),
         asset_class: instrument.get("kind").and_then(|k| k.as_str()).map(str::to_string),
         qty,
         avg_entry_price,
@@ -533,6 +539,7 @@ mod tests {
         assert_eq!(p.market_value, Some(123.45 * 10.5));
         assert_eq!(p.cost_basis, Some(118.2 * 10.5));
         assert_eq!(p.asset_class.as_deref(), Some("stock"));
+        assert_eq!(p.name.as_deref(), Some("Apple Inc."));
     }
 
     #[test]

@@ -242,15 +242,22 @@ export function buildFromPositions(
       stock.market_state !== "CLOSED";
     const brokerDailyChangePct =
       p.change_today != null ? p.change_today * 100 : null;
-    const dailyChangePct = usingFallbackPrice
-      ? sessionAwareChangePct(stock)
-      : !isLiveSession && (brokerDailyChangePct == null || brokerDailyChangePct === 0)
-        ? stock?.daily_change_pct ?? brokerDailyChangePct
-        : brokerDailyChangePct;
+    // Last resort, for a plan-only fund no quote source has: the move from
+    // its previous recorded NAV.
+    const recordedChangePct =
+      p.previous_price != null && p.previous_price > 0 && p.current_price != null
+        ? (p.current_price / p.previous_price - 1) * 100
+        : null;
+    const dailyChangePct =
+      (usingFallbackPrice
+        ? sessionAwareChangePct(stock)
+        : !isLiveSession && (brokerDailyChangePct == null || brokerDailyChangePct === 0)
+          ? stock?.daily_change_pct ?? brokerDailyChangePct
+          : brokerDailyChangePct) ?? recordedChangePct;
 
     return {
       ticker: displayTicker,
-      name: stock?.name ?? null,
+      name: stock?.name ?? p.name ?? null,
       totalShares: p.qty,
       totalInvested,
       avgCostBasis: p.avg_entry_price ?? null,
@@ -288,16 +295,18 @@ export function buildFromPositions(
 /**
  * Fallback asset type for holdings Yahoo has no row for.
  *
- * A broker's asset class is coarser than Yahoo's quote type — it cannot tell an
- * ETF from a common stock — so this is only used when the Yahoo value is
- * missing, which keeps the Dashboard's allocation breakdown from bucketing a
- * holding as "undefined".
+ * Only used when the Yahoo value is missing: Yahoo's type is the more precise
+ * one, and some brokers (Alpaca's "us_equity") can't tell an ETF from a stock.
+ * SnapTrade does say "etf" and "mutualfund", which is all a plan-specific
+ * 401(k) fund like TransAmerica's Y8V5 ever gets, since Yahoo has no listing.
  */
 function assetClassToQuoteType(assetClass: string | null): string | null {
   if (!assetClass) return null;
   const c = assetClass.toLowerCase();
   if (c.includes("crypto")) return "CRYPTOCURRENCY";
   if (c.includes("option")) return "OPTION";
+  if (c === "etf") return "ETF";
+  if (c.includes("mutualfund") || c.includes("mutual_fund")) return "MUTUALFUND";
   if (c.includes("equity")) return "EQUITY";
   return null;
 }

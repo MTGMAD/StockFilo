@@ -40,6 +40,7 @@ pub fn position(v: &Value) -> Option<RemotePosition> {
 
     Some(RemotePosition {
         provider_symbol,
+        name: None,
         asset_class: text(v, "asset_class"),
         qty,
         avg_entry_price: num(v, "avg_entry_price"),

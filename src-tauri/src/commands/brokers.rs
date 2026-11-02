@@ -15,7 +15,7 @@ use crate::brokers::store::{self, AccountSnapshot, StoredPosition, StoredTransac
 use crate::brokers::types::{
     Credentials, OrderStatusConfig, ProviderDescriptor, RemoteAccount, RemoteOrder,
 };
-use crate::brokers::Provider;
+use crate::brokers::{plan_funds, Provider};
 use crate::commands::config::load_config;
 use crate::commands::sync::BrokerWrites;
 use crate::db::manager::DbManager;
@@ -630,6 +630,13 @@ async fn sync_one(
             Some(Vec::new())
         };
 
+        // Plan-only funds: look for a public twin before the write below, so
+        // a match applies to this snapshot already.
+        let aliases = match positions {
+            Some(ref ps) => plan_funds::resolve(state, ps).await,
+            None => Vec::new(),
+        };
+
         let permit = writes.permit().await.ok_or(BrokerError::SyncPaused)?;
         let (acct_id, visible) = state
             .with_txn(|conn| {
@@ -652,6 +659,10 @@ async fn sync_one(
                         acct.mask.as_deref(),
                     );
                     store::ensure_portfolio(conn, id, provider, &name)?;
+                }
+                let now = chrono::Utc::now().timestamp();
+                for a in &aliases {
+                    plan_funds::save_alias(conn, a, now)?;
                 }
                 if let Some(ref positions) = positions {
                     store::replace_positions(conn, id, positions)?;
