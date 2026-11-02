@@ -144,9 +144,9 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
     date: 0, description: 2, amount: 3, quantity: 4, price: 5, symbol: 6,
   };
   let sawHeader = false;
-  // Pending rows haven't settled (they can still change or cancel), so they
-  // are counted for the summary but never imported. A file with no section
-  // labels at all imports normally.
+  // Pending orders haven't settled (they can still change or cancel), so they
+  // are counted for the summary but not imported. Pending dividends are the
+  // exception: see below. A file with no section labels at all imports normally.
   let section: "pending" | "completed" = "completed";
 
   for (const rawLine of lines) {
@@ -192,8 +192,9 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
     const hasSymbol = Boolean(symbol) && symbol !== SWEEP_SYMBOL;
 
     const isBuy = /^BUY\s*-/i.test(description);
+    // Completed reinvestments state "REINVEST AT <price>"; pending ones don't.
     const reinvestPrice = description.match(/REINVEST AT\s*([\d.]+)/i);
-    const isReinvest = reinvestPrice != null;
+    const isReinvest = reinvestPrice != null || /^DIVIDEND REINVEST\b/i.test(description);
     const isSell = /^SELL\s*-/i.test(description);
     // After isReinvest, so a reinvested dividend isn't also a cash payout.
     const isCashDividend =
@@ -220,14 +221,20 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
         ));
 
     if (section === "pending") {
-      bump(
-        isSell ? "pending sell order"
-          : isBuy ? "pending buy order"
-            : isReinvest || isCashDividend ? "pending dividend"
+      // The holding line posted beside a reinvestment carries no cash.
+      if (!rawAmount) continue;
+      // A dividend is paid on a set date and isn't cancelled, so a pending
+      // one imports now; once it completes, the next import matches it as
+      // already recorded. Its cash also belongs in the calibration.
+      if (!isReinvest && !isCashDividend) {
+        bump(
+          isSell ? "pending sell order"
+            : isBuy ? "pending buy order"
               : isFee ? "pending fee"
                 : "pending transaction",
-      );
-      continue;
+        );
+        continue;
+      }
     }
 
     const signed = parseSignedAmount(rawAmount);
@@ -240,12 +247,12 @@ export function parseAmeripriseActivity(text: string): ParsedActivity {
       if (!hasSymbol || quantity == null || Math.abs(quantity) <= 0) continue;
       const shares = Math.abs(quantity);
       // BUY: Amount/Quantity (the Price column is per $100 face for bonds).
-      // Reinvest: the "REINVEST AT" price in the description.
+      // Reinvest: the "REINVEST AT" price in the description, else Amount/Quantity.
       let price: number | null = null;
-      if (isBuy) {
+      if (isBuy || !reinvestPrice) {
         price = magnitude && magnitude > 0 ? magnitude / shares : priceCol;
       } else {
-        price = parseFloat(reinvestPrice![1]);
+        price = parseFloat(reinvestPrice[1]);
       }
       if (price == null || !Number.isFinite(price) || price <= 0) continue;
       out.purchases.push({ ticker: symbol, shares, price, date, reinvest: isReinvest });

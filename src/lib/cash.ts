@@ -22,6 +22,8 @@ export function parseSignedAmount(raw: string): number | null {
 const isSweepInterest = (d: string) =>
   /^INTEREST PAYMENT/i.test(d) && /MONEY MARKET/i.test(d);
 
+const isTrade = (d: string) => /^(BUY|SELL)\s*-/i.test(d);
+
 export interface CalibratedCash {
   asOf: string;
   balance: number;
@@ -39,6 +41,10 @@ export interface CalibratedCash {
  * month-end balances matched the sum of the amounts between them to within
  * about a dollar (the sweep balance is a whole number of shares).
  *
+ * The sweep balance includes dividends and fees posted that day but not a
+ * buy or sell traded that day, which hasn't settled yet (NVDA/INTC bought on
+ * a 10/30 sweep date were missing from its $9,423), so those count as after.
+ *
  * Returns null when the export holds no sweep-interest row — a short export
  * can't say what the balance was, and guessing would be worse than leaving
  * the previous calibration in place.
@@ -55,7 +61,11 @@ export function calibrateCash(
   const lastRow = rows.reduce((m, r) => (r.date > m ? r.date : m), latest.date);
   const asOf = endDate && endDate >= lastRow ? endDate : lastRow;
   const after = rows
-    .filter((r) => r.date > latest.date && r.date <= asOf)
+    .filter(
+      (r) =>
+        (r.date > latest.date || (r.date === latest.date && isTrade(r.description))) &&
+        r.date <= asOf,
+    )
     .reduce((s, r) => s + r.amount, 0);
   return {
     asOf,

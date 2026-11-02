@@ -1682,10 +1682,17 @@ function formatImportMessage(
   }
 
   if (unhandled && Object.keys(unhandled).length > 0) {
-    const parts = Object.entries(unhandled).map(
-      ([label, count]) => `${count} ${label}${count === 1 ? "" : "s"}`,
-    );
-    msg += ` Not imported — this app doesn't track these yet: ${parts.join(", ")}.`;
+    const describe = (entries: [string, number][]) =>
+      entries.map(([label, count]) => `${count} ${label}${count === 1 ? "" : "s"}`).join(", ");
+    const entries = Object.entries(unhandled);
+    const pending = entries.filter(([label]) => label.startsWith("pending "));
+    const other = entries.filter(([label]) => !label.startsWith("pending "));
+    if (pending.length > 0) {
+      msg += ` Not settled yet, so not imported until a later export shows them completed: ${describe(pending)}.`;
+    }
+    if (other.length > 0) {
+      msg += ` Not imported — this app doesn't track these yet: ${describe(other)}.`;
+    }
   }
 
   if (cashCalibrated) {
