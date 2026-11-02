@@ -7,10 +7,12 @@ import {
   pnlColor,
   cn,
   isCusip,
+  assetKind,
+  type AssetKind,
 } from "../../lib/utils";
 import { TrendingUp, TrendingDown, Minus, AlertTriangle } from "lucide-react";
 
-type AssetType = "stocks" | "funds";
+type AssetType = "all" | Exclude<AssetKind, "bond">;
 type SortBy = "pnlPct" | "pnlDollar" | "dailyPct" | "invested";
 
 interface PortfolioRankViewProps {
@@ -18,18 +20,15 @@ interface PortfolioRankViewProps {
   onSelectTicker?: (ticker: string) => void;
 }
 
-function isMutualFund(qt: string | null): boolean {
-  const q = qt?.toUpperCase() ?? "";
-  return (
-    q === "MUTUALFUND" ||
-    q === "UIT" ||
-    q === "MONEYMARKET" ||
-    q === "MONEYMARKETS"
-  );
-}
+const ASSET_TABS: { key: AssetType; label: string; noun: string }[] = [
+  { key: "all", label: "All", noun: "holdings" },
+  { key: "stock", label: "Stocks", noun: "stocks" },
+  { key: "etf", label: "ETFs", noun: "ETFs" },
+  { key: "fund", label: "Mutual Funds", noun: "mutual funds" },
+];
 
 export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankViewProps) {
-  const [activeType, setActiveType] = useState<AssetType>("stocks");
+  const [activeType, setActiveType] = useState<AssetType>("all");
   const [sortBy, setSortBy] = useState<SortBy>("pnlPct");
 
   // ── Compute portfolio-wide totals (all holdings, excl. bonds) ─────────────
@@ -58,14 +57,15 @@ export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankVi
     return acc;
   }, 0);
 
-  // ── Filter by asset type (exclude bonds/CDs from both tabs) ───────────────
-  const stockSummaries = summaries.filter(
-    (s) => !isMutualFund(s.quoteType) && !isCusip(s.ticker),
-  );
-  const fundSummaries = summaries.filter(
-    (s) => isMutualFund(s.quoteType) && !isCusip(s.ticker),
-  );
-  const activeList = activeType === "stocks" ? stockSummaries : fundSummaries;
+  // ── Filter by asset type (bonds/CDs are left out of every tab) ────────────
+  const byType: Record<AssetType, TickerSummary[]> = { all: [], stock: [], etf: [], fund: [] };
+  for (const s of summaries) {
+    const kind = assetKind(s.ticker, s.quoteType);
+    if (kind === "bond") continue;
+    byType[kind].push(s);
+    byType.all.push(s);
+  }
+  const activeList = byType[activeType];
 
   // ── Sort: nulls always last ────────────────────────────────────────────────
   const sortValue = (s: TickerSummary): number | null => {
@@ -95,10 +95,7 @@ export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankVi
     return Math.round((Math.abs(s.pnlPercent) / maxAbsPnlPct) * 100);
   };
 
-  const emptyLabel =
-    activeType === "stocks"
-      ? "No stocks in this portfolio."
-      : "No mutual funds in this portfolio.";
+  const emptyLabel = `No ${ASSET_TABS.find((t) => t.key === activeType)!.noun} in this portfolio.`;
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -140,54 +137,33 @@ export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankVi
       <div className="shrink-0 border-b border-border bg-background px-5 py-2 flex flex-wrap items-center gap-3 justify-between">
         {/* Sub-tab pills */}
         <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
-          <button
-            type="button"
-            onClick={() => setActiveType("stocks")}
-            className={cn(
-              "px-3 py-1 rounded-md text-sm font-medium transition-colors",
-              activeType === "stocks"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            Stocks
-            {stockSummaries.length > 0 && (
-              <span
-                className={cn(
-                  "ml-1.5 text-xs font-normal",
-                  activeType === "stocks"
-                    ? "text-muted-foreground"
-                    : "text-muted-foreground/60",
-                )}
-              >
-                ({stockSummaries.length})
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveType("funds")}
-            className={cn(
-              "px-3 py-1 rounded-md text-sm font-medium transition-colors",
-              activeType === "funds"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            Mutual Funds
-            {fundSummaries.length > 0 && (
-              <span
-                className={cn(
-                  "ml-1.5 text-xs font-normal",
-                  activeType === "funds"
-                    ? "text-muted-foreground"
-                    : "text-muted-foreground/60",
-                )}
-              >
-                ({fundSummaries.length})
-              </span>
-            )}
-          </button>
+          {ASSET_TABS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveType(key)}
+              className={cn(
+                "px-3 py-1 rounded-md text-sm font-medium transition-colors",
+                activeType === key
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {label}
+              {byType[key].length > 0 && (
+                <span
+                  className={cn(
+                    "ml-1.5 text-xs font-normal",
+                    activeType === key
+                      ? "text-muted-foreground"
+                      : "text-muted-foreground/60",
+                  )}
+                >
+                  ({byType[key].length})
+                </span>
+              )}
+            </button>
+          ))}
         </div>
 
         {/* Sort buttons */}

@@ -43,3 +43,15 @@ export function getCssVar(name: string): string {
 export function isCusip(ticker: string): boolean {
   return /^[A-Z0-9]{9}$/i.test(ticker);
 }
+
+/** Which section a holding is listed under. Money market funds count as
+ *  mutual funds; anything Yahoo hasn't typed yet is treated as a stock. */
+export type AssetKind = "stock" | "etf" | "fund" | "bond";
+
+export function assetKind(ticker: string, quoteType: string | null): AssetKind {
+  if (isCusip(ticker)) return "bond";
+  const q = quoteType?.toUpperCase() ?? "";
+  if (q === "ETF") return "etf";
+  if (q === "MUTUALFUND" || q === "UIT" || q === "MONEYMARKET" || q === "MONEYMARKETS") return "fund";
+  return "stock";
+}

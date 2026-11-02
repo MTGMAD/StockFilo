@@ -1064,9 +1064,10 @@ export async function importAmeripriseCSV(
 
   for (const p of plan.purchases) {
     await addPurchase(portfolioId, p.ticker, p.shares, p.price, p.date);
-    // Dividend reinvestments are always mutual funds — hint the type so the
-    // ticker lands in the right sidebar section before Yahoo is asked.
-    if (p.reinvest) await hintStockQuoteType(p.ticker, "MUTUALFUND");
+    // Stocks get dividends reinvested too (NVDA does), so only a ticker with
+    // the US mutual-fund shape (five letters ending in X) is hinted as a fund
+    // before Yahoo is asked. Yahoo's own type replaces the hint either way.
+    if (p.reinvest && /^[A-Z]{4}X$/.test(p.ticker)) await hintStockQuoteType(p.ticker, "MUTUALFUND");
   }
   for (const e of plan.cashEvents) {
     await addCashEvent(portfolioId, e.kind, e.ticker, e.amount, e.date, e.note ?? null);

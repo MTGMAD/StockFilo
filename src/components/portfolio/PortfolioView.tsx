@@ -18,6 +18,8 @@ import {
   pnlColor,
   cn,
   isCusip,
+  assetKind,
+  type AssetKind,
 } from "../../lib/utils";
 import {
   ExternalLink,
@@ -331,16 +333,6 @@ export function PortfolioView({
     }
   }, [favoritesLoaded, summaries.length]);
 
-  const isMutualFund = (qt: string | null) => {
-    const q = qt?.toUpperCase() ?? "";
-    return (
-      q === "MUTUALFUND" ||
-      q === "UIT" ||
-      q === "MONEYMARKET" ||
-      q === "MONEYMARKETS"
-    );
-  };
-
   // Favorites keep their own manual order (indexOf into favoriteTickers) as
   // the "custom" source; everything else uses the position_order table via
   // positionOrderIndex. Both feed the same comparator, so switching sort
@@ -352,22 +344,15 @@ export function PortfolioView({
 
   const favorites = summaries.filter((s) => isFavorite(s.ticker)).sort(favCmp);
 
-  const nonFavStocks = summaries
-    .filter(
-      (s) =>
-        !isFavorite(s.ticker) &&
-        !isMutualFund(s.quoteType) &&
-        !isCusip(s.ticker),
-    )
-    .sort(restCmp);
+  const nonFavOfKind = (kind: AssetKind) =>
+    summaries
+      .filter((s) => !isFavorite(s.ticker) && assetKind(s.ticker, s.quoteType) === kind)
+      .sort(restCmp);
 
-  const nonFavFunds = summaries
-    .filter((s) => !isFavorite(s.ticker) && isMutualFund(s.quoteType))
-    .sort(restCmp);
-
-  const nonFavBonds = summaries
-    .filter((s) => !isFavorite(s.ticker) && isCusip(s.ticker))
-    .sort(restCmp);
+  const nonFavStocks = nonFavOfKind("stock");
+  const nonFavEtfs = nonFavOfKind("etf");
+  const nonFavFunds = nonFavOfKind("fund");
+  const nonFavBonds = nonFavOfKind("bond");
 
   // One drag-reorder instance per section — dragging in any of them enters
   // "custom" sort mode, same as picking it would, since dragging *is* the
@@ -379,6 +364,11 @@ export function PortfolioView({
   });
   const stockIds = nonFavStocks.map((s) => s.ticker);
   const stockDrag = useDragReorder(stockIds, async (next) => {
+    await enterCustomOrder();
+    await reorderPositionsList(next);
+  });
+  const etfIds = nonFavEtfs.map((s) => s.ticker);
+  const etfDrag = useDragReorder(etfIds, async (next) => {
     await enterCustomOrder();
     await reorderPositionsList(next);
   });
@@ -396,6 +386,7 @@ export function PortfolioView({
   const ordered = [
     ...favorites,
     ...nonFavStocks,
+    ...nonFavEtfs,
     ...nonFavFunds,
     ...nonFavBonds,
   ];
@@ -869,6 +860,33 @@ export function PortfolioView({
               </Fragment>
             ))}
             {stockDrag.showDropLine(nonFavStocks.length) && dropLine}
+          </CollapsibleSection>
+          <CollapsibleSection label="ETFs" items={nonFavEtfs}>
+            {nonFavEtfs.map((s, idx) => (
+              <Fragment key={s.ticker}>
+                {etfDrag.showDropLine(idx) && dropLine}
+                <TickerRow
+                  s={s}
+                  isSelected={selected === s.ticker}
+                  hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+                  hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
+                  isFav={false}
+                  favIdx={-1}
+                  favCount={0}
+                  onSelect={selectTicker}
+                  onToggleFav={toggle}
+                  onMoveFav={moveFavorite}
+                  dragRowRef={(el) => {
+                    if (el) etfDrag.rowRefs.current.set(s.ticker, el);
+                    else etfDrag.rowRefs.current.delete(s.ticker);
+                  }}
+                  onRowPointerDown={(e) => etfDrag.startRowPress(e, s.ticker)}
+                  isDragging={etfDrag.dragId === s.ticker}
+                  suppressClickRef={etfDrag.suppressClickRef}
+                />
+              </Fragment>
+            ))}
+            {etfDrag.showDropLine(nonFavEtfs.length) && dropLine}
           </CollapsibleSection>
           <CollapsibleSection label="Mutual Funds & UITs" items={nonFavFunds}>
             {nonFavFunds.map((s, idx) => (

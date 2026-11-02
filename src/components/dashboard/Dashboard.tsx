@@ -417,6 +417,7 @@ const QUOTE_TYPE_LABELS: Record<string, string> = {
   EQUITY: "Stocks",
   ETF: "ETFs",
   MUTUALFUND: "Mutual Funds",
+  MONEYMARKET: "Money Market",
   INDEX: "Indices",
   CRYPTOCURRENCY: "Crypto",
   CURRENCY: "Currency",

@@ -1,7 +1,7 @@
 import { useContext, useEffect, useState } from "react";
 import type React from "react";
 import type { TickerSummary, Purchase, LinkOpenMode, DividendInfo } from "../../types";
-import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
+import { formatCurrency, formatPercent, formatShares, pnlColor, cn, assetKind, type AssetKind } from "../../lib/utils";
 import { ExternalLink, Star, ChevronUp, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Minus, CalendarDays, PiggyBank } from "lucide-react";
 import { MountainChart } from "./MountainChart";
 import { TickerNews } from "./TickerNews";
@@ -33,19 +33,18 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
     .filter((s) => isFavorite(s.ticker))
     .sort((a, b) => favoriteTickers.indexOf(a.ticker) - favoriteTickers.indexOf(b.ticker));
 
-  const isMutualFund = (qt: string | null) =>
-    qt === "MUTUALFUND" || qt === "UIT";
+  // This view has no bonds section, so bonds stay listed with stocks.
+  const nonFavOfKind = (...kinds: AssetKind[]) =>
+    summaries
+      .filter((s) => !isFavorite(s.ticker) && kinds.includes(assetKind(s.ticker, s.quoteType)))
+      .sort((a, b) => a.ticker.localeCompare(b.ticker));
 
-  const nonFavStocks = summaries
-    .filter((s) => !isFavorite(s.ticker) && !isMutualFund(s.quoteType))
-    .sort((a, b) => a.ticker.localeCompare(b.ticker));
-
-  const nonFavFunds = summaries
-    .filter((s) => !isFavorite(s.ticker) && isMutualFund(s.quoteType))
-    .sort((a, b) => a.ticker.localeCompare(b.ticker));
+  const nonFavStocks = nonFavOfKind("stock", "bond");
+  const nonFavEtfs = nonFavOfKind("etf");
+  const nonFavFunds = nonFavOfKind("fund");
 
   // Flat ordered list for default selection logic
-  const ordered = [...favorites, ...nonFavStocks, ...nonFavFunds];
+  const ordered = [...favorites, ...nonFavStocks, ...nonFavEtfs, ...nonFavFunds];
 
   // On first app open (selectedTicker is null), pick the top favorite or first in list.
   // Wait for favorites to load before committing a default so we don't pick alphabetical first.
@@ -273,6 +272,23 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
         })}
         <CollapsibleSection label="Stocks" items={nonFavStocks}>
           {nonFavStocks.map((s) => (
+            <TickerRow
+              key={s.ticker}
+              s={s}
+              isSelected={selected === s.ticker}
+              hasUpcomingEarnings={Boolean(upcomingEarnings[s.ticker])}
+              hasDividend={hasTickerDividend(s, dividendInfoByTicker[s.ticker])}
+              isFav={false}
+              favIdx={-1}
+              favCount={0}
+              onSelect={setSelected}
+              onToggleFav={toggle}
+              onMoveFav={moveFavorite}
+            />
+          ))}
+        </CollapsibleSection>
+        <CollapsibleSection label="ETFs" items={nonFavEtfs}>
+          {nonFavEtfs.map((s) => (
             <TickerRow
               key={s.ticker}
               s={s}
