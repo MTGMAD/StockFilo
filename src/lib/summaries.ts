@@ -20,7 +20,14 @@
  *                        below); an aggregator's price is treated the same
  *                        way a manual portfolio's is, priced from Yahoo.
  */
-import type { BrokerPosition, Purchase, Sale, Stock, TickerSummary } from "../types";
+import type {
+  BrokerAccountSnapshot,
+  BrokerPosition,
+  Purchase,
+  Sale,
+  Stock,
+  TickerSummary,
+} from "../types";
 
 const STALE_THRESHOLD_SECONDS = 3600; // 1 hour
 
@@ -179,11 +186,14 @@ export function buildFromPositions(
   positions: BrokerPosition[],
   stocks: Stock[],
   providesPricing: boolean,
+  pending: number | null = null,
 ): TickerSummary[] {
   const stockMap = new Map(stocks.map((s) => [s.ticker, s]));
   const now = Math.floor(Date.now() / 1000);
+  const core = pending != null ? corePosition(positions, stockMap, pending) : null;
 
-  return positions.map((p) => {
+  return positions.map((raw) => {
+    const p = raw === core ? withPendingCash(raw, pending!) : raw;
     // Options and some crypto have no Yahoo row; fall back to the broker's own
     // symbol so the row is never nameless.
     const displayTicker = p.ticker ?? p.provider_symbol;
@@ -288,8 +298,64 @@ export function buildFromPositions(
       post_market_price: null,
       post_market_change_pct: null,
       dividendYield: stock?.dividend_yield ?? null,
+      ...(raw === core ? { pendingCash: pending! } : {}),
     };
   });
+}
+
+/**
+ * Cash a trade has committed that the broker hasn't settled into its core
+ * money-market position yet. Fidelity keeps a buy's cost in SPAXX until the
+ * trade settles, while its account equity already leaves it out, so for a
+ * day or so the positions add up to more than the account is worth (SPCX
+ * bought 10/30: positions $21,574.15, equity $16,690.05, gap $4,884.10 =
+ * the buy). Taken from one sync's snapshot, whose equity, cash and
+ * positions total were written together, and only while the positions on
+ * hand are still the ones that snapshot summed.
+ */
+export function pendingCash(
+  snapshot: BrokerAccountSnapshot | undefined,
+  positions: BrokerPosition[],
+): number | null {
+  if (!snapshot || snapshot.equity == null || snapshot.positions_value == null) return null;
+  let current = 0;
+  for (const p of positions) {
+    if (p.market_value == null) return null;
+    current += p.market_value;
+  }
+  if (Math.abs(current - snapshot.positions_value) > 0.05) return null;
+  const gap = snapshot.equity - (snapshot.cash ?? 0) - snapshot.positions_value;
+  return Math.abs(gap) >= 1 ? Math.round(gap * 100) / 100 : null;
+}
+
+/** The money-market position a broker settles cash through (the largest one,
+ *  if several), or null when there is none able to absorb `pending`. */
+function corePosition(
+  positions: BrokerPosition[],
+  stockMap: Map<string, Stock>,
+  pending: number,
+): BrokerPosition | null {
+  const isMoneyMarket = (p: BrokerPosition) => {
+    const q = (p.ticker ? stockMap.get(p.ticker)?.quote_type : null)?.toUpperCase() ?? "";
+    return q.startsWith("MONEYMARKET") || (p.current_price === 1 && /mutual|money|cash/i.test(p.asset_class ?? ""));
+  };
+  const core = positions
+    .filter((p) => isMoneyMarket(p) && p.market_value != null)
+    .sort((a, b) => b.market_value! - a.market_value!)[0];
+  return core && core.market_value! + pending >= -0.01 ? core : null;
+}
+
+function withPendingCash(p: BrokerPosition, pending: number): BrokerPosition {
+  const shares = pending / (p.current_price || 1);
+  return {
+    ...p,
+    qty: p.qty + shares,
+    market_value: p.market_value != null ? p.market_value + pending : null,
+    cost_basis:
+      p.cost_basis != null && p.avg_entry_price != null
+        ? p.cost_basis + shares * p.avg_entry_price
+        : p.cost_basis,
+  };
 }
 
 /**

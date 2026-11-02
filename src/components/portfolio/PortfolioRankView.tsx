@@ -387,6 +387,13 @@ function RankedRow({
               value={formatCurrency(s.marketValue)}
               title="What your shares are worth right now at the current market price."
             />
+            {s.pendingCash != null && (
+              <MetricChip
+                label="Pending"
+                value={formatCurrency(s.pendingCash)}
+                title="Cash a recent trade has committed that hasn't settled out of (or into) this money-market position yet. Already taken out of the shares and value shown, so the account total matches the broker's."
+              />
+            )}
             <DailyChangeChip dailyChangePct={s.dailyChangePct} />
           </div>
         </div>

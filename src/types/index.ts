@@ -98,6 +98,10 @@ export interface TickerSummary {
   post_market_price: number | null;
   post_market_change_pct: number | null;
   dividendYield: number | null;
+  /** Broker portfolios: cash a trade has committed that the broker hasn't yet
+   *  taken out of (negative) or put into this money-market core position;
+   *  already applied to its shares and value. */
+  pendingCash?: number;
 }
 
 /** 'above' = notify when price rises to/past the target, 'below' = falls to/past it. */

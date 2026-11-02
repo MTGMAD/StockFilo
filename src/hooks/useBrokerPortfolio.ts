@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type {
+  BrokerAccountSnapshot,
   BrokerPosition,
   BrokerTransaction,
   Stock,
@@ -7,11 +8,12 @@ import type {
 } from "../types";
 import {
   listBrokerPositions,
+  listBrokerSnapshots,
   listBrokerTransactions,
   syncBrokerConnection,
 } from "../lib/brokers";
 import { getCachedStocks, fetchAndCachePrices } from "../lib/db";
-import { buildFromPositions } from "../lib/summaries";
+import { buildFromPositions, pendingCash } from "../lib/summaries";
 import { isCusip } from "../lib/utils";
 
 /** Matches the Yahoo poll interval in usePortfolio, so both kinds feel alike. */
@@ -49,6 +51,7 @@ export function useBrokerPortfolio(
 ) {
   const [positions, setPositions] = useState<BrokerPosition[]>([]);
   const [transactions, setTransactions] = useState<BrokerTransaction[]>([]);
+  const [snapshot, setSnapshot] = useState<BrokerAccountSnapshot | undefined>();
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -56,27 +59,41 @@ export function useBrokerPortfolio(
   const loadedForRef = useRef<number | null | undefined>(undefined);
   const positionsRef = useRef<BrokerPosition[]>([]);
   positionsRef.current = positions;
+  // The account on screen. A read or sync started for another account can
+  // finish after the switch; its results are dropped rather than shown here.
+  const currentAccountRef = useRef(brokerAccountId);
+  currentAccountRef.current = brokerAccountId;
 
   const loadStored = useCallback(async () => {
     if (brokerAccountId == null) {
       setPositions([]);
       setTransactions([]);
+      setSnapshot(undefined);
       return;
     }
-    const [p, t, s] = await Promise.all([
+    const [p, t, s, snaps] = await Promise.all([
       listBrokerPositions(brokerAccountId),
       listBrokerTransactions(brokerAccountId),
       getCachedStocks(),
+      listBrokerSnapshots(brokerAccountId),
     ]);
+    if (currentAccountRef.current !== brokerAccountId) return;
     setPositions(p);
     setTransactions(t);
     setStocks(s);
+    setSnapshot(snaps[snaps.length - 1]);
   }, [brokerAccountId]);
 
   useEffect(() => {
     const id = brokerAccountId;
     setError(null);
-    if (id !== loadedForRef.current) setLoading(true);
+    if (id !== loadedForRef.current) {
+      // Never show the previous account's holdings under this one's name.
+      setLoading(true);
+      setPositions([]);
+      setTransactions([]);
+      setSnapshot(undefined);
+    }
     loadStored()
       .catch((e) => setError(String(e)))
       .finally(() => {
@@ -216,6 +233,7 @@ export function useBrokerPortfolio(
     positions,
     stocks,
     providesPricing,
+    pendingCash(snapshot, positions),
   );
 
   return {
