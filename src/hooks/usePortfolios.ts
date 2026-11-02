@@ -8,6 +8,7 @@ import {
   starPortfolio as dbStar,
   reorderPortfolios as dbReorder,
   setPositionSortMode as dbSetPositionSortMode,
+  setPortfolioDefaultTab as dbSetDefaultTab,
   listPortfolioGroups,
   createPortfolioGroup as dbCreateGroup,
   renamePortfolioGroup as dbRenameGroup,
@@ -99,6 +100,17 @@ export function usePortfolios() {
     [load]
   );
 
+  const setDefaultTab = useCallback(
+    async (id: number, tab: string) => {
+      setPortfolios((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, default_tab: tab } : p)),
+      );
+      await dbSetDefaultTab(id, tab);
+      await load();
+    },
+    [load]
+  );
+
   /** Puts a portfolio in `groupId` (null = ungrouped) and applies the full
    *  order `ids`, which a drag across groups changes along with the group. */
   const move = useCallback(
@@ -157,6 +169,7 @@ export function usePortfolios() {
     star,
     reorder,
     setPositionSortMode,
+    setDefaultTab,
     move,
     createGroup,
     renameGroup,

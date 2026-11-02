@@ -148,6 +148,9 @@ export interface Portfolio {
   /** How the positions list is ordered: "gainers" | "ticker" | "pnl" | "custom".
    *  "custom" means a person dragged rows by hand. */
   position_sort_mode: string;
+  /** The tab the portfolio opens on when selected: "analysis" |
+   *  "performance" | "purchases" | "orders" | "cash" | "journal". */
+  default_tab: string;
   /** The sidebar grouping this portfolio sits under; null sits directly
    *  under Portfolios. */
   group_id: number | null;

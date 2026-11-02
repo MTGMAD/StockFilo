@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useContext, useEffect, useMemo, useState } from "react";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type {
   BrokerTransaction,
@@ -59,6 +59,7 @@ import { useFavorites } from "../../hooks/useFavorites";
 import { usePositionOrder } from "../../hooks/usePositionOrder";
 import { useDragReorder } from "../../hooks/useDragReorder";
 import { openUrl } from "../../lib/openUrl";
+import { QuoteSiteContext, quoteSiteLabel, quoteSiteUrl } from "../../lib/quoteSites";
 import type { ImportResult } from "../../lib/db";
 import {
   addEarningsCallToCalendar,
@@ -81,6 +82,16 @@ type PortfolioTab =
   | "cash"
   | "journal"
   | "settings";
+
+/** Tabs a portfolio can be set to open on, in tab-bar order. */
+const DEFAULT_TAB_OPTIONS: { value: PortfolioTab; label: string }[] = [
+  { value: "analysis", label: "Analysis" },
+  { value: "performance", label: "Performance" },
+  { value: "purchases", label: "Purchases" },
+  { value: "orders", label: "Orders" },
+  { value: "cash", label: "Cash" },
+  { value: "journal", label: "Journal" },
+];
 
 /**
  * Comparator for the positions list, shared by the favorites group and every
@@ -134,6 +145,9 @@ interface PortfolioViewProps {
   /** How the positions list is ordered: "gainers" | "ticker" | "pnl" | "custom". */
   positionSortMode: string;
   onSetPositionSortMode: (mode: string) => Promise<void>;
+  /** The tab this portfolio opens on when selected. */
+  defaultTab: string;
+  onSetDefaultTab: (tab: string) => Promise<void>;
   stocks: Stock[];
   summaries: TickerSummary[];
   onAdd: (
@@ -203,6 +217,8 @@ export function PortfolioView({
   lastImportAt,
   positionSortMode,
   onSetPositionSortMode,
+  defaultTab,
+  onSetDefaultTab,
   stocks,
   summaries,
   onAdd,
@@ -221,12 +237,29 @@ export function PortfolioView({
   brokerTransactions,
   ordersAccountId = null,
 }: PortfolioViewProps) {
-  const [activeTab, setActiveTab] = useState<PortfolioTab>("analysis");
+  const quoteSite = useContext(QuoteSiteContext);
+  const [activeTab, setActiveTab] = useState<PortfolioTab>(
+    defaultTab as PortfolioTab,
+  );
 
-  // When portfolio changes, reset tab
+  // When portfolio changes, open its chosen tab. Not re-run when the choice
+  // itself changes, so picking one in Settings doesn't leave Settings.
   useEffect(() => {
-    setActiveTab("analysis");
+    setActiveTab(defaultTab as PortfolioTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolioId]);
+
+  /** Tabs only some portfolios have: Orders needs a broker that exposes
+   *  them, and Cash is for manual portfolios. */
+  function tabAvailable(tab: PortfolioTab) {
+    if (tab === "orders") return ordersAccountId != null;
+    if (tab === "cash") return !readOnly;
+    return true;
+  }
+  // Orders can become available after the first render (the broker
+  // connection loads separately), so this is derived rather than corrected
+  // once — a default of Orders shows Analysis until then.
+  const shownTab: PortfolioTab = tabAvailable(activeTab) ? activeTab : "analysis";
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const journalFills = useMemo(
     () =>
@@ -514,11 +547,11 @@ export function PortfolioView({
     };
   }, [dividendKey]);
 
-  async function openYahooFinance(ticker: string) {
+  async function openQuotePage(ticker: string) {
     await openUrl(
-      `https://finance.yahoo.com/quote/${ticker}`,
+      quoteSiteUrl(quoteSite, ticker),
       linkOpenMode,
-      `${ticker} - Yahoo Finance`,
+      `${ticker} - ${quoteSiteLabel(quoteSite)}`,
     );
   }
 
@@ -904,7 +937,7 @@ export function PortfolioView({
             onClick={() => setActiveTab("analysis")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "analysis"
+              shownTab === "analysis"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -917,7 +950,7 @@ export function PortfolioView({
             onClick={() => setActiveTab("performance")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "performance"
+              shownTab === "performance"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -930,7 +963,7 @@ export function PortfolioView({
             onClick={() => setActiveTab("purchases")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "purchases"
+              shownTab === "purchases"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -944,7 +977,7 @@ export function PortfolioView({
               onClick={() => setActiveTab("orders")}
               className={cn(
                 "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
-                activeTab === "orders"
+                shownTab === "orders"
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground",
               )}
@@ -959,7 +992,7 @@ export function PortfolioView({
               onClick={() => setActiveTab("cash")}
               className={cn(
                 "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
-                activeTab === "cash"
+                shownTab === "cash"
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground",
               )}
@@ -973,7 +1006,7 @@ export function PortfolioView({
             onClick={() => setActiveTab("journal")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "journal"
+              shownTab === "journal"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -986,7 +1019,7 @@ export function PortfolioView({
             onClick={() => setActiveTab("settings")}
             className={cn(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
-              activeTab === "settings"
+              shownTab === "settings"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -997,16 +1030,16 @@ export function PortfolioView({
         </div>
 
         {/* Tab content */}
-        {activeTab === "orders" && ordersAccountId != null ? (
+        {shownTab === "orders" && ordersAccountId != null ? (
           <BrokerOrdersView brokerAccountId={ordersAccountId} />
-        ) : activeTab === "journal" && portfolioId != null ? (
+        ) : shownTab === "journal" && portfolioId != null ? (
           <JournalView
             portfolioId={portfolioId}
             fills={journalFills}
             income={readOnly ? null : cashEvents}
             onViewChart={selectTicker}
           />
-        ) : activeTab === "performance" ? (
+        ) : shownTab === "performance" ? (
           isEmpty ? (
             <div className="flex flex-col items-center justify-center flex-1 gap-3 text-muted-foreground">
               <p className="text-sm">No purchases yet.</p>
@@ -1027,7 +1060,7 @@ export function PortfolioView({
               }}
             />
           )
-        ) : activeTab === "settings" ? (
+        ) : shownTab === "settings" ? (
           <div className="flex-1 overflow-y-auto p-6">
             <div className="max-w-lg flex flex-col gap-8">
               {/* Portfolio info */}
@@ -1038,6 +1071,28 @@ export function PortfolioView({
                 <p className="text-xs text-muted-foreground">
                   Portfolio settings and data management.
                 </p>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-0.5">
+                  Default tab
+                </h3>
+                <p className="text-xs text-muted-foreground mb-3">
+                  The tab shown when you open this portfolio from the sidebar.
+                </p>
+                <select
+                  value={tabAvailable(defaultTab as PortfolioTab) ? defaultTab : "analysis"}
+                  onChange={(e) => onSetDefaultTab(e.target.value)}
+                  className="px-3 py-1.5 text-sm rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  {DEFAULT_TAB_OPTIONS.filter((o) => tabAvailable(o.value)).map(
+                    (o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ),
+                  )}
+                </select>
               </div>
 
               {/* A linked portfolio mirrors the brokerage. Import would write
@@ -1288,7 +1343,7 @@ export function PortfolioView({
               )}
             </div>
           </div>
-        ) : activeTab === "purchases" ? (
+        ) : shownTab === "purchases" ? (
           readOnly ? (
             <BrokerTransactionsTable transactions={brokerTransactions ?? []} />
           ) : (
@@ -1304,7 +1359,7 @@ export function PortfolioView({
               onDeleteSale={onDeleteSale}
             />
           )
-        ) : activeTab === "cash" ? (
+        ) : shownTab === "cash" ? (
           <CashEventsTable
             cashEvents={cashEvents}
             cashAnchor={cashAnchor}
@@ -1343,7 +1398,7 @@ export function PortfolioView({
                   ) : (
                     <button
                       type="button"
-                      onClick={() => openYahooFinance(summary.ticker)}
+                      onClick={() => openQuotePage(summary.ticker)}
                       className="flex items-center gap-2 text-2xl font-bold text-primary hover:underline"
                     >
                       {summary.ticker}

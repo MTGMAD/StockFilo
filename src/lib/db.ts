@@ -100,6 +100,13 @@ export async function setPositionSortMode(
   return invoke("db_set_position_sort_mode", { portfolioId, mode });
 }
 
+export async function setPortfolioDefaultTab(
+  portfolioId: number,
+  tab: string,
+): Promise<void> {
+  return invoke("db_set_portfolio_default_tab", { portfolioId, tab });
+}
+
 // ── Purchases ──────────────────────────────────────────────────────────────
 
 export async function listPurchases(portfolioId: number): Promise<Purchase[]> {

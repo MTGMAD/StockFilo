@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import type { Stock, LinkOpenMode } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, cn } from "../../lib/utils";
 import { fetchUpcomingEarnings, addEarningsCallToCalendar } from "../../lib/db";
@@ -10,6 +10,7 @@ import {
   Target, BarChart2, Info, CalendarDays,
 } from "lucide-react";
 import { openUrl } from "../../lib/openUrl";
+import { QuoteSiteContext, quoteSiteLabel, quoteSiteUrl } from "../../lib/quoteSites";
 import { invoke } from "../../lib/platform";
 
 interface StockDetailModalProps {
@@ -123,8 +124,11 @@ export function StockDetailModal({
     : dailyChangePct < 0 ? TrendingDown
     : Minus;
 
-  async function openYahoo() {
-    await openUrl(`https://finance.yahoo.com/quote/${ticker}`, linkOpenMode, `${ticker} - Yahoo Finance`);
+  const quoteSite = useContext(QuoteSiteContext);
+  const quoteSiteName = quoteSiteLabel(quoteSite);
+
+  async function openQuotePage() {
+    await openUrl(quoteSiteUrl(quoteSite, ticker), linkOpenMode, `${ticker} - ${quoteSiteName}`);
   }
 
   return (
@@ -168,12 +172,12 @@ export function StockDetailModal({
               <span className="text-xs text-red-500">{calendarError}</span>
             )}
             <button
-              onClick={openYahoo}
+              onClick={openQuotePage}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-              title="Open on Yahoo Finance"
+              title={`Open on ${quoteSiteName}`}
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              Yahoo Finance
+              {quoteSiteName}
             </button>
             <button
               onClick={() => onBuy(ticker)}

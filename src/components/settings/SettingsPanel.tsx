@@ -5,6 +5,7 @@ import { Monitor, Sun, Moon, Leaf, CheckCircle, AlertCircle, Trash2, GraduationC
 import { invoke, isDesktop, isPermissionGranted, requestPermission } from "../../lib/platform";
 import { clearAllPurchases } from "../../lib/db";
 import { ALERT_SOUNDS, playAlertSound, type AlertSoundId } from "../../lib/alertSounds";
+import { QUOTE_SITES, type QuoteSite } from "../../lib/quoteSites";
 import { StorageSettings } from "./StorageSettings";
 import { BrokerSettings } from "./BrokerSettings";
 import { SnapTradeSettings } from "./SnapTradeSettings";
@@ -21,6 +22,8 @@ interface SettingsPanelProps {
   onInvestorModeChange: (m: InvestorMode) => void;
   linkOpenMode: LinkOpenMode;
   onLinkOpenModeChange: (m: LinkOpenMode) => void;
+  quoteSite: QuoteSite;
+  onQuoteSiteChange: (s: QuoteSite) => void;
   showInfoTooltips: boolean;
   onShowInfoTooltipsChange: (v: boolean) => void;
   alertSoundId: AlertSoundId;
@@ -58,7 +61,7 @@ const themes: { id: Theme; label: string; Icon: React.ComponentType<{ className?
   { id: "warm", label: "Warm", Icon: Leaf },
 ];
 
-export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, showInfoTooltips, onShowInfoTooltipsChange, alertSoundId, onAlertSoundIdChange, alertSoundEnabled, onAlertSoundEnabledChange, syncTick, onConfigSaved, onBrokersChanged, openBrokerFormTrigger, openBrokerSettingsTrigger }: SettingsPanelProps) {
+export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode, onInvestorModeChange, linkOpenMode, onLinkOpenModeChange, quoteSite, onQuoteSiteChange, showInfoTooltips, onShowInfoTooltipsChange, alertSoundId, onAlertSoundIdChange, alertSoundEnabled, onAlertSoundEnabledChange, syncTick, onConfigSaved, onBrokersChanged, openBrokerFormTrigger, openBrokerSettingsTrigger }: SettingsPanelProps) {
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -284,6 +287,34 @@ export function SettingsPanel({ theme, onThemeChange, onDataChange, investorMode
                 )}
               >
                 <Icon className="w-4 h-4 shrink-0" />
+                <div>
+                  <div className="text-sm font-medium leading-tight">{label}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5 leading-tight">{description}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Ticker Links */}
+        <div className="flex items-start justify-between gap-8 py-5 border-b border-border">
+          <div className="min-w-0 shrink-0 w-48">
+            <h2 className="text-sm font-semibold text-foreground">Ticker Links</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Choose which site opens when you click a ticker.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 flex-1">
+            {QUOTE_SITES.map(({ id, label, description }) => (
+              <button
+                key={id}
+                onClick={() => onQuoteSiteChange(id)}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors",
+                  quoteSite === id
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                )}
+              >
+                <LineChart className="w-4 h-4 shrink-0" />
                 <div>
                   <div className="text-sm font-medium leading-tight">{label}</div>
                   <div className="text-xs text-muted-foreground mt-0.5 leading-tight">{description}</div>

@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useRef } from "react";
+import { Fragment, useContext, useState, useEffect, useRef } from "react";
 import type {
   WatchlistItem,
   Stock,
@@ -14,6 +14,7 @@ import {
   fetchUpcomingEarnings,
 } from "../../lib/db";
 import { openUrl } from "../../lib/openUrl";
+import { QuoteSiteContext, quoteSiteLabel, quoteSiteUrl } from "../../lib/quoteSites";
 import { PurchaseDialog } from "../portfolio/PurchaseDialog";
 import { SparkLine } from "./SparkLine";
 import { TickerLogo } from "../shared/TickerLogo";
@@ -127,6 +128,7 @@ export function WatchList({
   onSetAlert,
   onPurchase,
 }: WatchListProps) {
+  const quoteSite = useContext(QuoteSiteContext);
   const [activeTab, setActiveTab] = useState<WatchListTab>("list");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<TickerSearchResult[]>([]);
@@ -307,9 +309,9 @@ export function WatchList({
 
   async function openTickerPage(ticker: string) {
     await openUrl(
-      `https://finance.yahoo.com/quote/${ticker}`,
+      quoteSiteUrl(quoteSite, ticker),
       linkOpenMode,
-      `${ticker} - Yahoo Finance`,
+      `${ticker} - ${quoteSiteLabel(quoteSite)}`,
     );
   }
 
@@ -1017,7 +1019,7 @@ export function WatchList({
                               ) : (
                                 <TickerLogo ticker={item.ticker} />
                               )}
-                              <Tooltip text={`Open ${item.ticker} on Yahoo Finance`}>
+                              <Tooltip text={`Open ${item.ticker} on ${quoteSiteLabel(quoteSite)}`}>
                                 <div className="flex items-center gap-1.5">
                                   <button
                                     type="button"

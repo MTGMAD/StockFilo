@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { openExternal as open } from "../../lib/platform";
+import { QuoteSiteContext, quoteSiteUrl } from "../../lib/quoteSites";
 import type { Purchase, Sale, Stock } from "../../types";
 import {
   formatCurrency,
@@ -85,8 +86,10 @@ export function PurchasesTable({
     ...sales.map((s): Row => ({ kind: "sell", date: s.sold_at, sale: s })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
-  async function openGoogleFinance(ticker: string) {
-    await open(`https://finance.yahoo.com/quote/${ticker}`);
+  const quoteSite = useContext(QuoteSiteContext);
+
+  async function openQuotePage(ticker: string) {
+    await open(quoteSiteUrl(quoteSite, ticker));
   }
 
   return (
@@ -172,7 +175,7 @@ export function PurchasesTable({
                         <div className="flex items-center gap-2">
                           <TickerLogo ticker={s.ticker} />
                           <button
-                            onClick={() => openGoogleFinance(s.ticker)}
+                            onClick={() => openQuotePage(s.ticker)}
                             className="flex items-center gap-1 font-semibold text-primary hover:underline"
                           >
                             {s.ticker}
@@ -252,7 +255,7 @@ export function PurchasesTable({
                       <div className="flex items-center gap-2">
                         <TickerLogo ticker={p.ticker} />
                         <button
-                          onClick={() => openGoogleFinance(p.ticker)}
+                          onClick={() => openQuotePage(p.ticker)}
                           className="flex items-center gap-1 font-semibold text-primary hover:underline"
                         >
                           {p.ticker}

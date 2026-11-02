@@ -23,6 +23,9 @@ pub struct Portfolio {
     /// 'pnl' | 'custom'. 'custom' means a person has dragged rows by hand;
     /// anything else is computed live from `TickerSummary` fields.
     pub position_sort_mode: String,
+    /// The tab the portfolio opens on when selected: 'analysis' |
+    /// 'performance' | 'purchases' | 'orders' | 'cash' | 'journal'.
+    pub default_tab: String,
     /// The sidebar grouping this portfolio sits under; None sits directly
     /// under Portfolios.
     pub group_id: Option<i64>,
@@ -40,7 +43,7 @@ pub struct PortfolioGroup {
 pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>, String> {
     state.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id, last_import_at, position_sort_mode, group_id \
+            "SELECT id, name, sort_order, is_starred, created_at, source, broker_account_id, last_import_at, position_sort_mode, group_id, default_tab \
              FROM portfolios ORDER BY sort_order ASC, id ASC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -55,6 +58,7 @@ pub fn db_list_portfolios(state: State<'_, DbManager>) -> Result<Vec<Portfolio>,
                 last_import_at: r.get(7)?,
                 position_sort_mode: r.get(8)?,
                 group_id: r.get(9)?,
+                default_tab: r.get(10)?,
             })
         })?;
         rows.collect()
@@ -176,6 +180,24 @@ pub fn db_set_position_sort_mode(
         conn.execute(
             "UPDATE portfolios SET position_sort_mode = ?1 WHERE id = ?2",
             params![mode, portfolio_id],
+        )?;
+        Ok(())
+    })
+}
+
+/// Set the tab a portfolio opens on. Like `db_set_position_sort_mode`, this
+/// writes whatever it's given; the frontend falls back to Analysis for a tab
+/// the portfolio doesn't have.
+#[tauri::command]
+pub fn db_set_portfolio_default_tab(
+    portfolio_id: i64,
+    tab: String,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    state.with_conn(|conn| {
+        conn.execute(
+            "UPDATE portfolios SET default_tab = ?1 WHERE id = ?2",
+            params![tab, portfolio_id],
         )?;
         Ok(())
     })

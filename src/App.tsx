@@ -21,6 +21,8 @@ import { useWatchlists } from "./hooks/useWatchlists";
 import { useTheme } from "./hooks/useTheme";
 import { useInvestorMode } from "./hooks/useInvestorMode";
 import { useLinkOpenMode } from "./hooks/useLinkOpenMode";
+import { useQuoteSite } from "./hooks/useQuoteSite";
+import { QuoteSiteContext } from "./lib/quoteSites";
 import { useInfoTooltips } from "./hooks/useInfoTooltips";
 import { useAlertSettings } from "./hooks/useAlertSettings";
 import { useAlertsMonitor } from "./hooks/useAlertsMonitor";
@@ -40,6 +42,7 @@ export default function App() {
   const { theme, setTheme } = useTheme();
   const { investorMode, setInvestorMode } = useInvestorMode();
   const { linkOpenMode, setLinkOpenMode } = useLinkOpenMode();
+  const { quoteSite, setQuoteSite } = useQuoteSite();
   const { showInfoTooltips, setShowInfoTooltips } = useInfoTooltips();
   const alertSettings = useAlertSettings();
   // Mounted at the top level (not inside the Watch List view) so price
@@ -143,6 +146,7 @@ export default function App() {
     star,
     reorder,
     setPositionSortMode,
+    setDefaultTab,
     move: movePortfolio,
     createGroup,
     renameGroup,
@@ -370,6 +374,7 @@ export default function App() {
   }
 
   return (
+    <QuoteSiteContext.Provider value={quoteSite}>
     <div className="flex h-dvh w-dvw overflow-hidden">
       <Sidebar
         view={view}
@@ -490,6 +495,12 @@ export default function App() {
                   ? setPositionSortMode(resolvedPortfolioId, mode)
                   : Promise.resolve()
               }
+              defaultTab={activePortfolio?.default_tab ?? "analysis"}
+              onSetDefaultTab={(tab) =>
+                resolvedPortfolioId != null
+                  ? setDefaultTab(resolvedPortfolioId, tab)
+                  : Promise.resolve()
+              }
               stocks={stocks}
               summaries={summaries}
               onAdd={add}
@@ -601,6 +612,8 @@ export default function App() {
               onInvestorModeChange={setInvestorMode}
               linkOpenMode={linkOpenMode}
               onLinkOpenModeChange={setLinkOpenMode}
+              quoteSite={quoteSite}
+              onQuoteSiteChange={setQuoteSite}
               showInfoTooltips={showInfoTooltips}
               onShowInfoTooltipsChange={setShowInfoTooltips}
               alertSoundId={alertSettings.soundId}
@@ -619,5 +632,6 @@ export default function App() {
         </main>
       </div>
     </div>
+    </QuoteSiteContext.Provider>
   );
 }

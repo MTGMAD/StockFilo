@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import type React from "react";
 import type { TickerSummary, Purchase, LinkOpenMode, DividendInfo } from "../../types";
 import { formatCurrency, formatPercent, formatShares, pnlColor, cn } from "../../lib/utils";
@@ -8,6 +8,7 @@ import { TickerNews } from "./TickerNews";
 import { ExtendedHoursTag } from "../shared/ExtendedHoursTag";
 import { useFavorites } from "../../hooks/useFavorites";
 import { openUrl } from "../../lib/openUrl";
+import { QuoteSiteContext, quoteSiteLabel, quoteSiteUrl } from "../../lib/quoteSites";
 import { addEarningsCallToCalendar, fetchUpcomingEarnings, fetchDividendInfo, addDividendToCalendar } from "../../lib/db";
 
 interface AnalysisViewProps {
@@ -19,6 +20,7 @@ interface AnalysisViewProps {
 }
 
 export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTicker, linkOpenMode }: AnalysisViewProps) {
+  const quoteSite = useContext(QuoteSiteContext);
   const { favoriteTickers, loaded: favoritesLoaded, isFavorite, toggle, reorder } = useFavorites(null);
   const [upcomingEarnings, setUpcomingEarnings] = useState<Record<string, number>>({});
   const [addingCalendarFor, setAddingCalendarFor] = useState<string | null>(null);
@@ -170,8 +172,8 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
     };
   }, [dividendKey]);
 
-  async function openGoogleFinance(ticker: string) {
-    await openUrl(`https://finance.yahoo.com/quote/${ticker}`, linkOpenMode, `${ticker} - Yahoo Finance`);
+  async function openQuotePage(ticker: string) {
+    await openUrl(quoteSiteUrl(quoteSite, ticker), linkOpenMode, `${ticker} - ${quoteSiteLabel(quoteSite)}`);
   }
 
   async function moveFavorite(ticker: string, direction: "up" | "down") {
@@ -311,7 +313,7 @@ export function AnalysisView({ summaries, purchases, selectedTicker, onSelectTic
           {/* Ticker header */}
           <div className="flex items-center gap-3 flex-wrap">
             <button
-              onClick={() => openGoogleFinance(summary.ticker)}
+              onClick={() => openQuotePage(summary.ticker)}
               className="flex items-center gap-2 text-2xl font-bold text-primary hover:underline"
             >
               {summary.ticker}

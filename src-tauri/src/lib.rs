@@ -38,6 +38,7 @@ pub fn run() {
             commands::db_portfolios::db_star_portfolio,
             commands::db_portfolios::db_reorder_portfolios,
             commands::db_portfolios::db_set_position_sort_mode,
+            commands::db_portfolios::db_set_portfolio_default_tab,
             commands::db_portfolios::db_touch_portfolio_import,
             commands::db_portfolios::db_list_portfolio_groups,
             commands::db_portfolios::db_create_portfolio_group,

@@ -251,7 +251,7 @@ mod tests {
     fn synced_broker_identity_upgrade_preserves_legacy_rows() {
         let conn = Connection::open_in_memory().unwrap();
         run_all(&conn).unwrap();
-        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; ALTER TABLE broker_transactions DROP COLUMN amount; ALTER TABLE broker_transactions DROP COLUMN currency; ALTER TABLE broker_transactions DROP COLUMN description; ALTER TABLE broker_accounts DROP COLUMN history_version; DROP TABLE broker_account_snapshots; ALTER TABLE portfolios DROP COLUMN group_id; DROP TABLE portfolio_groups; PRAGMA user_version=27;
+        conn.execute_batch("DROP INDEX idx_broker_authorization; ALTER TABLE broker_connections DROP COLUMN remote_authorization_id; ALTER TABLE broker_connections DROP COLUMN archived_at; ALTER TABLE broker_transactions DROP COLUMN amount; ALTER TABLE broker_transactions DROP COLUMN currency; ALTER TABLE broker_transactions DROP COLUMN description; ALTER TABLE broker_accounts DROP COLUMN history_version; DROP TABLE broker_account_snapshots; ALTER TABLE portfolios DROP COLUMN default_tab; ALTER TABLE portfolios DROP COLUMN group_id; DROP TABLE portfolio_groups; PRAGMA user_version=27;
             INSERT INTO broker_connections (id,provider,environment,label,credential_ref,created_at) VALUES ('imported','snaptrade','read','Keep my label','broker:imported',123);
             INSERT INTO broker_accounts (id,connection_id,provider_account_id,equity,cash,visible) VALUES (99,'imported','remote-account',300,17,1);").unwrap();
         run_all(&conn).unwrap();
@@ -270,7 +270,17 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 32);
+        assert_eq!(v, 33);
+    }
+
+    #[test]
+    fn v33_portfolios_default_to_analysis_tab() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_all(&conn).unwrap();
+        let tab: String = conn
+            .query_row("SELECT default_tab FROM portfolios WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tab, "analysis");
     }
 
     #[test]
@@ -640,7 +650,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 32);
+        assert_eq!(v, 33);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1127,6 +1137,12 @@ CREATE INDEX IF NOT EXISTS idx_cash_events_portfolio ON cash_events(portfolio_id
 CREATE INDEX IF NOT EXISTS idx_cash_events_source_sale ON cash_events(source_sale_id);
 "#;
 
+/// V33: the tab a portfolio opens on when it's selected in the sidebar. A
+/// tab the portfolio doesn't offer (Orders without a broker that exposes
+/// them, Cash on a linked portfolio) falls back to Analysis in the frontend.
+const MIGRATION_V33: &str =
+    "ALTER TABLE portfolios ADD COLUMN default_tab TEXT NOT NULL DEFAULT 'analysis';";
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1164,6 +1180,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (30, MIGRATION_V30),
         (31, MIGRATION_V31),
         (32, MIGRATION_V32),
+        (33, MIGRATION_V33),
     ];
 
     let user_version: i64 =
