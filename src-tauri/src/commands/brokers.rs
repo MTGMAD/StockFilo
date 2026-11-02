@@ -638,7 +638,7 @@ async fn sync_one(
         };
 
         let permit = writes.permit().await.ok_or(BrokerError::SyncPaused)?;
-        let (acct_id, visible) = state
+        let acct_id = state
             .with_txn(|conn| {
                 // New accounts default to visible: every current provider
                 // (Alpaca) auto-imports everything it returns. An aggregator
@@ -674,16 +674,17 @@ async fn sync_one(
                 });
                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                 store::record_snapshot(conn, id, &today, acct.equity, acct.cash, positions_value)?;
-                Ok((id, visible))
+                Ok(id)
             })
             .map_err(BrokerError::Db)?;
         drop(permit);
 
         total_positions += positions.as_ref().map_or(0, Vec::len);
 
-        // A hidden account has no Purchases view to fill — don't spend its
-        // rate-limited requests on history nobody will see.
-        if descriptor.supports_activities && visible {
+        // Hidden accounts too: a brokerage may only hand out a limited window
+        // of history, so anything not fetched while it's available can be
+        // gone by the time the account is shown.
+        if descriptor.supports_activities {
             // Re-fetch from the last stored day rather than the day after, so a
             // fill recorded later on a day already seen is not missed. The
             // unique index makes the overlap free. An account whose history

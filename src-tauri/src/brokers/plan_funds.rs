@@ -5,8 +5,8 @@
 //! "Dodge & Cox Stock X", which Yahoo lists as DOXGX at the same price to the
 //! cent, so it gets an alias and Yahoo supplies everything a listed fund has.
 //! Others exist only inside the plan (Y8V5, "Mid Cap Growth IV R1"); no
-//! outside source has them, so each sync records the broker's price, and that
-//! history is their chart and daily change.
+//! outside source has them, so the daily holdings history each sync records
+//! (`store::record_position_day`) is their chart and daily change.
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -155,22 +155,14 @@ pub fn save_alias(conn: &Connection, a: &AliasResult, now: i64) -> rusqlite::Res
     Ok(())
 }
 
-/// One price per symbol per day; the day's last sync wins.
-pub fn record_price(conn: &Connection, provider_symbol: &str, day: &str, price: f64) -> rusqlite::Result<()> {
-    conn.execute(
-        "INSERT OR REPLACE INTO broker_position_prices (provider_symbol, day, price) VALUES (?1, ?2, ?3)",
-        params![provider_symbol, day, price],
-    )?;
-    Ok(())
-}
-
 /// Recorded prices for the holding Yahoo knows as `ticker` (its provider
 /// symbol, or a symbol whose position carries that ticker), oldest first.
 pub fn history(conn: &Connection, ticker: &str, since_day: Option<&str>) -> rusqlite::Result<Vec<(String, f64)>> {
     let mut stmt = conn.prepare(
-        "SELECT day, AVG(price) FROM broker_position_prices \
+        "SELECT day, AVG(price) FROM broker_position_history \
          WHERE (provider_symbol = ?1 \
                 OR provider_symbol IN (SELECT provider_symbol FROM broker_positions WHERE ticker = ?1)) \
+           AND price IS NOT NULL \
            AND (?2 IS NULL OR day >= ?2) \
          GROUP BY day ORDER BY day",
     )?;
@@ -230,9 +222,12 @@ mod tests {
     fn history_is_found_by_provider_symbol_or_by_ticker() {
         let conn = Connection::open_in_memory().unwrap();
         migrations::run_all(&conn).unwrap();
-        record_price(&conn, "Y8V5", "2026-11-01", 9.40).unwrap();
-        record_price(&conn, "Y8V5", "2026-11-02", 9.50).unwrap();
-        record_price(&conn, "Y8V5", "2026-11-02", 9.52).unwrap();
+        let day = |d: &str, price: f64| {
+            crate::brokers::store::record_position_day(&conn, 1, "Y8V5", d, 100.0, Some(price)).unwrap()
+        };
+        day("2026-11-01", 9.40);
+        day("2026-11-02", 9.50);
+        day("2026-11-02", 9.52);
         assert_eq!(
             history(&conn, "Y8V5", None).unwrap(),
             vec![("2026-11-01".to_string(), 9.40), ("2026-11-02".to_string(), 9.52)]

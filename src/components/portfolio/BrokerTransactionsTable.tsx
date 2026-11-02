@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { BrokerTransaction } from "../../types";
 import { cn } from "../../lib/utils";
 import { Lock } from "lucide-react";
@@ -36,6 +37,18 @@ function cashAmount(t: BrokerTransaction): number | null {
   return null;
 }
 
+/** A fill is its side (buy/sell); every other row is its kind. */
+function typeOf(t: BrokerTransaction): string {
+  return t.kind === "fill" && t.side ? t.side : t.kind;
+}
+
+const TYPE_LABEL: Record<string, string> = { buy: "Buys", sell: "Sells", ...KIND_LABEL };
+const TYPE_ORDER = ["buy", "sell", "dividend", "interest", "deposit", "withdrawal", "fee", "transfer", "split", "other"];
+
+function sumAmounts(rows: BrokerTransaction[]): number {
+  return rows.reduce((s, t) => s + (cashAmount(t) ?? 0), 0);
+}
+
 function shares(v: number | null): string {
   if (v == null) return "—";
   return v.toLocaleString(undefined, { maximumFractionDigits: 6 });
@@ -51,6 +64,8 @@ function shares(v: number | null): string {
 export function BrokerTransactionsTable({
   transactions,
 }: BrokerTransactionsTableProps) {
+  const [selectedType, setSelectedType] = useState<string>("all");
+
   if (transactions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center flex-1 gap-2 text-muted-foreground p-8 text-center">
@@ -67,14 +82,66 @@ export function BrokerTransactionsTable({
     );
   }
 
+  const byType = new Map<string, BrokerTransaction[]>();
+  for (const t of transactions) {
+    const key = typeOf(t);
+    byType.set(key, [...(byType.get(key) ?? []), t]);
+  }
+  const types = [...byType.keys()].sort(
+    (a, b) =>
+      (TYPE_ORDER.indexOf(a) + 1 || TYPE_ORDER.length + 1) -
+      (TYPE_ORDER.indexOf(b) + 1 || TYPE_ORDER.length + 1),
+  );
+  // A type that isn't in this portfolio's history (after switching
+  // portfolios) falls back to All.
+  const activeType = byType.has(selectedType) ? selectedType : "all";
+  const shown = activeType === "all" ? transactions : byType.get(activeType)!;
+  const chips = [
+    { key: "all", label: "All", rows: transactions },
+    ...types.map((key) => ({ key, label: TYPE_LABEL[key] ?? key, rows: byType.get(key)! })),
+  ];
+
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="px-6 py-3 flex items-center gap-2 text-xs text-muted-foreground border-b border-border">
         <Lock className="w-3.5 h-3.5 shrink-0" />
         <span>
           Reported by your broker — read-only. Values shown are exactly as
-          received; nothing is calculated or filled in.
+          received; only the totals are added up here.
         </span>
+      </div>
+
+      <div className="px-6 py-3 flex flex-wrap gap-2 border-b border-border">
+        {chips.map(({ key, label, rows }) => {
+          const total = sumAmounts(rows);
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSelectedType(key)}
+              className={cn(
+                "flex flex-col items-start rounded-lg border px-3 py-1.5 text-left transition-colors",
+                activeType === key
+                  ? "border-primary bg-primary/10"
+                  : "border-border hover:border-foreground/30 hover:bg-accent/40",
+              )}
+              title={key === "all" ? "Net cash in and out across every type" : undefined}
+            >
+              <span className="text-xs font-medium text-foreground">
+                {label}
+                <span className="ml-1 font-normal text-muted-foreground">({rows.length})</span>
+              </span>
+              <span
+                className={cn(
+                  "text-sm font-semibold tabular-nums",
+                  total > 0 ? "text-positive" : total < 0 ? "text-negative" : "text-muted-foreground",
+                )}
+              >
+                {money(total)}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <table className="w-full text-sm">
@@ -89,7 +156,7 @@ export function BrokerTransactionsTable({
           </tr>
         </thead>
         <tbody>
-          {transactions.map((t) => {
+          {shown.map((t) => {
             const amount = cashAmount(t);
             return (
               <tr
@@ -154,6 +221,22 @@ export function BrokerTransactionsTable({
             );
           })}
         </tbody>
+        <tfoot className="sticky bottom-0 bg-background">
+          <tr className="border-t border-border font-semibold">
+            <td className="px-6 py-2" colSpan={5}>
+              {activeType === "all" ? "Net total" : `Total ${(TYPE_LABEL[activeType] ?? activeType).toLowerCase()}`}
+              <span className="ml-1 font-normal text-muted-foreground">({shown.length})</span>
+            </td>
+            <td
+              className={cn(
+                "px-6 py-2 text-right tabular-nums",
+                sumAmounts(shown) > 0 && "text-positive",
+              )}
+            >
+              {money(sumAmounts(shown))}
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   );

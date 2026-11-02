@@ -270,7 +270,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 35);
+        assert_eq!(v, 36);
     }
 
     #[test]
@@ -650,7 +650,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 35);
+        assert_eq!(v, 36);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1167,6 +1167,30 @@ CREATE TABLE IF NOT EXISTS broker_position_prices (
 );
 "#;
 
+/// V36: every broker holding, every day — shares as well as price, per
+/// account. `broker_positions` only ever holds the latest snapshot, and a
+/// holding with no transactions (TransAmerica's plan funds) has no other
+/// record of how many shares it had. Replaces V35's per-symbol price table;
+/// its rows all date from the day it existed, so today's positions say which
+/// account each belongs to.
+const MIGRATION_V36: &str = r#"
+CREATE TABLE IF NOT EXISTS broker_position_history (
+    broker_account_id INTEGER NOT NULL,
+    provider_symbol   TEXT NOT NULL,
+    day               TEXT NOT NULL,
+    qty               REAL NOT NULL,
+    price             REAL,
+    market_value      REAL,
+    PRIMARY KEY (broker_account_id, provider_symbol, day)
+);
+INSERT OR IGNORE INTO broker_position_history
+    (broker_account_id, provider_symbol, day, qty, price, market_value)
+SELECT bp.broker_account_id, pp.provider_symbol, pp.day, bp.qty, pp.price, bp.qty * pp.price
+FROM broker_position_prices pp
+JOIN broker_positions bp ON bp.provider_symbol = pp.provider_symbol;
+DROP TABLE broker_position_prices;
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1207,6 +1231,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (33, MIGRATION_V33),
         (34, MIGRATION_V34),
         (35, MIGRATION_V35),
+        (36, MIGRATION_V36),
     ];
 
     let user_version: i64 =

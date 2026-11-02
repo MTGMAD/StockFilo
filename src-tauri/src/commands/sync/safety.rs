@@ -134,7 +134,7 @@ fn fingerprint(conn: &Connection) -> Result<String, String> { hash_records(conn,
 fn broker_refreshed(table: &str, column: &str) -> bool {
     match table {
         "broker_positions" | "broker_transactions" | "broker_account_snapshots"
-        | "broker_position_prices" | "symbol_aliases" => true,
+        | "broker_position_history" | "symbol_aliases" => true,
         "broker_accounts" => matches!(column, "account_mask" | "currency" | "equity" | "cash" | "buying_power" | "snapshot_at" | "history_version"),
         "broker_connections" => matches!(column, "last_synced_at" | "last_sync_status"),
         _ => false,

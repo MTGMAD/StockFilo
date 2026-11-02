@@ -178,9 +178,14 @@ pub fn replace_positions(
         )?;
         written += 1;
 
-        if let Some(price) = p.current_price.filter(|&v| v > 0.0) {
-            plan_funds::record_price(conn, &p.provider_symbol, &today, price)?;
-        }
+        record_position_day(
+            conn,
+            broker_account_id,
+            &p.provider_symbol,
+            &today,
+            p.qty,
+            p.current_price.filter(|&v| v > 0.0),
+        )?;
 
         // Give Yahoo a cache row to fill with reference data (name, asset type,
         // analyst target, dividend yield). Prices come from the broker; this is
@@ -193,6 +198,26 @@ pub fn replace_positions(
     Ok(written)
 }
 
+/// One row per holding per account per day; the day's last sync wins. Kept
+/// forever: it is the only record of how many shares a holding with no
+/// transactions had on a given day. A day with no row had no sync.
+pub fn record_position_day(
+    conn: &Connection,
+    broker_account_id: i64,
+    provider_symbol: &str,
+    day: &str,
+    qty: f64,
+    price: Option<f64>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO broker_position_history \
+           (broker_account_id, provider_symbol, day, qty, price, market_value) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![broker_account_id, provider_symbol, day, qty, price, price.map(|p| p * qty)],
+    )?;
+    Ok(())
+}
+
 pub fn list_positions(
     conn: &Connection,
     broker_account_id: i64,
@@ -201,10 +226,10 @@ pub fn list_positions(
         "SELECT broker_account_id, provider_symbol, ticker, asset_class, qty, avg_entry_price, \
                 cost_basis, current_price, market_value, unrealized_pl, unrealized_plpc, \
                 change_today, snapshot_at, name, \
-                (SELECT pp.price FROM broker_position_prices pp \
-                  WHERE pp.provider_symbol = bp.provider_symbol \
-                    AND ABS(pp.price - bp.current_price) > 1e-9 \
-                  ORDER BY pp.day DESC LIMIT 1) \
+                (SELECT h.price FROM broker_position_history h \
+                  WHERE h.provider_symbol = bp.provider_symbol \
+                    AND ABS(h.price - bp.current_price) > 1e-9 \
+                  ORDER BY h.day DESC LIMIT 1) \
          FROM broker_positions bp WHERE broker_account_id = ?1 \
          ORDER BY market_value DESC, provider_symbol ASC",
     )?;
@@ -584,6 +609,10 @@ pub fn delete_connection(
             "DELETE FROM broker_account_snapshots WHERE broker_account_id = ?1",
             params![acct],
         )?;
+        conn.execute(
+            "DELETE FROM broker_position_history WHERE broker_account_id = ?1",
+            params![acct],
+        )?;
 
         if keep_portfolio {
             conn.execute(
@@ -635,6 +664,21 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    #[test]
+    fn every_sync_day_keeps_each_holdings_shares_and_price() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &RemoteAccount { id: "a1".into(), mask: None, currency: "USD".into(), equity: None, cash: None, buying_power: None }, true).unwrap();
+        let mut p = pos("Y8V5", 4266.2, "mutualfund");
+        p.current_price = Some(9.52);
+        replace_positions(&conn, acct, &[p]).unwrap();
+        // Sold out: the snapshot empties, the history row stays.
+        replace_positions(&conn, acct, &[]).unwrap();
+        let (qty, price): (f64, f64) = conn
+            .query_row("SELECT qty, price FROM broker_position_history WHERE provider_symbol = 'Y8V5'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((qty, price), (4266.2, 9.52));
     }
 
     fn pos(sym: &str, qty: f64, class: &str) -> RemotePosition {
