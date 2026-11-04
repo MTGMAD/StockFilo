@@ -23,6 +23,7 @@ import { useInvestorMode } from "./hooks/useInvestorMode";
 import { useLinkOpenMode } from "./hooks/useLinkOpenMode";
 import { useQuoteSite } from "./hooks/useQuoteSite";
 import { QuoteSiteContext } from "./lib/quoteSites";
+import { totalDeposited } from "./lib/cash";
 import { useInfoTooltips } from "./hooks/useInfoTooltips";
 import { useAlertSettings } from "./hooks/useAlertSettings";
 import { useAlertsMonitor } from "./hooks/useAlertsMonitor";
@@ -332,6 +333,7 @@ export default function App() {
         equity: acct?.equity ?? null,
         cash: acct?.cash ?? null,
         buyingPower: acct?.buying_power ?? null,
+        deposited: totalDeposited(broker.transactions),
         gain: reported ? pl : null,
       };
     }
@@ -357,7 +359,7 @@ export default function App() {
       gain: priced ? value - cost : null,
       cash: cashTotal,
     };
-  }, [inPortfolio, isBroker, connections, activePortfolio, summaries, cashTotal]);
+  }, [inPortfolio, isBroker, connections, activePortfolio, summaries, cashTotal, broker.transactions]);
 
   const headerTitle =
     view === "portfolio" && activePortfolio

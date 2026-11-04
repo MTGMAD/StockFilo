@@ -3,6 +3,7 @@ import { cn, formatCurrency } from "../../lib/utils";
 import type { SyncStatus } from "../../types";
 import { BrokerLogo } from "../shared/BrokerLogo";
 import { accountKindStyle } from "../../lib/accountTypes";
+import type { DepositTotal } from "../../lib/cash";
 
 /**
  * Figures shown beneath the portfolio name.
@@ -18,6 +19,7 @@ export type HeaderFigures =
       equity: number | null;
       cash: number | null;
       buyingPower: number | null;
+      deposited: DepositTotal | null;
       gain: number | null;
     }
   | {
@@ -133,6 +135,14 @@ export function Header({
                       value={figures.buyingPower}
                       separator
                     />
+                    {figures.deposited && (
+                      <Figure
+                        label="Deposited"
+                        value={figures.deposited.total}
+                        separator
+                        title={`Total deposits reported by the brokerage since ${formatDay(figures.deposited.since)}. Withdrawals and transfers are not subtracted.`}
+                      />
+                    )}
                     <GainFigure gain={figures.gain} />
                   </>
                 ) : (
@@ -240,6 +250,15 @@ function GainFigure({ gain }: { gain: number | null }) {
   );
 }
 
+/** "2024-09-23" → "Sep 23, 2024", read as a calendar day rather than UTC midnight. */
+function formatDay(day: string): string {
+  return new Date(`${day}T00:00:00`).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 /**
  * One labelled figure. Renders nothing at all when the value is absent, rather
  * than printing a dash — an omitted figure and a zero are different facts.
@@ -249,19 +268,23 @@ function Figure({
   value,
   separator,
   tone,
+  title,
 }: {
   label: string;
   value: number | null;
   separator?: boolean;
   tone?: string;
+  title?: string;
 }) {
   if (value == null) return null;
   return (
     <>
       {separator && <span className="mx-1.5 text-muted-foreground/50">·</span>}
-      {label}{" "}
-      <span className={cn("font-semibold text-foreground", tone)}>
-        {formatCurrency(value)}
+      <span title={title}>
+        {label}{" "}
+        <span className={cn("font-semibold text-foreground", tone)}>
+          {formatCurrency(value)}
+        </span>
       </span>
     </>
   );

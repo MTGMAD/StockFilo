@@ -1,4 +1,4 @@
-import type { CashAnchor, CashEvent, Purchase } from "../types";
+import type { BrokerTransaction, CashAnchor, CashEvent, Purchase } from "../types";
 
 /** A completed row from an account-activity export, reduced to what cash needs. */
 export interface ActivityRow {
@@ -109,4 +109,29 @@ export function computeCash(
     return { balance: events.reduce((s, e) => s + e.amount, 0), mode: "events" };
   }
   return { balance: null, mode: "none" };
+}
+
+export interface DepositTotal {
+  total: number;
+  /** Earliest day of history on hand (YYYY-MM-DD). Brokerages only report so
+   *  far back, so deposits before this day can't be in the total. */
+  since: string;
+}
+
+/**
+ * Cash put into a broker account: the sum of its deposit rows, signed so a
+ * returned deposit takes itself back out. Withdrawals and transfers aren't
+ * subtracted. Null when no deposit has been reported, which is not the same
+ * as nothing having been deposited.
+ */
+export function totalDeposited(transactions: BrokerTransaction[]): DepositTotal | null {
+  const deposits = transactions.filter((t) => t.kind === "deposit" && t.amount != null);
+  if (deposits.length === 0) return null;
+  return {
+    total: deposits.reduce((s, t) => s + t.amount!, 0),
+    since: transactions.reduce(
+      (min, t) => (t.occurred_at < min ? t.occurred_at : min),
+      deposits[0].occurred_at,
+    ),
+  };
 }
