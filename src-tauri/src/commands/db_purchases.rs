@@ -141,6 +141,7 @@ pub fn db_clear_all_purchases(state: State<'_, DbManager>) -> Result<(), String>
         conn.execute("DELETE FROM cash_events", [])?;
         conn.execute("DELETE FROM cash_anchors", [])?;
         conn.execute("DELETE FROM journal_notes", [])?;
+        conn.execute("DELETE FROM journal_account_values", [])?;
         conn.execute(
             "DELETE FROM stocks WHERE ticker NOT IN (SELECT ticker FROM watchlist) \
              AND ticker NOT IN (SELECT ticker FROM broker_positions WHERE ticker IS NOT NULL)",
@@ -167,6 +168,10 @@ pub fn db_clear_portfolio_purchases(
         )?;
         conn.execute(
             "DELETE FROM cash_events WHERE portfolio_id = ?1",
+            params![portfolio_id],
+        )?;
+        conn.execute(
+            "DELETE FROM journal_account_values WHERE portfolio_id = ?1",
             params![portfolio_id],
         )?;
         conn.execute(

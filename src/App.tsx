@@ -481,6 +481,7 @@ export default function App() {
               portfolioName={activePortfolio?.name ?? ""}
               readOnly={isBroker}
               brokerTransactions={isBroker ? broker.transactions : undefined}
+              brokerAccountId={isBroker ? (activePortfolio?.broker_account_id ?? null) : null}
               ordersAccountId={
                 isBroker && brokerConnection?.supports_orders && canSyncBroker
                   ? (activePortfolio?.broker_account_id ?? null)

@@ -581,6 +581,16 @@ export interface JournalNote {
   updated_at: number;
 }
 
+/** A saved daily account value for a manual portfolio. */
+export interface JournalAccountValue {
+  portfolio_id: number;
+  as_of: string;
+  positions_value: number;
+  cash_value: number | null;
+  total_value: number | null;
+  captured_at: number;
+}
+
 /** A manual portfolio's cash balance on one day, worked out from an imported
  *  activity file. Cash is that balance plus later activity (see lib/cash.ts). */
 export interface CashAnchor {

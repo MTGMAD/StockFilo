@@ -270,7 +270,8 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 36);
+        assert_eq!(v, 37);
+        assert!(table_exists(&conn, "journal_account_values"));
     }
 
     #[test]
@@ -650,7 +651,7 @@ mod tests {
         let v: i64 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 36);
+        assert_eq!(v, 37);
     }
 
     /// Applies the migrations to a real database file and verifies no user data
@@ -1191,6 +1192,19 @@ JOIN broker_positions bp ON bp.provider_symbol = pp.provider_symbol;
 DROP TABLE broker_position_prices;
 "#;
 
+/// V37: daily manual-portfolio account values shown in the journal.
+const MIGRATION_V37: &str = r#"
+CREATE TABLE IF NOT EXISTS journal_account_values (
+    portfolio_id    INTEGER NOT NULL,
+    as_of           TEXT NOT NULL,
+    positions_value REAL NOT NULL,
+    cash_value      REAL,
+    total_value     REAL,
+    captured_at     INTEGER NOT NULL,
+    PRIMARY KEY (portfolio_id, as_of)
+);
+"#;
+
 /// Apply all migrations in order, using PRAGMA user_version to track progress.
 /// Backward-compatible: if a `_sqlx_migrations` table exists (old tauri-plugin-sql
 /// database), we read the max version from it and skip those migrations.
@@ -1232,6 +1246,7 @@ pub fn run_all(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
         (34, MIGRATION_V34),
         (35, MIGRATION_V35),
         (36, MIGRATION_V36),
+        (37, MIGRATION_V37),
     ];
 
     let user_version: i64 =

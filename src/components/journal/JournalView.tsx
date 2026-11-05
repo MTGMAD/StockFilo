@@ -5,7 +5,7 @@ import {
   Download,
   NotebookPen,
 } from "lucide-react";
-import type { JournalNote } from "../../types";
+import type { CashAnchor, JournalNote, Purchase } from "../../types";
 import { cn, formatCurrency, pnlColor } from "../../lib/utils";
 import { listJournalNotes } from "../../lib/db";
 import {
@@ -31,6 +31,7 @@ import { NoteBox } from "./NoteBox";
 import { TradeDetail } from "./TradeDetail";
 import { JournalFilters } from "./JournalFilters";
 import { JournalReports } from "./JournalReports";
+import { JournalAccountHistory } from "./JournalAccountHistory";
 import { Stat, StatusBadge, compactMoney, shortDate } from "./journalUi";
 
 interface JournalViewProps {
@@ -39,6 +40,9 @@ interface JournalViewProps {
   /** Dividends, interest and fees. Pass null for accounts that don't record them
    *  (broker-linked accounts only sync buys and sells). */
   income: IncomeEvent[] | null;
+  purchases: Purchase[];
+  cashAnchor: CashAnchor | null;
+  brokerAccountId: number | null;
   onViewChart: (ticker: string) => void;
 }
 
@@ -53,7 +57,15 @@ const iso = (y: number, m: number, d: number) =>
 
 const isoDate = (d: Date) => iso(d.getFullYear(), d.getMonth(), d.getDate());
 
-export function JournalView({ portfolioId, fills, income, onViewChart }: JournalViewProps) {
+export function JournalView({
+  portfolioId,
+  fills,
+  income,
+  purchases,
+  cashAnchor,
+  brokerAccountId,
+  onViewChart,
+}: JournalViewProps) {
   const allTrades = useMemo(() => buildTrades(fills), [fills]);
   const [notes, setNotes] = useState<Map<string, JournalNote>>(new Map());
   const [filter, setFilter] = useState<TradeFilter>(EMPTY_FILTER);
@@ -163,14 +175,24 @@ export function JournalView({ portfolioId, fills, income, onViewChart }: Journal
 
   if (fills.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center flex-1 gap-2 text-muted-foreground p-8 text-center">
-        <NotebookPen className="w-5 h-5" />
-        <p className="text-sm font-medium text-foreground">No trades to journal yet</p>
-        <p className="text-xs max-w-sm">
-          The journal is built from your buys and sells. Record a purchase and a
-          sale (or sync a brokerage connection) and your round-trip trades show
-          up here with wins, losses and room for notes.
-        </p>
+      <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        <JournalAccountHistory
+          portfolioId={portfolioId}
+          fills={fills}
+          purchases={purchases}
+          income={income}
+          cashAnchor={cashAnchor}
+          brokerAccountId={brokerAccountId}
+        />
+        <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground p-8 text-center">
+          <NotebookPen className="w-5 h-5" />
+          <p className="text-sm font-medium text-foreground">No trades to journal yet</p>
+          <p className="text-xs max-w-sm">
+            The journal is built from your buys and sells. Record a purchase and a
+            sale (or sync a brokerage connection) and your round-trip trades show
+            up here with wins, losses and room for notes.
+          </p>
+        </div>
       </div>
     );
   }
@@ -215,11 +237,29 @@ export function JournalView({ portfolioId, fills, income, onViewChart }: Journal
       />
 
       {section === "reports" ? (
-        <JournalReports trades={trades} notes={notes} onOpenTrade={openTrade} />
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-5">
+          <JournalAccountHistory
+            portfolioId={portfolioId}
+            fills={fills}
+            purchases={purchases}
+            income={income}
+            cashAnchor={cashAnchor}
+            brokerAccountId={brokerAccountId}
+          />
+          <JournalReports trades={trades} notes={notes} onOpenTrade={openTrade} />
+        </div>
       ) : (
     <div className="flex-1 flex min-h-0 overflow-hidden">
       {/* Left: calendar + stats */}
       <div className="w-[440px] shrink-0 border-r border-border overflow-y-auto p-5 flex flex-col gap-5">
+        <JournalAccountHistory
+          portfolioId={portfolioId}
+          fills={fills}
+          purchases={purchases}
+          income={income}
+          cashAnchor={cashAnchor}
+          brokerAccountId={brokerAccountId}
+        />
         <div className="rounded-xl border border-border p-4">
           <div className="flex items-center justify-between mb-3">
             <button type="button" onClick={() => shiftMonth(-1)} className="p-1.5 rounded-full hover:bg-muted" aria-label="Previous month">

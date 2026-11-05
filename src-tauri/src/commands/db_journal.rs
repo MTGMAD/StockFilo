@@ -14,6 +14,16 @@ pub struct JournalNote {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct JournalAccountValue {
+    pub portfolio_id: i64,
+    pub as_of: String,
+    pub positions_value: f64,
+    pub cash_value: Option<f64>,
+    pub total_value: Option<f64>,
+    pub captured_at: i64,
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -92,6 +102,91 @@ pub fn db_set_journal_note(
     state.with_conn(|conn| set_note(conn, portfolio_id, &trade_key, reflection, lesson, tags))
 }
 
+#[tauri::command]
+pub fn db_list_journal_account_values(
+    portfolio_id: i64,
+    state: State<'_, DbManager>,
+) -> Result<Vec<JournalAccountValue>, String> {
+    state.with_conn(|conn| list_account_values(conn, portfolio_id))
+}
+
+fn list_account_values(
+    conn: &Connection,
+    portfolio_id: i64,
+) -> rusqlite::Result<Vec<JournalAccountValue>> {
+    let mut stmt = conn.prepare(
+        "SELECT portfolio_id, as_of, positions_value, cash_value, total_value, captured_at \
+         FROM journal_account_values WHERE portfolio_id = ?1 ORDER BY as_of DESC",
+    )?;
+    let rows = stmt.query_map(params![portfolio_id], |r| {
+        Ok(JournalAccountValue {
+            portfolio_id: r.get(0)?,
+            as_of: r.get(1)?,
+            positions_value: r.get(2)?,
+            cash_value: r.get(3)?,
+            total_value: r.get(4)?,
+            captured_at: r.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+#[tauri::command]
+pub fn db_save_journal_account_value(
+    portfolio_id: i64,
+    as_of: String,
+    positions_value: f64,
+    cash_value: Option<f64>,
+    total_value: Option<f64>,
+    state: State<'_, DbManager>,
+) -> Result<(), String> {
+    if !positions_value.is_finite()
+        || cash_value.is_some_and(|v| !v.is_finite())
+        || total_value.is_some_and(|v| !v.is_finite())
+    {
+        return Err("Account values must be finite numbers.".into());
+    }
+    state.with_conn(|conn| {
+        save_account_value(
+            conn,
+            portfolio_id,
+            &as_of,
+            positions_value,
+            cash_value,
+            total_value,
+        )
+    })
+}
+
+fn save_account_value(
+    conn: &Connection,
+    portfolio_id: i64,
+    as_of: &str,
+    positions_value: f64,
+    cash_value: Option<f64>,
+    total_value: Option<f64>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO journal_account_values \
+         (portfolio_id, as_of, positions_value, cash_value, total_value, captured_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT(portfolio_id, as_of) DO UPDATE SET \
+           positions_value = excluded.positions_value, \
+           cash_value = excluded.cash_value, \
+           total_value = excluded.total_value, \
+           captured_at = excluded.captured_at",
+        params![
+            portfolio_id,
+            as_of,
+            positions_value,
+            cash_value,
+            total_value,
+            now_secs()
+        ],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +213,23 @@ mod tests {
         assert_eq!(n[0].tags, None);
         set_note(&c, 1, "TNON|2026-09-10|0", Some("  ".into()), None, None).unwrap();
         assert!(list_notes(&c, 1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn account_value_is_upserted_by_portfolio_and_date() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE journal_account_values (\
+             portfolio_id INTEGER NOT NULL, as_of TEXT NOT NULL, positions_value REAL NOT NULL, \
+             cash_value REAL, total_value REAL, captured_at INTEGER NOT NULL, \
+             PRIMARY KEY (portfolio_id, as_of));",
+        )
+        .unwrap();
+        save_account_value(&c, 1, "2026-11-04", 250.0, Some(10.0), Some(260.0)).unwrap();
+        save_account_value(&c, 1, "2026-11-04", 275.0, Some(10.0), Some(285.0)).unwrap();
+        let rows = list_account_values(&c, 1).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].positions_value, 275.0);
+        assert_eq!(rows[0].total_value, Some(285.0));
     }
 }

@@ -41,6 +41,7 @@ import type {
   Watchlist,
   DividendInfo,
   AlertDirection,
+  JournalAccountValue,
 } from "../types";
 
 // ── Portfolios ─────────────────────────────────────────────────────────────
@@ -1124,6 +1125,26 @@ export async function listJournalNotes(
   portfolioId: number,
 ): Promise<JournalNote[]> {
   return invoke<JournalNote[]>("db_list_journal_notes", { portfolioId });
+}
+
+export async function listJournalAccountValues(
+  portfolioId: number,
+): Promise<JournalAccountValue[]> {
+  return invoke<JournalAccountValue[]>("db_list_journal_account_values", {
+    portfolioId,
+  });
+}
+
+export async function saveJournalAccountValue(
+  value: Omit<JournalAccountValue, "captured_at">,
+): Promise<void> {
+  return invoke("db_save_journal_account_value", {
+    portfolioId: value.portfolio_id,
+    asOf: value.as_of,
+    positionsValue: value.positions_value,
+    cashValue: value.cash_value,
+    totalValue: value.total_value,
+  });
 }
 
 /** Upsert a journal note; one with every field blank is deleted. */

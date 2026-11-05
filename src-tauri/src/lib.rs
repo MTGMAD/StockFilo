@@ -68,6 +68,8 @@ pub fn run() {
             commands::db_cash_anchor::db_clear_cash_anchor,
             commands::db_journal::db_list_journal_notes,
             commands::db_journal::db_set_journal_note,
+            commands::db_journal::db_list_journal_account_values,
+            commands::db_journal::db_save_journal_account_value,
             // ── Stocks DB commands ─────────────────────────────────────────
             commands::db_stocks::db_get_cached_stocks,
             commands::db_stocks::db_upsert_stock,

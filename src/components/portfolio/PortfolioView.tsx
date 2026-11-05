@@ -204,6 +204,8 @@ interface PortfolioViewProps {
   readOnly?: boolean;
   /** Dated transaction history from the broker, shown instead of purchases. */
   brokerTransactions?: BrokerTransaction[];
+  /** Brokerage account ID used to read its saved daily equity history. */
+  brokerAccountId?: number | null;
   /** Broker account to show live orders for; null hides the Orders tab
    *  (manual portfolios, and brokers that don't expose orders). */
   ordersAccountId?: number | null;
@@ -237,6 +239,7 @@ export function PortfolioView({
   onDeletePortfolio,
   readOnly = false,
   brokerTransactions,
+  brokerAccountId = null,
   ordersAccountId = null,
 }: PortfolioViewProps) {
   const quoteSite = useContext(QuoteSiteContext);
@@ -1055,6 +1058,9 @@ export function PortfolioView({
             portfolioId={portfolioId}
             fills={journalFills}
             income={readOnly ? null : cashEvents}
+            purchases={purchases}
+            cashAnchor={cashAnchor}
+            brokerAccountId={brokerAccountId}
             onViewChart={selectTicker}
           />
         ) : shownTab === "performance" ? (

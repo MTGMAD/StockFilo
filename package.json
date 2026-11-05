@@ -1,6 +1,6 @@
 {
   "name": "stockfolio",
-  "version": "1.0.0",
+  "version": "0.1.10",
   "description": "App for tracking personal stocks and research",
   "main": "index.js",
   "scripts": {
