@@ -474,14 +474,17 @@ function TradeRow({ trade, hasNote, onClick }: { trade: JournalTrade; hasNote: b
     >
       <span className="font-semibold w-16 shrink-0">{trade.ticker}</span>
       <StatusBadge status={trade.status} />
-      <span className="text-xs text-muted-foreground flex-1 truncate">
-        {shortDate(trade.openDate)}
-        {trade.closeDate && trade.closeDate !== trade.openDate ? ` → ${shortDate(trade.closeDate)}` : ""}
-        {" · "}
-        {trade.totalBought.toLocaleString(undefined, { maximumFractionDigits: 4 })} sh
-        {" · "}
-        Avg entry {formatCurrency(trade.avgEntry)}
-        {trade.avgExit != null && ` · Avg exit ${formatCurrency(trade.avgExit)}`}
+      <span className="text-xs text-muted-foreground flex-1 min-w-0">
+        <span className="block truncate">
+          {shortDate(trade.openDate)}
+          {trade.closeDate && trade.closeDate !== trade.openDate ? ` → ${shortDate(trade.closeDate)}` : ""}
+          {" · "}
+          {trade.totalBought.toLocaleString(undefined, { maximumFractionDigits: 4 })} sh
+        </span>
+        <span className="block truncate tabular-nums">
+          Avg entry {formatCurrency(trade.avgEntry)}
+          {trade.avgExit != null && ` · Avg exit ${formatCurrency(trade.avgExit)}`}
+        </span>
       </span>
       {hasNote && <NotebookPen className="w-3.5 h-3.5 text-positive" />}
       <span className={cn("font-semibold tabular-nums", pnlColor(trade.status === "open" ? null : trade.realizedPnl))}>
