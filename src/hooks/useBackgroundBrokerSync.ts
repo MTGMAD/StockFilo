@@ -3,6 +3,10 @@ import { listBrokerConnections, syncBrokerConnection } from "../lib/brokers";
 
 /** How stale a connection may get before the background pass refreshes it. */
 const REFRESH_AFTER_SECS = 120;
+/** The same for a connection whose accounts are all hidden. Nothing on screen
+ *  depends on it, but a brokerage only hands out a limited window of history,
+ *  so what isn't saved while it's available can be gone by the time it's shown. */
+const HIDDEN_REFRESH_AFTER_SECS = 6 * 60 * 60;
 /** How often to check for due connections. Cheap — it only reads the local DB. */
 const CHECK_EVERY_MS = 30_000;
 
@@ -39,9 +43,11 @@ export function useBackgroundBrokerSync(onSynced: () => Promise<void> | void) {
             !c.disabled &&
             c.archived_at == null &&
             c.has_credentials &&
-            c.accounts.some((a) => a.visible) &&
             (c.last_synced_at == null ||
-              now - c.last_synced_at >= REFRESH_AFTER_SECS),
+              now - c.last_synced_at >=
+                (c.accounts.some((a) => a.visible)
+                  ? REFRESH_AFTER_SECS
+                  : HIDDEN_REFRESH_AFTER_SECS)),
         );
         let synced = false;
         for (const c of due) {

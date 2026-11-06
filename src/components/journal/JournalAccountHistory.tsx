@@ -5,9 +5,10 @@ import type {
   JournalAccountValue,
   Purchase,
 } from "../../types";
-import { listJournalAccountValues, saveJournalAccountValue, fetchPriceOnDate } from "../../lib/db";
+import { listJournalAccountValues, saveJournalAccountValue } from "../../lib/db";
 import { listBrokerSnapshots } from "../../lib/brokers";
 import type { Fill, IncomeEvent } from "../../lib/journal";
+import { accountValueOn, localDate, priorDate } from "../../lib/manualValues";
 import { cn, formatCurrency } from "../../lib/utils";
 import { shortDate } from "./journalUi";
 
@@ -23,41 +24,6 @@ interface JournalAccountHistoryProps {
   income: IncomeEvent[] | null;
   cashAnchor: CashAnchor | null;
   brokerAccountId: number | null;
-}
-
-function priorDate(today: string): string {
-  const date = new Date(`${today}T12:00:00`);
-  date.setDate(date.getDate() - 1);
-  while (date.getDay() === 0 || date.getDay() === 6) {
-    date.setDate(date.getDate() - 1);
-  }
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function localDate(): string {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
-
-function cashAtDate(
-  date: string,
-  anchor: CashAnchor | null,
-  purchases: Purchase[],
-  income: IncomeEvent[],
-): number | null {
-  if (anchor) {
-    if (anchor.as_of > date) return null;
-    const laterEvents = income
-      .filter((event) => event.occurred_at > anchor.as_of && event.occurred_at <= date)
-      .reduce((sum, event) => sum + event.amount, 0);
-    const laterPurchases = purchases
-      .filter((purchase) => purchase.purchased_at > anchor.as_of && purchase.purchased_at <= date)
-      .reduce((sum, purchase) => sum + purchase.shares * purchase.price_per_share, 0);
-    return Math.round((anchor.balance + laterEvents - laterPurchases) * 100) / 100;
-  }
-  const eventsThroughDate = income.filter((event) => event.occurred_at <= date);
-  if (eventsThroughDate.length === 0) return null;
-  return Math.round(eventsThroughDate.reduce((sum, event) => sum + event.amount, 0) * 100) / 100;
 }
 
 /** Some brokerages' balance refreshes a day behind their holdings. When a day's
@@ -133,44 +99,8 @@ export function JournalAccountHistory({
         setRows(savedValues.filter((row) => row.as_of <= asOf).slice(0, 30));
       }
 
-      const sharesByTicker = new Map<string, number>();
-      for (const fill of fills) {
-        if (fill.date > asOf) continue;
-        sharesByTicker.set(
-          fill.ticker,
-          (sharesByTicker.get(fill.ticker) ?? 0) +
-            (fill.side === "buy" ? fill.qty : -fill.qty),
-        );
-      }
-      const holdings = [...sharesByTicker]
-        .filter(([, shares]) => shares > 1e-9)
-        .map(([ticker, shares]) => ({ ticker, shares }));
-      const prices: { ticker: string; value: number | null }[] = [];
-      for (let i = 0; i < holdings.length; i += 4) {
-        const batch = await Promise.all(
-          holdings.slice(i, i + 4).map(async ({ ticker, shares }) => {
-            const price = await fetchPriceOnDate(ticker, asOf);
-            return { ticker, value: price == null ? null : shares * price };
-          }),
-        );
-        prices.push(...batch);
-      }
-      const missing = prices.find((price) => price.value == null);
-      if (missing) {
-        throw new Error(`No historical closing price is available for ${missing.ticker}.`);
-      }
-      const positionsValue = prices.reduce((sum, price) => sum + (price.value ?? 0), 0);
-      const cashValue = income
-        ? cashAtDate(asOf, cashAnchor, purchases, income)
-        : null;
-      const totalValue = cashValue == null ? null : positionsValue + cashValue;
-      await saveJournalAccountValue({
-        portfolio_id: portfolioId,
-        as_of: asOf,
-        positions_value: positionsValue,
-        cash_value: cashValue,
-        total_value: totalValue,
-      });
+      const value = await accountValueOn(asOf, fills, purchases, income, cashAnchor);
+      await saveJournalAccountValue({ portfolio_id: portfolioId, as_of: asOf, ...value });
       const saved = await listJournalAccountValues(portfolioId);
       if (!cancelled) {
         setRows(saved.filter((row) => row.as_of <= asOf).slice(0, 30));

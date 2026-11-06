@@ -72,11 +72,11 @@ export function SyncReviewDialog({ review, onClose, onReviewChange, onComplete }
           {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
           {needsRefresh ? <button disabled={busy} onClick={() => void refresh()} className="px-4 py-2 rounded-md bg-primary text-primary-foreground disabled:opacity-50">Refresh review</button> : <>
             {review.remote_exists && <div className="space-y-2 rounded-lg border border-primary/40 p-3">
-              <p className="text-sm">Loading this copy replaces this device’s records. A local recovery backup will be saved first.</p>
+              <p className="text-sm">Loading this copy replaces this device’s records. Account history from both copies is kept, and a local recovery backup will be saved first.</p>
               <button disabled={busy} onClick={() => void transfer("download")} className="px-4 py-2 rounded-md bg-primary text-primary-foreground disabled:opacity-50">{busy ? "Working…" : review.restore ? "Restore this backup" : "Load remote database"}</button>
             </div>}
             {!review.restore && <div className="space-y-3 rounded-lg border border-border p-3">
-              <p className="text-sm">{review.remote_exists ? "Uploading replaces the existing remote database. A recovery copy will be saved before replacement." : "No remote database exists. Uploading creates one from this device’s records."}</p>
+              <p className="text-sm">{review.remote_exists ? "Uploading replaces the records in the existing remote database. Account history from both copies is kept, and a recovery copy will be saved before replacement." : "No remote database exists. Uploading creates one from this device’s records."}</p>
               {review.upload_blocked_reason && <p className="text-sm text-amber-700 dark:text-amber-400">{review.upload_blocked_reason}</p>}
               {review.upload_allowed && <>
                 {requiresPhrase && <label className="block text-sm">Type <strong>{phrase}</strong> to approve this upload.

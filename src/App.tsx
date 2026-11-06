@@ -15,6 +15,7 @@ import { usePortfolio } from "./hooks/usePortfolio";
 import { useBrokerPortfolio } from "./hooks/useBrokerPortfolio";
 import { useBrokerConnections } from "./hooks/useBrokerConnections";
 import { useBackgroundBrokerSync } from "./hooks/useBackgroundBrokerSync";
+import { useManualAccountValues } from "./hooks/useManualAccountValues";
 import { usePortfolios } from "./hooks/usePortfolios";
 import { useWatchlist } from "./hooks/useWatchlist";
 import { useWatchlists } from "./hooks/useWatchlists";
@@ -185,6 +186,7 @@ export default function App() {
 
   const { connections, reload: reloadBrokers } = useBrokerConnections();
   useBackgroundBrokerSync(reloadBrokers);
+  useManualAccountValues();
   const brokerConnection =
     connections.find((c) =>
       c.accounts.some((a) => a.id === activePortfolio?.broker_account_id),

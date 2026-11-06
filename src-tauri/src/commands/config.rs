@@ -54,6 +54,10 @@ pub struct AppConfig {
     /// App icon chosen in Settings.  None = the default violet icon.
     #[serde(default)]
     pub app_icon: Option<String>,
+    /// This device's recovery copies have been checked for history the live
+    /// database lacks. Per device, because each holds its own copies.
+    #[serde(default)]
+    pub history_recovered: bool,
 }
 
 impl Default for AppConfig {
@@ -64,6 +68,7 @@ impl Default for AppConfig {
             sync_targets: Vec::new(),
             auto_sync_minutes: None,
             app_icon: None,
+            history_recovered: false,
         }
     }
 }

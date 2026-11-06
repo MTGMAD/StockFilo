@@ -186,8 +186,11 @@ copy. Existing targets require a fresh review after this safety upgrade.
 
 Every replacement requires a one-use approval tied to the reviewed local and
 remote versions. Approvals expire after ten minutes. If either copy changes,
-refresh the review. Both-copy conflicts are shown explicitly; whole databases
-are not merged automatically. Uploading over an existing remote requires
+refresh the review. Both-copy conflicts are shown explicitly; portfolios and
+other records come from the chosen copy and are not merged. Account history is
+the exception: transactions, daily values and daily holdings from both copies
+are always kept, for accounts that exist in the chosen copy. Restoring a backup
+puts back exactly what it holds. Uploading over an existing remote requires
 `REPLACE REMOTE`; an empty application requires `UPLOAD EMPTY DATABASE` plus
 an explicit checkbox, even after earlier successful transfers.
 

@@ -687,18 +687,22 @@ async fn sync_one(
         if descriptor.supports_activities {
             // Re-fetch from the last stored day rather than the day after, so a
             // fill recorded later on a day already seen is not missed. The
-            // unique index makes the overlap free. An account whose history
-            // predates the current fetch gets everything once instead — see
-            // `store::HISTORY_VERSION`.
-            let (since, backfill) = state
+            // unique index makes the overlap free. Everything is fetched
+            // instead when the account's history predates the current fetch
+            // (see `store::HISTORY_VERSION`), and once a day regardless, which
+            // adds any row posted late with an older date: nothing saved is
+            // ever rewritten by the comparison.
+            let (since, backfill, full) = state
                 .with_conn(|conn| {
                     let backfill = store::history_version(conn, acct_id)? < store::HISTORY_VERSION;
-                    let since = if backfill {
+                    let full = backfill
+                        || store::full_history_check_due(conn, acct_id, store::now_secs())?;
+                    let since = if full {
                         None
                     } else {
                         store::latest_activity_date(conn, acct_id)?
                     };
-                    Ok((since, backfill))
+                    Ok((since, backfill, full))
                 })
                 .map_err(BrokerError::Db)?;
 
@@ -718,6 +722,9 @@ async fn sync_one(
                     store::reconcile_provisional(conn, acct_id)?;
                     if backfill && fetch.history_complete {
                         store::set_history_version(conn, acct_id, store::HISTORY_VERSION)?;
+                    }
+                    if full && fetch.history_complete {
+                        store::set_history_checked(conn, acct_id, store::now_secs())?;
                     }
                     Ok(n)
                 })

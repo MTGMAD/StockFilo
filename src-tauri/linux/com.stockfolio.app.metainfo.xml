@@ -38,6 +38,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.12" date="2026-11-06">
+      <description>
+        <p>Keep account history from every device when syncing, and restore history lost to earlier syncs. Show gains for accounts older than their brokerage history, and save daily values for manual portfolios.</p>
+      </description>
+    </release>
     <release version="0.1.11" date="2026-11-06">
       <description>
         <p>Show the total cash deposited into broker accounts, and track portfolio history in the journal.</p>

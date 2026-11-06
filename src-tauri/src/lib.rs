@@ -146,6 +146,7 @@ pub fn run() {
             let db_manager = db::manager::DbManager::open(&db_path)
                 .expect("Failed to open database");
             app.manage(db_manager);
+            commands::sync::recover_history_once(app.handle().clone());
             let icon = cfg.app_icon.as_deref().unwrap_or(commands::app_icon::DEFAULT);
             if let Err(e) = commands::app_icon::apply(app.handle(), icon) {
                 eprintln!("App icon: {e}");

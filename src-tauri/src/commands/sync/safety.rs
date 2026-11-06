@@ -129,13 +129,13 @@ fn check_database(conn: &Connection) -> Result<(), String> {
 /// Stable logical fingerprints ignore volatile quote caches and file layout.
 /// Every other user table, including unknown future tables, participates.
 fn fingerprint(conn: &Connection) -> Result<String, String> { hash_records(conn, |_, _| true) }
-/// Written by broker refreshes on their own timers and fetched again from the
-/// brokerage on the next one, so not a change a person made.
+/// Written on timers rather than by a person, and merged from both copies on
+/// every transfer, so never a reason to stop and ask which copy to keep.
 fn broker_refreshed(table: &str, column: &str) -> bool {
     match table {
         "broker_positions" | "broker_transactions" | "broker_account_snapshots"
-        | "broker_position_history" | "symbol_aliases" => true,
-        "broker_accounts" => matches!(column, "account_mask" | "currency" | "equity" | "cash" | "buying_power" | "snapshot_at" | "history_version"),
+        | "broker_position_history" | "journal_account_values" | "symbol_aliases" => true,
+        "broker_accounts" => matches!(column, "account_mask" | "currency" | "equity" | "cash" | "buying_power" | "snapshot_at" | "history_version" | "history_checked_at"),
         "broker_connections" => matches!(column, "last_synced_at" | "last_sync_status"),
         _ => false,
     }
@@ -196,6 +196,40 @@ fn inspect(path: &Path) -> Result<Inspection, String> {
     check_database(&conn)?;
     let broker_synced_at = conn.query_row("SELECT MAX(last_synced_at) FROM broker_connections", [], |row| row.get(0)).ok().flatten();
     Ok(Inspection { fingerprint: fingerprint(&conn)?, records: records_fingerprint(&conn)?, broker_synced_at, summary: summary(&conn)? })
+}
+
+/// Once per device: put back history that earlier whole-file replacements
+/// dropped, from the recovery copies they left behind. Only adds rows, runs off
+/// the startup path, and leaves the copies in place. Tries again next launch if
+/// anything stops it.
+pub fn recover_history_once(app: AppHandle) {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(error) = recover_history(&app) { eprintln!("[history] recovery: {error}"); }
+    });
+}
+fn recover_history(app: &AppHandle) -> Result<(), String> {
+    if load_config(app)?.history_recovered { return Ok(()); }
+    let directory = backup_dir(app)?;
+    let mut copies: Vec<(u64, PathBuf)> = match fs::read_dir(&directory) {
+        Ok(entries) => entries.flatten().map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "db"))
+            .map(|path| (fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs()), path))
+            .collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(io(error)),
+    };
+    copies.sort();
+    if !copies.is_empty() {
+        let db = app.state::<DbManager>();
+        // A copy of the database as it was before any of this, kept with the rest.
+        db.with_conn(|conn| Ok(backup_broker_database(app, conn))).map_err(io)??;
+        let paths: Vec<PathBuf> = copies.into_iter().map(|(_, path)| path).collect();
+        let (added, skipped) = crate::brokers::history::recover_from_backups(&paths, |path| {
+            db.with_conn(|conn| crate::brokers::history::merge_history(conn, path))
+        });
+        eprintln!("[history] recovered {added:?} from {} copies, {skipped} unreadable", paths.len());
+    }
+    update_config(app, |config| config.history_recovered = true).map(|_| ())
 }
 
 fn backup_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -356,11 +390,13 @@ async fn make_review(app: &AppHandle, db: &DbManager, target: SyncTarget, restor
 }
 
 /// The transfer that is safe without asking, if any, and whether both copies
-/// hold changes a person made. Broker refreshes rewrite positions, balances
-/// and history every few minutes and are fetched again on the next refresh,
-/// so they pick the direction only when no person changed records on either
-/// side, and then the most recent refresh wins. A first sync, a person's
-/// changes on both sides, no remote, or an empty local database always ask.
+/// hold changes a person made. Broker refreshes rewrite positions and balances
+/// every few minutes, so they pick the direction only when no person changed
+/// records on either side, and then the most recent refresh wins. The direction
+/// only decides whose records and current figures are kept: history from both
+/// copies survives either way (see `merge_into_staged`). A first sync, a
+/// person's changes on both sides, no remote, or an empty local database always
+/// ask.
 fn plan(target: &SyncTarget, local: &Inspection, remote: Option<&Inspection>) -> (Option<&'static str>, bool) {
     if !target.sync_initialized { return (None, false); }
     let (Some(last_local), Some(last_remote)) = (target.last_local_fingerprint.as_deref(), target.last_remote_fingerprint.as_deref()) else { return (None, false) };
@@ -415,6 +451,28 @@ fn check_review(review: &Pending, local: &str, remote: &RemoteImage, direction: 
     Ok(())
 }
 
+/// Add this device's history to a downloaded copy before it replaces the live
+/// database, so the replacement can only ever add history. Happens on the staged
+/// file: if it fails, nothing has been replaced.
+fn merge_into_staged(staged: &Path, local_snapshot: &Path) -> Result<(), String> {
+    let conn = Connection::open(staged).map_err(io)?;
+    crate::brokers::history::merge_history(&conn, local_snapshot).map_err(io)?;
+    conn.execute_batch("PRAGMA journal_mode=DELETE;").map_err(io)?;
+    drop(conn);
+    fs::OpenOptions::new().write(true).open(staged).and_then(|file| file.sync_all()).map_err(io)
+}
+/// Add the remote copy's history to the live database before uploading over it.
+fn merge_remote_into_live(db: &DbManager, remote: &[u8]) -> Result<(), String> {
+    let staged = stage(db, remote)?;
+    validate(&staged.0)?;
+    db.with_conn(|conn| crate::brokers::history::merge_history(conn, &staged.0))?;
+    Ok(())
+}
+async fn upload(review: &Pending, password: &str, remote: &RemoteImage, snapshot: &Path) -> Result<(), String> {
+    if review.target.kind == "path" { upload_path(review, remote, snapshot) }
+    else { upload_webdav(&review.target, password, remote, fs::read(snapshot).map_err(io)?).await }
+}
+
 pub(super) async fn confirm(app: &AppHandle, db: &DbManager, id: &str, direction: &str, allow_empty: bool) -> Result<SyncResult, String> {
     if !matches!(direction, "upload" | "download") { return Err("Choose upload or download".into()); }
     let review = take_review(id)?;
@@ -432,24 +490,46 @@ pub(super) async fn confirm(app: &AppHandle, db: &DbManager, id: &str, direction
     check_review(&review, &local_state.fingerprint, &remote, direction, local_state.summary.empty, allow_empty)?;
     let backups = backup_dir(app)?;
     let final_state;
+    // Set when history merged from here hasn't reached the remote copy yet.
+    let mut remote_behind = None;
     if direction == "download" {
         let staged = stage(db, remote.bytes.as_ref().unwrap())?;
         validate(&staged.0)?;
+        let remote_fingerprint = inspect(&staged.0)?.fingerprint;
+        // A restore puts back exactly what the backup held.
+        if !review.restore { merge_into_staged(&staged.0, &local.0)?; }
         final_state = inspect(&staged.0)?;
         install(db, &staged.0, &backups, Some(&review.local_fingerprint))?;
+        // This device held history the remote lacked. Send it back now, or
+        // devices that only download would never see it. Failing here isn't
+        // failing the download: the next sync sends it.
+        if !review.restore && final_state.fingerprint != remote_fingerprint {
+            let sent = async {
+                save_backup(&backups, "remote", remote.bytes.as_ref().unwrap())?;
+                upload(&review, &password, &remote, &staged.0).await
+            }.await;
+            if sent.is_err() { remote_behind = Some(remote_fingerprint); }
+        }
     } else {
         // Verify every recovery copy before authorizing the final replacement.
         save_backup(&backups, "local", &fs::read(&local.0).map_err(io)?)?;
-        if let Some(bytes) = &remote.bytes { save_backup(&backups, "remote", bytes)?; }
-        if review.target.kind == "path" { upload_path(&review, &remote, &local.0)?; }
-        else { upload_webdav(&review.target, &password, &remote, fs::read(&local.0).map_err(io)?).await?; }
-        final_state = local_state;
+        let mut outgoing = local;
+        if let Some(bytes) = &remote.bytes {
+            save_backup(&backups, "remote", bytes)?;
+            merge_remote_into_live(db, bytes)?;
+            outgoing = upload_snapshot(db)?;
+        }
+        upload(&review, &password, &remote, &outgoing.0).await?;
+        final_state = inspect(&outgoing.0)?;
     }
     update_config(app, |config| {
         if review.restore {
             for target in &mut config.sync_targets { target.sync_initialized = false; target.last_local_fingerprint = None; target.last_remote_fingerprint = None; target.last_records_fingerprint = None; }
         } else if let Some(target) = config.sync_targets.iter_mut().find(|target| target.id == review.target.id) {
-            target.sync_initialized = true; target.last_local_fingerprint = Some(final_state.fingerprint.clone()); target.last_remote_fingerprint = Some(final_state.fingerprint.clone());
+            // Recording the remote's own state as the shared one makes this copy
+            // read as changed, so the next sync uploads what didn't get across.
+            let shared = remote_behind.as_ref().unwrap_or(&final_state.fingerprint).clone();
+            target.sync_initialized = true; target.last_local_fingerprint = Some(shared.clone()); target.last_remote_fingerprint = Some(shared);
             target.last_records_fingerprint = Some(final_state.records.clone());
             target.last_synced_at = Some(now_secs()); target.last_sync_status = Some("ok".into());
         }
@@ -604,6 +684,75 @@ mod tests {
         assert_eq!(plan(&t, &state("F2", "U", Some(100), false), Some(&state("F3", "U", Some(200), false))), (Some("download"), false), "only refreshes: newest wins");
         assert_eq!(plan(&t, &state("F2", "U2", None, false), Some(&state("F3", "U3", None, false))), (None, true), "a person edited both copies");
         assert_eq!(plan(&t, &state("F2", "U2", None, true), Some(&state("F", "U", None, false))), (None, false), "never push an empty database unasked");
+    }
+    fn broker_account(db: &DbManager, connection: &str) {
+        db.with_conn(|conn| {
+            conn.execute("INSERT INTO broker_connections (id,provider,environment,label,credential_ref,created_at) VALUES (?1,'snaptrade','read','T','r',1)", [connection])?;
+            conn.execute("INSERT INTO broker_accounts (id,connection_id,provider_account_id) VALUES (1,?1,'acct')", [connection])
+        }).unwrap();
+    }
+    fn daily_value(db: &DbManager, day: &str) {
+        db.with_conn(|conn| conn.execute("INSERT INTO broker_account_snapshots (broker_account_id,as_of,equity,captured_at) VALUES (1,?1,100,1)", [day])).unwrap();
+    }
+    fn saved_days(db: &DbManager) -> Vec<String> {
+        db.with_conn(|conn| { let mut s = conn.prepare("SELECT as_of FROM broker_account_snapshots ORDER BY as_of")?; let r = s.query_map([], |r| r.get(0))?.collect(); r }).unwrap()
+    }
+    fn image(db: &DbManager) -> Vec<u8> {
+        let snapshot = upload_snapshot(db).unwrap();
+        fs::read(&snapshot.0).unwrap()
+    }
+    #[test]
+    fn downloading_another_copy_keeps_this_devices_history_and_takes_its_records() {
+        let dir = directory();
+        let local = DbManager::open(&dir.join("local.db")).unwrap();
+        let other = DbManager::open(&dir.join("other.db")).unwrap();
+        for db in [&local, &other] { broker_account(db, "conn"); }
+        daily_value(&local, "2026-10-22");
+        daily_value(&other, "2026-11-04");
+        populated(&other, "Their edit");
+        let snapshot = upload_snapshot(&local).unwrap();
+        let before = fingerprint_of(&local);
+        let staged = stage(&local, &image(&other)).unwrap();
+        validate(&staged.0).unwrap();
+        merge_into_staged(&staged.0, &snapshot.0).unwrap();
+        install(&local, &staged.0, &dir.join("backups"), Some(&before)).unwrap();
+        assert_eq!(saved_days(&local), ["2026-10-22", "2026-11-04"]);
+        let theirs: i64 = local.with_conn(|conn| conn.query_row("SELECT COUNT(*) FROM portfolios WHERE name = 'Their edit'", [], |r| r.get(0))).unwrap();
+        assert_eq!(theirs, 1, "records come from the copy that was chosen");
+        assert_ne!(inspect(&staged.0).unwrap().fingerprint, inspect_bytes(&dir, &other), "the remote still needs this device's rows");
+    }
+    fn fingerprint_of(db: &DbManager) -> String { db.with_conn(|conn| Ok(fingerprint(conn).unwrap())).unwrap() }
+    fn inspect_bytes(dir: &Path, db: &DbManager) -> String {
+        let path = dir.join(format!("{}.db", uuid::Uuid::new_v4()));
+        fs::write(&path, image(db)).unwrap();
+        validate(&path).unwrap();
+        inspect(&path).unwrap().fingerprint
+    }
+    #[test]
+    fn uploading_over_another_copy_keeps_its_history_on_both_sides() {
+        let dir = directory();
+        let local = DbManager::open(&dir.join("local.db")).unwrap();
+        let other = DbManager::open(&dir.join("other.db")).unwrap();
+        for db in [&local, &other] { broker_account(db, "conn"); }
+        daily_value(&local, "2026-11-06");
+        daily_value(&other, "2026-10-22");
+        merge_remote_into_live(&local, &image(&other)).unwrap();
+        assert_eq!(saved_days(&local), ["2026-10-22", "2026-11-06"]);
+        let outgoing = upload_snapshot(&local).unwrap();
+        let sent = DbManager::open(&outgoing.0).unwrap();
+        assert_eq!(saved_days(&sent), ["2026-10-22", "2026-11-06"], "what's uploaded holds both");
+    }
+    #[test]
+    fn daily_figures_written_on_timers_are_not_a_persons_edit() {
+        let dir = directory();
+        let db = DbManager::open(&dir.join("a.db")).unwrap();
+        broker_account(&db, "conn");
+        let records = db.with_conn(|conn| Ok(records_fingerprint(conn).unwrap())).unwrap();
+        db.with_conn(|conn| {
+            conn.execute("UPDATE broker_accounts SET history_checked_at = 5", [])?;
+            conn.execute("INSERT INTO journal_account_values (portfolio_id,as_of,positions_value,captured_at) VALUES (1,'2026-11-05',10,1)", [])
+        }).unwrap();
+        assert_eq!(db.with_conn(|conn| Ok(records_fingerprint(conn).unwrap())).unwrap(), records);
     }
     #[test]
     fn empty_application_needs_explicit_consent_regardless_of_sync_history() {

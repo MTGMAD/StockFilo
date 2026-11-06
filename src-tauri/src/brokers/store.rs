@@ -78,6 +78,11 @@ pub struct AccountSnapshot {
 /// realized gains classified.
 pub const HISTORY_VERSION: i64 = 3;
 
+/// How often an account's whole history is compared with the brokerage. Between
+/// checks a sync only asks for rows from the latest saved day on, which misses a
+/// row posted late with an older date.
+pub const FULL_HISTORY_CHECK_SECS: i64 = 24 * 60 * 60;
+
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -401,6 +406,33 @@ pub fn set_history_version(
 }
 
 // ── Value history ──────────────────────────────────────────────────────────
+
+/// Whether this sync should compare the account's whole history with the
+/// brokerage rather than only asking for what's new.
+pub fn full_history_check_due(
+    conn: &Connection,
+    broker_account_id: i64,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    let checked: Option<i64> = conn.query_row(
+        "SELECT history_checked_at FROM broker_accounts WHERE id = ?1",
+        params![broker_account_id],
+        |r| r.get(0),
+    )?;
+    Ok(checked.is_none_or(|at| now - at >= FULL_HISTORY_CHECK_SECS))
+}
+
+pub fn set_history_checked(
+    conn: &Connection,
+    broker_account_id: i64,
+    now: i64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE broker_accounts SET history_checked_at = ?1 WHERE id = ?2",
+        params![now, broker_account_id],
+    )?;
+    Ok(())
+}
 
 /// Record today's value for an account. One row per day: a later sync on the
 /// same day replaces the earlier figures, and a value the broker did not

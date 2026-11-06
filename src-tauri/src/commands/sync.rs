@@ -11,6 +11,7 @@ use crate::db::manager::DbManager;
 mod safety;
 pub use safety::{SyncPreview, SyncBackup};
 pub(crate) use safety::{backup_broker_database, BrokerWrites};
+pub use safety::recover_history_once;
 
 static SYNC_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
