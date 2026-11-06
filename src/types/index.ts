@@ -98,6 +98,16 @@ export interface TickerSummary {
   post_market_price: number | null;
   post_market_change_pct: number | null;
   dividendYield: number | null;
+  /** Set when the figures above are measured from the start of the account's
+   *  history (YYYY-MM-DD) because its holdings are older than that: then
+   *  totalInvested is the value at that start plus money added since, not
+   *  money paid. */
+  gainSince?: string;
+  /** With gainSince: the holding's value that day, and what has moved in and
+   *  out of it since (zero when nothing has). */
+  startValue?: number;
+  addedSince?: number;
+  takenOutSince?: number;
   /** Broker portfolios: cash a trade has committed that the broker hasn't yet
    *  taken out of (negative) or put into this money-market core position;
    *  already applied to its shares and value. */
@@ -512,6 +522,8 @@ export type BrokerTransactionKind =
   | "deposit"
   | "withdrawal"
   | "transfer"
+  | "tax"
+  | "realized"
   | "split"
   | "other";
 

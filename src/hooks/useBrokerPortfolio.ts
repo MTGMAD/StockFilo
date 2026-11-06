@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type {
   BrokerAccountSnapshot,
   BrokerPosition,
@@ -13,8 +13,16 @@ import {
   syncBrokerConnection,
 } from "../lib/brokers";
 import { getCachedStocks, fetchAndCachePrices } from "../lib/db";
+import { reconcileRows } from "../lib/planRows";
 import { buildFromPositions, pendingCash } from "../lib/summaries";
 import { isCusip } from "../lib/utils";
+import {
+  accountGain,
+  applyHistoryStart,
+  resolveHistoryStart,
+  startsBeforeHistory,
+  type HistoryStart,
+} from "../lib/accountHistory";
 
 /** Matches the Yahoo poll interval in usePortfolio, so both kinds feel alike. */
 const POLL_INTERVAL_MS = 30_000;
@@ -52,6 +60,7 @@ export function useBrokerPortfolio(
   const [positions, setPositions] = useState<BrokerPosition[]>([]);
   const [transactions, setTransactions] = useState<BrokerTransaction[]>([]);
   const [snapshot, setSnapshot] = useState<BrokerAccountSnapshot | undefined>();
+  const [historyStart, setHistoryStart] = useState<HistoryStart | null>(null);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -229,18 +238,51 @@ export function useBrokerPortfolio(
     }
   }, [providesPricing, syncNow]);
 
-  const summaries: TickerSummary[] = buildFromPositions(
-    positions,
-    stocks,
-    providesPricing,
-    pendingCash(snapshot, positions),
+  // Empty positions after an account switch resolve to null straight away, so
+  // one account's start never carries over to the next.
+  const rows = useMemo(() => reconcileRows(positions, transactions), [positions, transactions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    resolveHistoryStart(positions, rows.ledger, snapshot?.cash ?? null)
+      .then((start) => {
+        if (!cancelled) setHistoryStart(start);
+      })
+      .catch(() => {
+        // Prices couldn't be read; the next sync tries again.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [positions, rows, snapshot?.cash]);
+
+  const summaries: TickerSummary[] = applyHistoryStart(
+    buildFromPositions(
+      positions,
+      stocks,
+      providesPricing,
+      pendingCash(snapshot, positions, transactions),
+    ),
+    historyStart,
+    startsBeforeHistory(positions, rows.ledger),
   );
+
+  // Plan codes read as the fund they are, wherever transactions are shown.
+  const namedTransactions = useMemo(() => {
+    const aliases = historyStart?.aliases;
+    if (!aliases?.size) return rows.shown;
+    return rows.shown.map((t) => {
+      const ticker = aliases.get(t.provider_symbol);
+      return ticker ? { ...t, ticker, provider_symbol: ticker } : t;
+    });
+  }, [rows, historyStart]);
 
   return {
     positions,
-    transactions,
+    transactions: namedTransactions,
     stocks,
     summaries,
+    accountGain: accountGain(summaries, historyStart),
     loading,
     refreshing,
     error,

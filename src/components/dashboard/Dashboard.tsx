@@ -1,3 +1,5 @@
+import { shortDate } from "../journal/journalUi";
+import type { AccountGain } from "../../lib/accountHistory";
 import { useState } from "react";
 import type { TickerSummary, InvestorMode, Portfolio } from "../../types";
 import { formatCurrency, formatPercent, pnlColor, getCssVar, cn } from "../../lib/utils";
@@ -30,6 +32,8 @@ import * as RadixTooltip from "@radix-ui/react-tooltip";
 
 interface DashboardProps {
   summaries: TickerSummary[];
+  /** Set when this broker account is older than its history. */
+  accountGain?: AccountGain | null;
   investorMode: InvestorMode;
   onModeChange: (m: InvestorMode) => void;
   showInfoTooltips: boolean;
@@ -402,7 +406,9 @@ function PortfolioHealth({
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Based on total return since you bought each position.
+              {summaries.some((s) => s.gainSince)
+                ? "Based on each holding's return since the brokerage's history begins."
+                : "Based on total return since you bought each position."}
             </p>
           </>
         )}
@@ -574,7 +580,7 @@ function dailyDollarChange(currentValue: number, dailyChangePct: number): number
   return currentValue - previousValue;
 }
 
-export function Dashboard({ summaries, investorMode, onModeChange, showInfoTooltips, portfolios, activePortfolioId, onSelectPortfolio }: DashboardProps) {
+export function Dashboard({ summaries, accountGain, investorMode, onModeChange, showInfoTooltips, portfolios, activePortfolioId, onSelectPortfolio }: DashboardProps) {
   const [sortKey, setSortKey] = useState<SortKey>("marketValue");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
@@ -615,12 +621,29 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
   }
 
   // ── Aggregates ──────────────────────────────────────────────────────────────
-  const totalInvested = summaries.reduce((s, t) => s + (t.totalInvested ?? 0), 0);
+  const totalInvested =
+    accountGain?.startValue ?? summaries.reduce((s, t) => s + (t.totalInvested ?? 0), 0);
   const pricedSummaries = summaries.filter((s) => s.marketValue != null);
   const totalValue = pricedSummaries.reduce((s, t) => s + t.marketValue!, 0);
-  const totalPnlDollar = pricedSummaries.reduce((s, t) => s + (t.pnlDollar ?? 0), 0);
-  const totalPnlPercent =
-    totalInvested > 0 ? (totalPnlDollar / totalInvested) * 100 : null;
+  const totalPnlDollar =
+    accountGain?.gain ?? pricedSummaries.reduce((s, t) => s + (t.pnlDollar ?? 0), 0);
+  const totalPnlPercent = accountGain
+    ? accountGain.gainPct
+    : totalInvested > 0
+      ? (totalPnlDollar / totalInvested) * 100
+      : null;
+  const startedOn = accountGain ? shortDate(accountGain.since) : null;
+  const startTooltip = `What this account held on ${startedOn}, when the brokerage's history begins.`;
+  const startSub = accountGain
+    ? [
+        `Since ${startedOn}`,
+        accountGain.added > 0 ? `${formatCurrency(accountGain.added)} added` : null,
+        accountGain.takenOut > 0 ? `${formatCurrency(accountGain.takenOut)} taken out` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
+  const gainTooltip = `How much this account has grown since ${startedOn}. Its holdings are older than the brokerage's history, so this doesn't go back to when they were bought. Money added or taken out isn't counted as gain, and the percentage is against the value at start plus money added.`;
 
   const dailySummaries = summaries.filter(
     (s) => s.marketValue != null && s.dailyChangePct != null
@@ -728,7 +751,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
           ) : null}
         </h3>
         <p className="text-xs text-muted-foreground mb-4">
-          Cost basis{" "}
+          {accountGain ? "Value at start plus money added" : "Cost basis"}{" "}
           <span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#94a3b8] align-text-bottom mx-0.5" />{" "}
           vs. market value (green = gain, red = loss)
         </p>
@@ -845,13 +868,13 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
 
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 xl:gap-4">
             <StatCard
-              label="Money You Put In"
+              label={accountGain ? "Value at Start" : "Money You Put In"}
               value={formatCurrency(totalInvested)}
-              sub={`${summaries.length} position${summaries.length === 1 ? "" : "s"}`}
+              sub={startSub ?? `${summaries.length} position${summaries.length === 1 ? "" : "s"}`}
               subColor="text-muted-foreground"
               icon={Wallet}
               accent="none"
-              tooltip="The total amount of money you have invested across all your positions."
+              tooltip={accountGain ? startTooltip : "The total amount of money you have invested across all your positions."}
               showTooltip={showInfoTooltips}
             />
             <StatCard
@@ -863,7 +886,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
               showTooltip={showInfoTooltips}
             />
             <StatCard
-              label="Your Profit / Loss"
+              label={accountGain ? `Gain Since ${startedOn}` : "Your Profit / Loss"}
               value={hasPrices ? formatCurrency(totalPnlDollar) : "—"}
               sub={totalPnlPercent != null ? formatPercent(totalPnlPercent) : undefined}
               subColor={pnlColor(totalPnlDollar)}
@@ -871,7 +894,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
               accent={
                 !hasPrices ? "none" : totalPnlDollar > 0 ? "positive" : totalPnlDollar < 0 ? "negative" : "none"
               }
-              tooltip="The difference between what your portfolio is worth today versus what you paid. Positive means you are up, negative means you are down."
+              tooltip={accountGain ? gainTooltip : "The difference between what your portfolio is worth today versus what you paid. Positive means you are up, negative means you are down."}
               showTooltip={showInfoTooltips}
             />
             <StatCard
@@ -971,13 +994,13 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
 
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 xl:gap-4">
           <StatCard
-            label="Total Invested"
+            label={accountGain ? "Value at Start" : "Total Invested"}
             value={formatCurrency(totalInvested)}
-            sub={`${summaries.length} position${summaries.length === 1 ? "" : "s"}`}
+            sub={startSub ?? `${summaries.length} position${summaries.length === 1 ? "" : "s"}`}
             subColor="text-muted-foreground"
             icon={Wallet}
             accent="none"
-            tooltip="The total amount of money you have invested across all your positions."
+            tooltip={accountGain ? startTooltip : "The total amount of money you have invested across all your positions."}
             showTooltip={showInfoTooltips}
           />
           <StatCard
@@ -989,7 +1012,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
             showTooltip={showInfoTooltips}
           />
           <StatCard
-            label="Total Return"
+            label={accountGain ? `Gain Since ${startedOn}` : "Total Return"}
             value={hasPrices ? formatCurrency(totalPnlDollar) : "—"}
             sub={totalPnlPercent != null ? formatPercent(totalPnlPercent) : undefined}
             subColor={pnlColor(totalPnlDollar)}
@@ -997,7 +1020,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
             accent={
               !hasPrices ? "none" : totalPnlDollar > 0 ? "positive" : totalPnlDollar < 0 ? "negative" : "none"
             }
-            tooltip="Your total gain or loss in dollars and percentage across all positions since purchase."
+            tooltip={accountGain ? gainTooltip : "Your total gain or loss in dollars and percentage across all positions since purchase."}
             showTooltip={showInfoTooltips}
           />
           <StatCard
@@ -1050,7 +1073,7 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
                 <tr className="border-b border-border bg-muted/30">
                   <Th sortKey="ticker" activeSortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Ticker</Th>
                   <Th align="right" sortKey="totalShares" activeSortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Shares</Th>
-                  <Th align="right" sortKey="totalInvested" activeSortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Invested</Th>
+                  <Th align="right" sortKey="totalInvested" activeSortKey={sortKey} sortDir={sortDir} onSort={handleSort}>{accountGain ? "Start + Added" : "Invested"}</Th>
                   <Th align="right" sortKey="avgCostBasis" activeSortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Avg Cost</Th>
                   <Th align="right" sortKey="currentPrice" activeSortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Current Price</Th>
                   <Th align="right" sortKey="marketValue" activeSortKey={sortKey} sortDir={sortDir} onSort={handleSort}>Market Value</Th>
@@ -1104,7 +1127,9 @@ export function Dashboard({ summaries, investorMode, onModeChange, showInfoToolt
                 <tfoot>
                   <tr className="border-t-2 border-border bg-muted/20 font-semibold">
                     <td colSpan={2} className="px-5 py-3 text-foreground">Total</td>
-                    <td className="px-5 py-3 text-right text-foreground">{formatCurrency(totalInvested)}</td>
+                    <td className="px-5 py-3 text-right text-foreground">
+                      {formatCurrency(accountGain ? accountGain.startValue + accountGain.added : totalInvested)}
+                    </td>
                     <td className="px-5 py-3" />
                     <td className="px-5 py-3" />
                     <td className="px-5 py-3 text-right text-foreground">{formatCurrency(totalValue)}</td>

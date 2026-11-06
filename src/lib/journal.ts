@@ -61,9 +61,24 @@ export function fillsFromPurchasesAndSales(
   ];
 }
 
+/** A money-market sweep is buying and selling $1 shares; cash moving through
+ *  the account isn't a trade. */
+export function sweepTickers(txs: BrokerTransaction[]): Set<string> {
+  const notSweep = new Set<string>();
+  const seen = new Set<string>();
+  for (const t of txs) {
+    if (t.kind !== "fill" || !t.ticker || t.price == null) continue;
+    seen.add(t.ticker);
+    if (Math.abs(t.price - 1) > 0.0005) notSweep.add(t.ticker);
+  }
+  return new Set([...seen].filter((ticker) => !notSweep.has(ticker)));
+}
+
 export function fillsFromBroker(txs: BrokerTransaction[]): Fill[] {
   const out: Fill[] = [];
+  const sweeps = sweepTickers(txs);
   for (const t of txs) {
+    if (t.ticker && sweeps.has(t.ticker)) continue;
     const side = t.side?.toLowerCase();
     if ((side !== "buy" && side !== "sell") || !t.ticker) continue;
     if (t.qty == null || t.price == null || t.qty <= 0) continue;

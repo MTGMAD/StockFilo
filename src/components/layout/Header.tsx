@@ -20,7 +20,10 @@ export type HeaderFigures =
       cash: number | null;
       buyingPower: number | null;
       deposited: DepositTotal | null;
+      withdrawn: number | null;
       gain: number | null;
+      /** Set when the gain is measured from this day, not from cost. */
+      gainSince: string | null;
     }
   | {
       kind: "manual";
@@ -140,10 +143,18 @@ export function Header({
                         label="Deposited"
                         value={figures.deposited.total}
                         separator
-                        title={`Total deposits reported by the brokerage since ${formatDay(figures.deposited.since)}. Withdrawals and transfers are not subtracted.`}
+                        title={`Total deposits reported by the brokerage since ${formatDay(figures.deposited.since)}. Moves between funds aren't deposits, and withdrawals are not subtracted.`}
                       />
                     )}
-                    <GainFigure gain={figures.gain} />
+                    {figures.withdrawn != null && (
+                      <Figure
+                        label="Withdrawn"
+                        value={figures.withdrawn}
+                        separator
+                        title="Total withdrawals reported by the brokerage, including tax withheld from them."
+                      />
+                    )}
+                    <GainFigure gain={figures.gain} since={figures.gainSince} />
                   </>
                 ) : (
                   <>
@@ -237,12 +248,18 @@ export function Header({
  * The label follows the sign and the amount is shown unsigned: "Loss $523.10"
  * rather than "Gain -$523.10", which makes the reader do the work twice.
  */
-function GainFigure({ gain }: { gain: number | null }) {
+function GainFigure({ gain, since }: { gain: number | null; since?: string | null }) {
   if (gain == null) return null;
   const isGain = gain >= 0;
+  const label = isGain ? "Gain" : "Loss";
   return (
     <Figure
-      label={isGain ? "Gain" : "Loss"}
+      label={since ? `${label} since ${formatDay(since)}` : label}
+      title={
+        since
+          ? "This account's holdings are older than the history the brokerage provides, so this is measured from where that history begins. Money added or taken out isn't counted as gain."
+          : undefined
+      }
       value={Math.abs(gain)}
       separator
       tone={isGain ? "text-positive" : "text-negative"}

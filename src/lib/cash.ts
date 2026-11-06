@@ -135,3 +135,15 @@ export function totalDeposited(transactions: BrokerTransaction[]): DepositTotal 
     ),
   };
 }
+
+/**
+ * Money that has left the account: withdrawals, and tax withheld from them,
+ * which left it just the same. Null when none has been reported.
+ */
+export function totalWithdrawn(transactions: BrokerTransaction[]): number | null {
+  const rows = transactions.filter(
+    (t) => (t.kind === "withdrawal" || t.kind === "tax") && t.amount != null,
+  );
+  if (rows.length === 0) return null;
+  return -rows.reduce((s, t) => s + t.amount!, 0);
+}

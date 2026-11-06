@@ -53,6 +53,8 @@ import { PurchasesTable } from "./PurchasesTable";
 import { CashEventsTable } from "./CashEventsTable";
 import { BrokerTransactionsTable } from "./BrokerTransactionsTable";
 import { JournalView } from "../journal/JournalView";
+import { shortDate } from "../journal/journalUi";
+import type { AccountGain } from "../../lib/accountHistory";
 import { computeCash } from "../../lib/cash";
 import { fillsFromBroker, fillsFromPurchasesAndSales } from "../../lib/journal";
 import { BrokerOrdersView } from "./BrokerOrdersView";
@@ -204,6 +206,8 @@ interface PortfolioViewProps {
   readOnly?: boolean;
   /** Dated transaction history from the broker, shown instead of purchases. */
   brokerTransactions?: BrokerTransaction[];
+  /** Set when this broker account is older than its history. */
+  accountGain?: AccountGain | null;
   /** Brokerage account ID used to read its saved daily equity history. */
   brokerAccountId?: number | null;
   /** Broker account to show live orders for; null hides the Orders tab
@@ -239,6 +243,7 @@ export function PortfolioView({
   onDeletePortfolio,
   readOnly = false,
   brokerTransactions,
+  accountGain = null,
   brokerAccountId = null,
   ordersAccountId = null,
 }: PortfolioViewProps) {
@@ -422,7 +427,10 @@ export function PortfolioView({
   );
   const purchaseLots = readOnly
     ? groupLotsByDate(
-        tickerBuyTransactions.map((t) => ({ date: t.occurred_at, shares: t.qty })),
+        // A reinvested dividend is listed below, but nobody chose to buy it.
+        tickerBuyTransactions
+          .filter((t) => !t.reinvested)
+          .map((t) => ({ date: t.occurred_at, shares: t.qty })),
       )
     : groupLotsByDate(
         tickerPurchases.map((p) => ({ date: p.purchased_at, shares: p.shares })),
@@ -1078,6 +1086,7 @@ export function PortfolioView({
           ) : (
             <PortfolioRankView
               summaries={summaries}
+              accountGain={accountGain}
               onSelectTicker={(ticker) => {
                 setSelectedTicker(ticker);
                 setActiveTab("analysis");
@@ -1532,13 +1541,24 @@ export function PortfolioView({
                         extra={<PurchaseLotsBadge lots={purchaseLots} />}
                       />
                       <StatCard
-                        label="Total Invested"
-                        value={formatCurrency(summary.totalInvested)}
+                        label={summary.gainSince ? "Value at Start" : "Total Invested"}
+                        value={formatCurrency(summary.gainSince ? summary.startValue : summary.totalInvested)}
                       />
-                      <StatCard
-                        label="Avg Cost Basis"
-                        value={formatCurrency(summary.avgCostBasis)}
-                      />
+                      {summary.gainSince ? (
+                        <StatCard
+                          label={summary.addedSince ? "Added / Taken Out" : "Taken Out"}
+                          value={
+                            summary.addedSince
+                              ? `${formatCurrency(summary.addedSince)} / ${formatCurrency(summary.takenOutSince ?? 0)}`
+                              : formatCurrency(summary.takenOutSince ?? 0)
+                          }
+                        />
+                      ) : (
+                        <StatCard
+                          label="Avg Cost Basis"
+                          value={formatCurrency(summary.avgCostBasis)}
+                        />
+                      )}
                       <StatCard
                         label="Current Price"
                         value={
@@ -1553,7 +1573,7 @@ export function PortfolioView({
                         value={formatCurrency(summary.marketValue)}
                       />
                       <StatCard
-                        label="Total P&L"
+                        label={summary.gainSince ? `Gain Since ${shortDate(summary.gainSince)}` : "Total P&L"}
                         value={
                           summary.pnlDollar != null
                             ? `${formatCurrency(summary.pnlDollar)} (${formatPercent(summary.pnlPercent)})`
@@ -1642,8 +1662,7 @@ export function PortfolioView({
                   </table>
                   {readOnly && tickerBuyTransactions.length === 0 && (
                     <p className="text-sm text-muted-foreground px-3 py-4">
-                      No dated buy transactions yet. Sync this connection from
-                      Settings to pull them in.
+                      The brokerage's history has no dated buys for this holding.
                     </p>
                   )}
                 </div>

@@ -235,6 +235,11 @@ pub fn activity(v: &Value) -> Option<RemoteActivity> {
         .and_then(date_only)?;
     let reported = num(v.get("amount"));
     let into = |sign: f64| reported.map(|a| sign * a.abs());
+    // The type alone doesn't always say: Fidelity reports state withholding as
+    // a FEE and capital gain distributions as an ADJUSTMENT.
+    let wording = text(v, "description").unwrap_or_default().to_ascii_uppercase();
+    let withheld = wording.contains("TAX") && (wording.contains("W/H") || wording.contains("WITHH"));
+    let cap_gain = wording.contains("CAP GAIN") || wording.contains("CAPITAL GAIN");
 
     let (kind, side, amount) = match kind_raw.as_str() {
         "BUY" | "REI" => (k::FILL, Some("buy"), into(-1.0)),
@@ -243,7 +248,12 @@ pub fn activity(v: &Value) -> Option<RemoteActivity> {
         // Crypto brokerages report staking and inflation rewards as their own
         // types; like interest, they are income the account earned.
         "INTEREST" | "CRYPTO_STAKING_REWARD" | "INFLATION_REWARD" => (k::INTEREST, None, reported),
+        "TAX" => (k::TAX, None, reported),
+        "FEE" if withheld => (k::TAX, None, reported),
         "FEE" => (k::FEE, None, into(-1.0)),
+        "ADJUSTMENT" if cap_gain => (k::DIVIDEND, None, reported),
+        "REALIZEDGAINLOSS" => (k::REALIZED, None, reported),
+        "EXCHANGEIN" | "EXCHANGEOUT" => (k::TRANSFER, None, reported),
         "CONTRIBUTION" | "DEPOSIT" => (k::DEPOSIT, None, into(1.0)),
         "WITHDRAWAL" => (k::WITHDRAWAL, None, into(-1.0)),
         "TRANSFER" | "EXTERNAL_ASSET_TRANSFER_IN" | "EXTERNAL_ASSET_TRANSFER_OUT"
@@ -422,6 +432,23 @@ mod order_tests {
         let buy = json!({ "id": "b", "type": "BUY", "trade_date": "2026-02-01", "amount": 125,
                           "units": 10, "price": 12.5, "symbol": { "symbol": "VTI" } });
         assert_eq!(activity(&buy).unwrap().amount, Some(-125.0));
+    }
+
+    #[test]
+    fn retirement_account_rows_get_their_real_kind() {
+        let kind = |ty: &str, desc: &str, amount: f64| {
+            let v = json!({ "id": "r", "type": ty, "trade_date": "2026-01-30",
+                            "amount": amount, "description": desc });
+            let a = activity(&v).unwrap();
+            (a.kind, a.amount)
+        };
+        assert_eq!(kind("TAX", "FED TAX W/H RET FED WTH", -7181.57), ("tax".into(), Some(-7181.57)));
+        assert_eq!(kind("FEE", "STATE TAX W/H MN STAT WTH", -3590.79), ("tax".into(), Some(-3590.79)));
+        assert_eq!(kind("FEE", "fees - JPM EQUITY INCOME R6", 41.58), ("fee".into(), Some(-41.58)));
+        assert_eq!(kind("ADJUSTMENT", "LONG-TERM CAP GAIN FIDELITY GROWTH", 44729.87), ("dividend".into(), Some(44729.87)));
+        assert_eq!(kind("ADJUSTMENT", "ADJUSTMENT", 12.0), ("other".into(), Some(12.0)));
+        assert_eq!(kind("REALIZEDGAINLOSS", "realizedGainLoss - VG MS MDCPVL", 19.04), ("realized".into(), Some(19.04)));
+        assert_eq!(kind("EXCHANGEOUT", "exchangeOut - GS EM MKT EQ", -100.0), ("transfer".into(), Some(-100.0)));
     }
 
     #[test]

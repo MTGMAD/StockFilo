@@ -188,9 +188,9 @@ export function JournalView({
           <NotebookPen className="w-5 h-5" />
           <p className="text-sm font-medium text-foreground">No trades to journal yet</p>
           <p className="text-xs max-w-sm">
-            The journal is built from your buys and sells. Record a purchase and a
-            sale (or sync a brokerage connection) and your round-trip trades show
-            up here with wins, losses and room for notes.
+            {brokerAccountId != null
+              ? "The journal is built from buys and sells, and the brokerage's history for this account doesn't report any."
+              : "The journal is built from your buys and sells. Record a purchase and a sale (or sync a brokerage connection) and your round-trip trades show up here with wins, losses and room for notes."}
           </p>
         </div>
       </div>
@@ -439,7 +439,11 @@ export function JournalView({
               />
             )}
             {listTrades.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No trades in this period.</p>
+              <p className="text-sm text-muted-foreground">
+                {brokerAccountId != null && allTrades.length === 0
+                  ? "This account's history has no trades to journal. Reinvested dividends aren't trades, and a sale of shares bought before the history begins has no purchase to pair with."
+                  : "No trades in this period."}
+              </p>
             ) : (
               <div className="flex flex-col gap-2">
                 {listTrades.map((t) => (

@@ -23,6 +23,7 @@
 import type {
   BrokerAccountSnapshot,
   BrokerPosition,
+  BrokerTransaction,
   Purchase,
   Sale,
   Stock,
@@ -312,10 +313,16 @@ export function buildFromPositions(
  * the buy). Taken from one sync's snapshot, whose equity, cash and
  * positions total were written together, and only while the positions on
  * hand are still the ones that snapshot summed.
+ *
+ * The gap must also match a recent trade. An aggregator can refresh holdings
+ * before balances, leaving equity at yesterday's value (11/6: equity
+ * $672,095.42, positions $651,118.57, and yesterday's positions $672,095.44);
+ * that gap is only staleness, and no cash is moving.
  */
 export function pendingCash(
   snapshot: BrokerAccountSnapshot | undefined,
   positions: BrokerPosition[],
+  transactions: BrokerTransaction[],
 ): number | null {
   if (!snapshot || snapshot.equity == null || snapshot.positions_value == null) return null;
   let current = 0;
@@ -325,7 +332,31 @@ export function pendingCash(
   }
   if (Math.abs(current - snapshot.positions_value) > 0.05) return null;
   const gap = snapshot.equity - (snapshot.cash ?? 0) - snapshot.positions_value;
-  return Math.abs(gap) >= 1 ? Math.round(gap * 100) / 100 : null;
+  if (Math.abs(gap) < 1 || !matchesRecentTrades(gap, transactions)) return null;
+  return Math.round(gap * 100) / 100;
+}
+
+/** Settlement takes a day or two, and a weekend can sit in the middle. */
+const SETTLEMENT_DAYS = 5;
+
+/** Whether the last few days' trades, counting back a day at a time, moved the
+ *  cash `gap` describes. Sweeps in and out of the money-market fund and
+ *  reinvested dividends leave the account's total alone. */
+function matchesRecentTrades(gap: number, transactions: BrokerTransaction[]): boolean {
+  const cutoff = new Date(Date.now() - SETTLEMENT_DAYS * 86_400_000).toISOString().slice(0, 10);
+  const byDay = new Map<string, number>();
+  for (const t of transactions) {
+    if (t.kind !== "fill" || t.reinvested || t.price === 1 || t.occurred_at < cutoff) continue;
+    const cash = t.amount ?? (t.qty ?? 0) * (t.price ?? 0) * (t.side === "sell" ? 1 : -1);
+    byDay.set(t.occurred_at, (byDay.get(t.occurred_at) ?? 0) + cash);
+  }
+  const tolerance = Math.max(1, Math.abs(gap) * 0.001);
+  let total = 0;
+  for (const day of [...byDay.keys()].sort().reverse()) {
+    total += byDay.get(day)!;
+    if (Math.abs(total - gap) <= tolerance) return true;
+  }
+  return false;
 }
 
 /** The money-market position a broker settles cash through (the largest one,

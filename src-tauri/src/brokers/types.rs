@@ -189,8 +189,14 @@ pub mod activity_kind {
     pub const FEE: &str = "fee";
     pub const DEPOSIT: &str = "deposit";
     pub const WITHDRAWAL: &str = "withdrawal";
-    /// Cash or shares moved between accounts; `amount`'s sign gives direction.
+    /// Cash or shares moved between accounts, or between funds inside one
+    /// (a row with a symbol); `amount`'s sign gives direction.
     pub const TRANSFER: &str = "transfer";
+    /// Tax withheld and sent to the government: money out of the account, but
+    /// not a cost of investing.
+    pub const TAX: &str = "tax";
+    /// A gain or loss the broker reports for information. No cash moved.
+    pub const REALIZED: &str = "realized";
     pub const SPLIT: &str = "split";
     pub const OTHER: &str = "other";
 }

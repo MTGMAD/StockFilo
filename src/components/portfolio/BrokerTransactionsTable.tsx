@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { BrokerTransaction } from "../../types";
 import { cn } from "../../lib/utils";
+import { sweepTickers } from "../../lib/journal";
 import { Lock } from "lucide-react";
 
 interface BrokerTransactionsTableProps {
@@ -9,7 +10,8 @@ interface BrokerTransactionsTableProps {
 
 function money(v: number | null): string {
   if (v == null) return "—";
-  return v.toLocaleString(undefined, {
+  // Summing cents leaves a stray -0.000001, which would print as "-$0.00".
+  return (Math.abs(v) < 0.005 ? 0 : v).toLocaleString(undefined, {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 2,
@@ -23,6 +25,8 @@ const KIND_LABEL: Record<string, string> = {
   deposit: "Deposit",
   withdrawal: "Withdrawal",
   transfer: "Transfer",
+  tax: "Tax Withheld",
+  realized: "Realized Gain/Loss",
   split: "Split",
   other: "Other",
 };
@@ -30,6 +34,9 @@ const KIND_LABEL: Record<string, string> = {
 /** Signed cash effect: the broker's own figure, or for a fill without one,
  *  shares × price with the side's sign (a buy is cash out). */
 function cashAmount(t: BrokerTransaction): number | null {
+  // A split changes the share count and nothing else, whatever amount the
+  // brokerage's feed attaches to it.
+  if (t.kind === "split") return null;
   if (t.amount != null) return t.amount;
   if (t.kind === "fill" && t.qty != null && t.price != null) {
     return t.side === "sell" ? t.qty * t.price : -t.qty * t.price;
@@ -37,20 +44,36 @@ function cashAmount(t: BrokerTransaction): number | null {
   return null;
 }
 
-/** A fill is its side (buy/sell); every other row is its kind. */
-function typeOf(t: BrokerTransaction): string {
-  return t.kind === "fill" && t.side ? t.side : t.kind;
+/** A fill is its side (buy/sell), unless nobody chose to trade: the broker
+ *  reinvesting a dividend, or moving cash in and out of a money-market sweep.
+ *  Every other row is its kind. */
+function typeOf(t: BrokerTransaction, sweeps: Set<string>): string {
+  if (t.kind !== "fill" || !t.side) return t.kind;
+  if (t.reinvested) return "reinvest";
+  if (t.ticker && sweeps.has(t.ticker)) return "sweep";
+  return t.side;
 }
 
-const TYPE_LABEL: Record<string, string> = { buy: "Buys", sell: "Sells", ...KIND_LABEL };
-const TYPE_ORDER = ["buy", "sell", "dividend", "interest", "deposit", "withdrawal", "fee", "transfer", "split", "other"];
+const TYPE_LABEL: Record<string, string> = {
+  buy: "Buys",
+  sell: "Sells",
+  reinvest: "Reinvested",
+  sweep: "Cash Sweep",
+  ...KIND_LABEL,
+};
+const TYPE_ORDER = ["buy", "sell", "reinvest", "sweep", "dividend", "interest", "deposit", "withdrawal", "tax", "fee", "transfer", "realized", "split", "other"];
 
+/** A reported realized gain moved no cash, so it stays out of any mix of rows;
+ *  on its own chip, its total is what's being asked for. */
 function sumAmounts(rows: BrokerTransaction[]): number {
-  return rows.reduce((s, t) => s + (cashAmount(t) ?? 0), 0);
+  const counted = rows.some((t) => t.kind !== "realized")
+    ? rows.filter((t) => t.kind !== "realized")
+    : rows;
+  return counted.reduce((s, t) => s + (cashAmount(t) ?? 0), 0);
 }
 
 function shares(v: number | null): string {
-  if (v == null) return "—";
+  if (v == null || v === 0) return "—";
   return v.toLocaleString(undefined, { maximumFractionDigits: 6 });
 }
 
@@ -82,9 +105,10 @@ export function BrokerTransactionsTable({
     );
   }
 
+  const sweeps = sweepTickers(transactions);
   const byType = new Map<string, BrokerTransaction[]>();
   for (const t of transactions) {
-    const key = typeOf(t);
+    const key = typeOf(t, sweeps);
     byType.set(key, [...(byType.get(key) ?? []), t]);
   }
   const types = [...byType.keys()].sort(
@@ -188,7 +212,15 @@ export function BrokerTransactionsTable({
                   )}
                 </td>
                 <td className="px-3 py-2">
-                  {t.side ? (
+                  {typeOf(t, sweeps) === "reinvest" || typeOf(t, sweeps) === "sweep" ? (
+                    <span className="text-xs text-muted-foreground">
+                      {typeOf(t, sweeps) === "reinvest"
+                        ? "Reinvested"
+                        : t.side === "buy"
+                          ? "Sweep in"
+                          : "Sweep out"}
+                    </span>
+                  ) : t.side ? (
                     <span
                       className={cn(
                         "text-xs font-medium uppercase",
@@ -207,7 +239,7 @@ export function BrokerTransactionsTable({
                   {shares(t.qty)}
                 </td>
                 <td className="px-3 py-2 text-right tabular-nums">
-                  {money(t.price)}
+                  {t.price ? money(t.price) : "—"}
                 </td>
                 <td
                   className={cn(

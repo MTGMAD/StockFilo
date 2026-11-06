@@ -60,12 +60,25 @@ function cashAtDate(
   return Math.round(eventsThroughDate.reduce((sum, event) => sum + event.amount, 0) * 100) / 100;
 }
 
-function fromBrokerSnapshot(snapshot: BrokerAccountSnapshot): AccountValueRow {
+/** Some brokerages' balance refreshes a day behind their holdings. When a day's
+ *  balance is the previous day's holdings, the holdings are the current figure;
+ *  a real gap (a trade not yet settled) won't line up like that. */
+function fromBrokerSnapshot(
+  snapshot: BrokerAccountSnapshot,
+  previous: BrokerAccountSnapshot | undefined,
+): AccountValueRow {
+  const cash = snapshot.cash ?? 0;
+  const lagged =
+    snapshot.equity != null &&
+    snapshot.positions_value != null &&
+    previous?.positions_value != null &&
+    Math.abs(snapshot.equity - cash - previous.positions_value) < 0.05 &&
+    Math.abs(snapshot.positions_value - previous.positions_value) >= 0.05;
   return {
     as_of: snapshot.as_of,
     positions_value: snapshot.positions_value,
     cash_value: snapshot.cash,
-    total_value: snapshot.equity,
+    total_value: lagged ? snapshot.positions_value! + cash : snapshot.equity,
   };
 }
 
@@ -105,10 +118,11 @@ export function JournalAccountHistory({
         if (!cancelled) {
           setRows(
             snapshots
-              .filter((snapshot) => snapshot.as_of <= asOf)
+              .map((snapshot, i) => ({ snapshot, previous: snapshots[i - 1] }))
+              .filter(({ snapshot }) => snapshot.as_of <= asOf)
               .slice(-30)
               .reverse()
-              .map(fromBrokerSnapshot),
+              .map(({ snapshot, previous }) => fromBrokerSnapshot(snapshot, previous)),
           );
         }
         return;

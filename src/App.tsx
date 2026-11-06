@@ -23,7 +23,7 @@ import { useInvestorMode } from "./hooks/useInvestorMode";
 import { useLinkOpenMode } from "./hooks/useLinkOpenMode";
 import { useQuoteSite } from "./hooks/useQuoteSite";
 import { QuoteSiteContext } from "./lib/quoteSites";
-import { totalDeposited } from "./lib/cash";
+import { totalDeposited, totalWithdrawn } from "./lib/cash";
 import { useInfoTooltips } from "./hooks/useInfoTooltips";
 import { useAlertSettings } from "./hooks/useAlertSettings";
 import { useAlertsMonitor } from "./hooks/useAlertsMonitor";
@@ -313,7 +313,9 @@ export default function App() {
 
     if (isBroker) {
       // Straight from the brokerage. Buying power is theirs alone — a manual
-      // portfolio has no such concept, which is why the shapes differ.
+      // portfolio has no such concept, which is why the shapes differ. The
+      // exception is equity from an aggregator, which can lag the holdings it
+      // reports by a refresh; there it's what those holdings add up to now.
       const acct = connections
         .flatMap((c) => c.accounts)
         .find((a) => a.id === activePortfolio?.broker_account_id);
@@ -328,13 +330,23 @@ export default function App() {
         }
       }
 
+      const holdings = summaries.every((s) => s.marketValue != null)
+        ? summaries.reduce((sum, s) => sum + s.marketValue!, 0)
+        : null;
+      const gained = broker.accountGain;
+
       return {
         kind: "broker",
-        equity: acct?.equity ?? null,
+        equity:
+          brokerConnection?.provides_pricing === false && summaries.length > 0 && holdings != null
+            ? holdings + (acct?.cash ?? 0)
+            : (acct?.equity ?? null),
         cash: acct?.cash ?? null,
         buyingPower: acct?.buying_power ?? null,
         deposited: totalDeposited(broker.transactions),
-        gain: reported ? pl : null,
+        withdrawn: totalWithdrawn(broker.transactions),
+        gain: gained ? gained.gain : reported ? pl : null,
+        gainSince: gained?.since ?? null,
       };
     }
 
@@ -359,7 +371,7 @@ export default function App() {
       gain: priced ? value - cost : null,
       cash: cashTotal,
     };
-  }, [inPortfolio, isBroker, connections, activePortfolio, summaries, cashTotal, broker.transactions]);
+  }, [inPortfolio, isBroker, connections, activePortfolio, summaries, cashTotal, broker.transactions, broker.accountGain, brokerConnection]);
 
   const headerTitle =
     view === "portfolio" && activePortfolio
@@ -466,6 +478,7 @@ export default function App() {
           ) : view === "dashboard" ? (
             <Dashboard
               summaries={summaries}
+              accountGain={isBroker ? broker.accountGain : null}
               investorMode={investorMode}
               onModeChange={setInvestorMode}
               showInfoTooltips={showInfoTooltips}
@@ -481,6 +494,7 @@ export default function App() {
               portfolioName={activePortfolio?.name ?? ""}
               readOnly={isBroker}
               brokerTransactions={isBroker ? broker.transactions : undefined}
+              accountGain={isBroker ? broker.accountGain : null}
               brokerAccountId={isBroker ? (activePortfolio?.broker_account_id ?? null) : null}
               ordersAccountId={
                 isBroker && brokerConnection?.supports_orders && canSyncBroker

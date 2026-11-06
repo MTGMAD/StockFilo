@@ -73,8 +73,10 @@ pub struct AccountSnapshot {
 /// lacks, or classifies it better: every account below it gets one full
 /// re-fetch. 1 = every activity type with its cash amount (previously share
 /// trades only). 2 = crypto rewards, crypto transfers and SnapTrade's
-/// `DEPOSIT` spelling classified instead of left as `other`.
-pub const HISTORY_VERSION: i64 = 2;
+/// `DEPOSIT` spelling classified instead of left as `other`. 3 = tax
+/// withholding, capital gain distributions, fund exchanges and reported
+/// realized gains classified.
+pub const HISTORY_VERSION: i64 = 3;
 
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -269,8 +271,9 @@ pub const PROVISIONAL_PREFIX: &str = "order:";
 /// A row already stored keeps everything it has; only the cash fields it
 /// lacks are filled in — trade rows saved before amounts were kept get them
 /// from the backfill this way, without being duplicated or rewritten. The
-/// one exception is a row stored as `other`: once an adapter learns what that
-/// type means, the re-fetch gives it its real kind.
+/// exceptions are a row stored as `other`, and tax withholding stored as a
+/// `fee`: once an adapter learns what that row means, the re-fetch gives it
+/// its real kind.
 ///
 /// Returns how many rows were genuinely new.
 pub fn append_transactions(
@@ -309,7 +312,7 @@ pub fn append_transactions(
                    amount      = COALESCE(amount, ?3), \
                    currency    = COALESCE(currency, ?4), \
                    description = COALESCE(description, ?5), \
-                   kind        = CASE WHEN kind = ?7 THEN ?6 ELSE kind END \
+                   kind        = CASE WHEN kind = ?7 OR (kind = ?8 AND ?6 = ?9) THEN ?6 ELSE kind END \
                  WHERE broker_account_id = ?1 AND external_id = ?2",
                 params![
                     broker_account_id,
@@ -318,7 +321,9 @@ pub fn append_transactions(
                     a.currency,
                     a.description,
                     a.kind,
-                    super::types::activity_kind::OTHER
+                    super::types::activity_kind::OTHER,
+                    super::types::activity_kind::FEE,
+                    super::types::activity_kind::TAX
                 ],
             )?;
         }
@@ -943,6 +948,30 @@ mod tests {
         let acct2 = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
         assert_eq!(acct, acct2);
         assert_eq!(linked_portfolio(&conn, acct).unwrap(), None);
+    }
+
+    #[test]
+    fn refetch_reclassifies_tax_stored_as_a_fee_but_no_other_fee() {
+        let conn = db();
+        let acct = upsert_account(&conn, "c1", &acct_dto(), true).unwrap();
+        let row = |id: &str, kind: &str| RemoteActivity {
+            external_id: id.into(),
+            kind: kind.into(),
+            occurred_at: "2026-01-30".into(),
+            amount: Some(-10.0),
+            ..Default::default()
+        };
+        append_transactions(&conn, acct, &[row("tax", "fee"), row("plain", "fee"), row("div", "dividend")]).unwrap();
+        append_transactions(&conn, acct, &[row("tax", "tax"), row("plain", "other"), row("div", "tax")]).unwrap();
+
+        let kinds: std::collections::HashMap<String, String> = list_transactions(&conn, acct)
+            .unwrap()
+            .into_iter()
+            .map(|t| (t.external_id, t.kind))
+            .collect();
+        assert_eq!(kinds["tax"], "tax");
+        assert_eq!(kinds["plain"], "fee");
+        assert_eq!(kinds["div"], "dividend");
     }
 
     #[test]

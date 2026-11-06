@@ -1,3 +1,5 @@
+import { shortDate } from "../journal/journalUi";
+import type { AccountGain } from "../../lib/accountHistory";
 import { useState } from "react";
 import type { TickerSummary } from "../../types";
 import {
@@ -17,6 +19,8 @@ type SortBy = "pnlPct" | "pnlDollar" | "dailyPct" | "invested";
 
 interface PortfolioRankViewProps {
   summaries: TickerSummary[];
+  /** Set when this broker account is older than its history. */
+  accountGain?: AccountGain | null;
   onSelectTicker?: (ticker: string) => void;
 }
 
@@ -27,7 +31,7 @@ const ASSET_TABS: { key: AssetType; label: string; noun: string }[] = [
   { key: "fund", label: "Mutual Funds", noun: "mutual funds" },
 ];
 
-export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankViewProps) {
+export function PortfolioRankView({ summaries, accountGain, onSelectTicker }: PortfolioRankViewProps) {
   const [activeType, setActiveType] = useState<AssetType>("all");
   const [sortBy, setSortBy] = useState<SortBy>("pnlPct");
 
@@ -37,13 +41,21 @@ export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankVi
     (acc, s) => acc + (s.marketValue ?? 0),
     0,
   );
-  const totalInvested = pricedSummaries.reduce(
-    (acc, s) => acc + (s.totalInvested ?? 0),
-    0,
-  );
-  const totalPnlDollar = totalMarketValue - totalInvested;
-  const totalPnlPct =
-    totalInvested > 0 ? (totalPnlDollar / totalInvested) * 100 : null;
+  // A holding with no cost basis has no gain to add: counting its whole value
+  // as one is how a $1.3M account with no cost data "gained" $1.3M.
+  const withCost = pricedSummaries.filter((s) => s.totalInvested != null);
+  const totalInvested =
+    accountGain?.startValue ?? withCost.reduce((acc, s) => acc + s.totalInvested!, 0);
+  const totalPnlDollar: number | null =
+    accountGain?.gain ??
+    (withCost.length > 0
+      ? withCost.reduce((acc, s) => acc + (s.marketValue ?? 0), 0) - totalInvested
+      : null);
+  const totalPnlPct = accountGain
+    ? accountGain.gainPct
+    : totalPnlDollar != null && totalInvested > 0
+      ? (totalPnlDollar / totalInvested) * 100
+      : null;
 
   // Approximate portfolio-level daily change: sum(dailyChangePct/100 × marketValue)
   const totalDailyChangeDollar = pricedSummaries.reduce((acc, s) => {
@@ -107,19 +119,41 @@ export function PortfolioRankView({ summaries, onSelectTicker }: PortfolioRankVi
           title="The current total market value of all your holdings (excluding bonds/CDs)."
         />
         <SummaryPill
-          label="Total Invested"
+          label={accountGain ? "Value at Start" : "Total Invested"}
           value={formatCurrency(totalInvested || null)}
-          title="The total amount of money you have put into all your holdings."
+          title={
+            accountGain
+              ? `What this account held on ${shortDate(accountGain.since)}, when the brokerage's history begins.`
+              : "The total amount of money you have put into all your holdings."
+          }
         />
+        {accountGain != null && accountGain.added > 0 && (
+          <SummaryPill
+            label="Money Added"
+            value={formatCurrency(accountGain.added)}
+            title="New money put into this account since its history begins. Moves between funds aren't counted."
+          />
+        )}
+        {accountGain != null && accountGain.takenOut > 0 && (
+          <SummaryPill
+            label="Money Taken Out"
+            value={formatCurrency(accountGain.takenOut)}
+            title="Withdrawals since this account's history begins, including tax withheld from them. Value at start, plus money added, less money taken out, plus the gain, is the market value."
+          />
+        )}
         <SummaryPill
-          label="Unrealized Gain / Loss"
+          label={accountGain ? `Gain Since ${shortDate(accountGain.since)}` : "Unrealized Gain / Loss"}
           value={
-            totalMarketValue
+            totalMarketValue && totalPnlDollar != null
               ? `${formatCurrency(totalPnlDollar)} (${formatPercent(totalPnlPct)})`
               : "—"
           }
           valueClass={pnlColor(totalPnlDollar)}
-          title="How much your portfolio has gained or lost compared to what you paid. 'Unrealized' means you haven't sold yet."
+          title={
+            accountGain
+              ? "How much this account has grown since its history begins, including dividends. Money added or taken out isn't gain. The percentage is against the value at start plus money added."
+              : "How much your portfolio has gained or lost compared to what you paid. 'Unrealized' means you haven't sold yet."
+          }
         />
         <SummaryPill
           label="Today's Change"
@@ -355,7 +389,9 @@ function RankedRow({
                   </span>
                 </>
               ) : (
-                <span className="text-muted-foreground text-xs">No price data</span>
+                <span className="text-muted-foreground text-xs">
+                  {s.marketValue == null ? "No price data" : "Cost basis unavailable"}
+                </span>
               )}
             </div>
           </div>
@@ -367,21 +403,41 @@ function RankedRow({
               value={formatShares(s.totalShares)}
               title="Total number of shares you own."
             />
-            <MetricChip
-              label="Avg Cost"
-              value={formatCurrency(s.avgCostBasis)}
-              title="The average price you paid per share across all your purchases."
-            />
+            {!s.gainSince && (
+              <MetricChip
+                label="Avg Cost"
+                value={formatCurrency(s.avgCostBasis)}
+                title="The average price you paid per share across all your purchases."
+              />
+            )}
             <MetricChip
               label="Current Price"
               value={s.currentPrice != null ? formatCurrency(s.currentPrice) : "—"}
               title="The latest market price per share."
             />
             <MetricChip
-              label="Invested"
-              value={formatCurrency(s.totalInvested)}
-              title="Total money you put into this holding (shares × price paid for each purchase)."
+              label={s.gainSince ? "Value at Start" : "Invested"}
+              value={formatCurrency(s.gainSince ? s.startValue : s.totalInvested)}
+              title={
+                s.gainSince
+                  ? "What this holding was worth when the brokerage's history begins."
+                  : "Total money you put into this holding (shares × price paid for each purchase)."
+              }
             />
+            {!!s.addedSince && (
+              <MetricChip
+                label="Added"
+                value={formatCurrency(s.addedSince)}
+                title="Contributions and exchanges into this holding since the history begins."
+              />
+            )}
+            {!!s.takenOutSince && (
+              <MetricChip
+                label="Taken Out"
+                value={formatCurrency(s.takenOutSince)}
+                title="Sales and exchanges out of this holding since the history begins."
+              />
+            )}
             <MetricChip
               label="Market Value"
               value={formatCurrency(s.marketValue)}
@@ -485,7 +541,7 @@ function SortHighlight({
   } else {
     // invested
     value = formatCurrency(s.totalInvested);
-    sublabel = "Invested";
+    sublabel = s.gainSince ? "Start + Added" : "Invested";
   }
 
   return (
