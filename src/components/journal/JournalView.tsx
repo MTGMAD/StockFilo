@@ -479,6 +479,9 @@ function TradeRow({ trade, hasNote, onClick }: { trade: JournalTrade; hasNote: b
         {trade.closeDate && trade.closeDate !== trade.openDate ? ` → ${shortDate(trade.closeDate)}` : ""}
         {" · "}
         {trade.totalBought.toLocaleString(undefined, { maximumFractionDigits: 4 })} sh
+        {" · "}
+        Avg entry {formatCurrency(trade.avgEntry)}
+        {trade.avgExit != null && ` · Avg exit ${formatCurrency(trade.avgExit)}`}
       </span>
       {hasNote && <NotebookPen className="w-3.5 h-3.5 text-positive" />}
       <span className={cn("font-semibold tabular-nums", pnlColor(trade.status === "open" ? null : trade.realizedPnl))}>

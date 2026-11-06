@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import {
   AreaSeries,
   ColorType,
+  type AutoscaleInfo,
   LineStyle,
   createChart,
   createSeriesMarkers,
@@ -11,12 +12,13 @@ import {
 import type { DailyBar, JournalTrade } from "../../lib/journal";
 import { palette, rgba } from "../analysis/PriceChart";
 import { openUrl } from "../../lib/openUrl";
+import { formatCurrency } from "../../lib/utils";
 
 const DAY = 86_400_000;
 const shift = (iso: string, days: number) =>
   new Date(Date.parse(iso + "T00:00:00Z") + days * DAY).toISOString().slice(0, 10);
 
-/** Daily price chart for one trade with a marker on every buy and sell. */
+/** Daily price chart for one trade with a marker at the price of every buy and sell. */
 export function TradeChart({ trade, bars }: { trade: JournalTrade; bars: DailyBar[] }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -56,11 +58,26 @@ export function TradeChart({ trade, bars }: { trade: JournalTrade; bars: DailyBa
       bottomColor: rgba(line, 0),
       lineWidth: 2,
       priceLineVisible: false,
+      // A fill can land outside the day's close (an intraday high, say); widen
+      // the scale so its marker isn't drawn off the chart.
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+        const info = original();
+        if (!info?.priceRange) return info;
+        const prices = trade.fills.map((f) => f.price);
+        return {
+          ...info,
+          priceRange: {
+            minValue: Math.min(info.priceRange.minValue, ...prices),
+            maxValue: Math.max(info.priceRange.maxValue, ...prices),
+          },
+        };
+      },
     });
     series.setData(data.map((b) => ({ time: b.date as Time, value: b.close })));
 
     // Snap each fill to the bar on or just before its date (broker dates can
-    // land on a non-session day); sum same-day, same-side fills into one marker.
+    // land on a non-session day); sum same-day, same-side fills into one marker
+    // at their share-weighted average price.
     const barDates = data.map((b) => b.date);
     const snap = (d: string) => {
       let hit = barDates[0];
@@ -70,12 +87,13 @@ export function TradeChart({ trade, bars }: { trade: JournalTrade; bars: DailyBa
       }
       return hit;
     };
-    const grouped = new Map<string, { time: string; side: "buy" | "sell"; qty: number; drip: boolean }>();
+    const grouped = new Map<string, { time: string; side: "buy" | "sell"; qty: number; cost: number; drip: boolean }>();
     for (const f of trade.fills) {
       const time = snap(f.date);
       const key = `${time}|${f.side}|${f.drip ? 1 : 0}`;
-      const g = grouped.get(key) ?? { time, side: f.side, qty: 0, drip: !!f.drip };
+      const g = grouped.get(key) ?? { time, side: f.side, qty: 0, cost: 0, drip: !!f.drip };
       g.qty += f.qty;
+      g.cost += f.qty * f.price;
       grouped.set(key, g);
     }
     const qtyText = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 3 });
@@ -83,10 +101,13 @@ export function TradeChart({ trade, bars }: { trade: JournalTrade; bars: DailyBa
       .sort((a, b) => a.time.localeCompare(b.time))
       .map((g) => ({
         time: g.time as Time,
-        position: g.side === "buy" ? "belowBar" : "aboveBar",
+        // Each arrow's tip touches the price: an up arrow from below, a down
+        // arrow from above.
+        position: g.side === "buy" ? "atPriceBottom" : "atPriceTop",
+        price: g.cost / g.qty,
         shape: g.side === "buy" ? "arrowUp" : "arrowDown",
         color: rgba(g.side === "buy" ? c.upRgb : c.downRgb, 1),
-        text: `${g.drip ? "DRIP" : g.side === "buy" ? "Buy" : "Sell"} ${qtyText(g.qty)}`,
+        text: `${g.drip ? "DRIP" : g.side === "buy" ? "Buy" : "Sell"} ${qtyText(g.qty)} @ ${formatCurrency(g.cost / g.qty)}`,
       }));
     createSeriesMarkers(series, markers);
 
