@@ -1,6 +1,5 @@
 import { Fragment, useState, useEffect, useRef } from "react";
 import type { View, Portfolio, PortfolioGroup } from "../../types";
-import { accountKindStyle } from "../../lib/accountTypes";
 import {
   LayoutDashboard,
   Settings,
@@ -624,31 +623,17 @@ export function Sidebar({
             {/* Name button */}
             <button
               onClick={() => { onSelectPortfolio(p.id); onNavigate("portfolio"); }}
+              // The account-type chip (Connected/Margin) lives in the
+              // portfolio header only — here it ate width the name needs,
+              // so it's surfaced as a hover tooltip instead.
+              title={
+                p.broker_account_id != null && brokerBadges?.[p.broker_account_id]
+                  ? `${p.name} · ${brokerBadges[p.broker_account_id].label}`
+                  : p.name
+              }
               className="flex-1 text-left px-1 py-2 text-sm font-medium truncate min-w-0 flex items-center gap-1.5"
             >
               <span className="truncate">{p.name}</span>
-              {/* Account-type chip, so a mirrored brokerage account is
-                  never mistaken for one you maintain by hand. Its usual
-                  kind-tinted colors (amber/blue/green) wash out against
-                  the highlighted row's own green background, so the
-                  active row gets a plain white-on-translucent chip
-                  instead — only while active; unselected rows keep the
-                  kind color unchanged. */}
-              {p.broker_account_id != null &&
-                brokerBadges?.[p.broker_account_id] && (
-                  <span
-                    className={cn(
-                      "shrink-0 text-[9px] font-semibold px-1 py-px rounded uppercase tracking-wide",
-                      view === "portfolio" && activePortfolioId === p.id
-                        ? "bg-white/20 text-white"
-                        : accountKindStyle(
-                            brokerBadges[p.broker_account_id].kind,
-                          ).chip,
-                    )}
-                  >
-                    {brokerBadges[p.broker_account_id].label}
-                  </span>
-                )}
             </button>
 
             {/* Action buttons (show on hover) */}
