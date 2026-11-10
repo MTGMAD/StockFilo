@@ -130,6 +130,16 @@ pub async fn open_earnings_call_in_calendar(ticker: String, event_at: i64) -> Re
 fn open_calendar_invite(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
+        // A strictly confined snap cannot launch host apps directly; snapd's
+        // xdg-open hands the file to the user's default handler instead.
+        if std::env::var_os("SNAP").is_some() {
+            Command::new("xdg-open")
+                .arg(path)
+                .spawn()
+                .map_err(|e| format!("Could not open your calendar app: {e}"))?;
+            return Ok(());
+        }
+
         use gio::prelude::*;
         // Honour the OS associations first, then its recommendations. Some
         // desktop setups have an installed calendar but no MIME association;

@@ -155,6 +155,44 @@ Use `sudo apt remove stockfolio` to uninstall it if the software center does
 not show it. For an isolated build, use the exact package name
 `stockfolio-build-<build-id>` from its `build-info.json` instead.
 
+To build a Snap, run `./stockfolio-linux-snap` (add `--install` to install it
+afterwards). The first run installs `snapcraft` (9.x), `lxd`, and
+`review-tools` and initialises LXD, which needs `sudo`. Like the other scripts
+it builds a snapshot of the current source, including uncommitted edits, at
+reduced CPU priority and never touches `dist/` or `src-tauri/target/`.
+Snapcraft builds inside a fresh LXD instance from the manifest in
+`src-tauri/linux/snap/`, which uses the core26 base (Ubuntu 26.04) and the
+GNOME extension. GTK, WebKitGTK and Mesa come from Canonical's `gnome-core26`
+and `mesa-2604` runtime snaps, which receive security updates on their own.
+Snaps, checksums, and logs are saved under `.snap-builds.local/<build-id>/`.
+
+The build stops if a known vulnerability is found:
+
+- `cargo audit` (RustSec) and `npm audit --omit=dev` check every shipped
+  dependency before packaging. To accept an advisory deliberately, record it
+  with a reason in `src-tauri/audit.toml`.
+- `review-tools.snap-review` runs the Snap Store's own upload checks.
+- `review-tools.check-notices` matches every Ubuntu package in the snap
+  against Ubuntu Security Notices. The current `core26`, `gnome-core26`, and
+  `mesa-2604` runtimes are checked too; findings there are reported as
+  warnings, since Canonical ships those fixes.
+
+Each `--install` adds a new revision of the same `stockfolio` snap, so it
+upgrades in place: snapd copies the previous revision's data forward, and
+`sudo snap revert stockfolio` returns to the previous build with its data.
+The Snap keeps its data under `~/snap/stockfolio/`, uses its own keychain
+namespace (`com.stockfolio.app.snap`), and serves its browser backend on port
+1442, so it can run alongside the other builds. Existing portfolios are not
+copied. Keychain access needs
+`sudo snap connect stockfolio:password-manager-service` (`--install` does
+this); until then secrets use the encrypted-file fallback.
+
+Locally built snaps are not signed by the Snap Store, so they do not update
+automatically. Publishing to the store (`snapcraft register stockfolio`, then
+`snapcraft upload --release=edge <file>.snap`) gives installs automatic
+updates. The release workflow builds the same snap and attaches it to the
+GitHub release.
+
 | Command | Description |
 |---|---|
 | `npm run dev` | Start Vite frontend only (no native window) |

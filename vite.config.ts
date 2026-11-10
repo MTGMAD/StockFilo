@@ -33,9 +33,9 @@ export default defineConfig({
         }
       : undefined,
     watch: {
-      // The isolated .deb/Flatpak build scripts snapshot the tree (and a
+      // The isolated .deb/Flatpak/Snap build scripts snapshot the tree (and a
       // sandbox with symlink loops) into these; watching them crashes Vite.
-      ignored: ["**/src-tauri/**", "**/.deb-builds.local/**", "**/.flatpak-builds.local/**"],
+      ignored: ["**/src-tauri/**", "**/.deb-builds.local/**", "**/.flatpak-builds.local/**", "**/.snap-builds.local/**"],
     },
   },
   optimizeDeps: {

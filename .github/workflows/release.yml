@@ -38,7 +38,8 @@ jobs:
                 `### Linux\n` +
                 `- **stockfolio_${tag.replace('v','')}_amd64.deb** — Debian/Ubuntu package\n` +
                 `- **stockfolio-${tag.replace('v','')}-1.x86_64.rpm** — Red Hat/Fedora package\n` +
-                `- **stockfolio_${tag.replace('v','')}_amd64.AppImage** — Portable app (any distro)\n\n` +
+                `- **stockfolio_${tag.replace('v','')}_amd64.AppImage** — Portable app (any distro)\n` +
+                `- **stockfolio_${tag.replace('v','')}_amd64.snap** — Snap (install with \`sudo snap install --dangerous\`)\n\n` +
                 `> See the full changelog in [CHANGELOG.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md).`,
               draft: true,
               prerelease: false
@@ -166,3 +167,56 @@ jobs:
 
       - name: Verify Debian software-center metadata
         run: python3 scripts/verify-deb.py src-tauri/target/release/bundle/deb/*.deb
+
+  # ── Linux Snap build ───────────────────────────────────────────────────────
+  # Same manifest and checks as ./stockfolio-linux-snap, built in LXD.
+  build-snap:
+    name: Linux (Snap)
+    needs: create-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Audit dependencies
+        run: |
+          cargo install --locked cargo-audit
+          (cd src-tauri && cargo audit)
+          npm audit --omit=dev
+
+      - name: Setup LXD
+        uses: canonical/setup-lxd@v1
+        with:
+          channel: latest/stable
+
+      - name: Build snap
+        env:
+          SNAPCRAFT_BUILD_INFO: 1
+        run: |
+          sudo snap install snapcraft --classic --channel=9.x/stable
+          mkdir -p snap
+          cp src-tauri/linux/snap/snapcraft.yaml snap/
+          snapcraft pack --use-lxd
+
+      - name: Review snap and check Ubuntu Security Notices
+        run: |
+          sudo snap install review-tools
+          snap_file="$(ls stockfolio_*.snap)"
+          review-tools.snap-review "$snap_file"
+          review-tools.check-notices "$snap_file" | python3 scripts/check-snap-notices.py
+          echo "SNAP_FILE=$snap_file" >> "$GITHUB_ENV"
+
+      - name: Upload snap to release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release.outputs.release_id }},
+              name: process.env.SNAP_FILE,
+              data: fs.readFileSync(process.env.SNAP_FILE),
+            });

@@ -1,0 +1,88 @@
+# Snap manifest used by ./stockfolio-linux-snap and the release workflow. Both
+# copy this file to `snap/snapcraft.yaml` at the root of a clean source tree
+# (a snapshot locally, the checkout in CI) and run `snapcraft pack` in LXD.
+name: stockfolio
+title: Stockfolio
+adopt-info: stockfolio
+license: Apache-2.0
+website: https://github.com/MTGMAD/StockFilo
+source-code: https://github.com/MTGMAD/StockFilo
+issues: https://github.com/MTGMAD/StockFilo/issues
+icon: src-tauri/icons/icon.png
+base: core26
+grade: stable
+confinement: strict
+# lzo starts noticeably faster than the default xz for desktop apps.
+compression: lzo
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+
+apps:
+  stockfolio:
+    command: bin/stockfolio
+    common-id: com.stockfolio.app
+    desktop: usr/share/applications/com.stockfolio.app.desktop
+    # GTK, WebKitGTK 4.1, GPU/Mesa and themes come from Canonical's
+    # gnome-core26 and mesa-2604 runtime snaps, which receive security
+    # updates independently of this snap.
+    extensions: [gnome]
+    environment:
+      # Keep clear of 1422 (`tauri dev`, .deb) and 1432 (Flatpak).
+      STOCKFOLIO_BROWSER_PORT: "1442"
+      # WebKitGTK renders blank windows on NVIDIA with the DMA-BUF renderer.
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+    plugs:
+      - home
+      - network
+      # Local browser backend (127.0.0.1 only).
+      - network-bind
+      # The core26 gnome extension no longer adds this; GTK dialogs need it.
+      - gsettings
+      # OS keychain. Not auto-connected: until it is, secrets fall back to the
+      # encrypted file described in secrets.rs.
+      - password-manager-service
+
+parts:
+  stockfolio:
+    plugin: rust
+    source: .
+    rust-path: [src-tauri]
+    # What `tauri build` adds: serve the embedded frontend, not a dev server.
+    rust-features: [tauri/custom-protocol]
+    build-snaps:
+      - node/24/stable
+    build-packages:
+      - libdbus-1-dev
+      - libssl-dev
+      - pkg-config
+    override-build: |
+      # Fail the build on any known vulnerability in the shipped frontend.
+      npm ci --no-fund
+      npm audit --omit=dev
+      npm run build
+
+      # Keep this install's keychain vault apart from the .deb, Flatpak and
+      # dev builds, which share the "com.stockfolio.app" Secret Service name.
+      secrets=src-tauri/src/secrets.rs
+      grep -qF 'const SERVICE: &str = "com.stockfolio.app";' "$secrets" \
+        || { echo "Isolation patch no longer matches secrets.rs" >&2; exit 1; }
+      sed -i 's|const SERVICE: &str = "com.stockfolio.app";|const SERVICE: \&str = "com.stockfolio.app.snap";|' "$secrets"
+
+      craftctl default
+
+      install -Dm644 src-tauri/linux/flatpak/com.stockfolio.app.desktop \
+        "$CRAFT_PART_INSTALL/usr/share/applications/com.stockfolio.app.desktop"
+      install -Dm644 src-tauri/icons/32x32.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/32x32/apps/com.stockfolio.app.png"
+      install -Dm644 src-tauri/icons/128x128.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/128x128/apps/com.stockfolio.app.png"
+      install -Dm644 src-tauri/icons/128x128@2x.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/256x256/apps/com.stockfolio.app.png"
+      install -Dm644 src-tauri/icons/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/512x512/apps/com.stockfolio.app.png"
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/metainfo"
+      sed 's|Stockfolio.desktop</launchable>|com.stockfolio.app.desktop</launchable>|' \
+        src-tauri/linux/com.stockfolio.app.metainfo.xml \
+        > "$CRAFT_PART_INSTALL/usr/share/metainfo/com.stockfolio.app.metainfo.xml"
+
+      craftctl set version="$(sed -n 's/^version = "\(.*\)"$/\1/p' src-tauri/Cargo.toml | head -n1)"
+    # Summary, description and release notes come from the AppStream file.
+    parse-info: [usr/share/metainfo/com.stockfolio.app.metainfo.xml]

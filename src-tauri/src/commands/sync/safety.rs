@@ -177,7 +177,7 @@ fn hash_records(conn: &Connection, keep: impl Fn(&str, &str) -> bool) -> Result<
 }
 fn summary(conn: &Connection) -> Result<RecordSummary, String> {
     fn count(conn: &Connection, table: &str) -> Result<u64, String> {
-        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).map_err(io)
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get::<_, i64>(0)).map(|n| n as u64).map_err(io)
     }
     let mut financial_records = 0;
     for table in ["purchases", "sales", "cash_events", "cash_anchors", "journal_account_values", "broker_positions", "broker_transactions"] { financial_records += count(conn, table)?; }

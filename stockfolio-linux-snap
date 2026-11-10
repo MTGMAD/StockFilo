@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run on the host when launched from a Flatpak editor.
+script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+if [[ -f /.flatpak-info ]]; then
+  exec flatpak-spawn --host bash "$script_dir/stockfolio-linux-snap" "$@"
+fi
+snap_name=stockfolio
+
+if [[ "${1:-}" != --worker ]]; then
+  install_after=false
+  for arg in "$@"; do
+    case "$arg" in
+      --install) install_after=true ;;
+      *) echo "Usage: $0 [--install]" >&2; exit 2 ;;
+    esac
+  done
+
+  # One-time setup needs sudo, so it runs here, in the terminal, before the
+  # build detaches. Snapcraft builds inside LXD and never touches the host.
+  missing=()
+  snap list snapcraft >/dev/null 2>&1 || missing+=(snapcraft)
+  snap list lxd >/dev/null 2>&1 || missing+=(lxd)
+  snap list review-tools >/dev/null 2>&1 || missing+=(review-tools)
+  if ((${#missing[@]})); then
+    echo "Installing build prerequisites: ${missing[*]}"
+    for s in "${missing[@]}"; do
+      case "$s" in
+        snapcraft) sudo snap install snapcraft --classic --channel=9.x/stable ;;
+        *) sudo snap install "$s" ;;
+      esac
+    done
+  fi
+  if ! id -nG | tr ' ' '\n' | grep -qx lxd; then
+    sudo usermod -aG lxd "$USER"
+    echo "Added $USER to the lxd group. Log out and back in, then run this again." >&2
+    exit 1
+  fi
+  if ! lxc storage list --format csv 2>/dev/null | grep -q .; then
+    sudo lxd waitready
+    sudo lxd init --auto
+  fi
+
+  setsid --wait bash "$script_dir/stockfolio-linux-snap" --worker
+  latest="$(cat "$script_dir/.snap-builds.local/latest")"
+  if $install_after; then
+    # A local install is a new revision of the same snap: snapd copies the
+    # previous revision's data forward, and `snap revert` restores it.
+    sudo snap install --dangerous "$latest"
+    sudo snap connect "$snap_name:password-manager-service" || true
+    snap connections "$snap_name"
+    echo "Installed: snap run $snap_name"
+  fi
+  exit 0
+fi
+
+build_id="$(date -u +%Y%m%d%H%M%S)-$$"
+build_root="$script_dir/.snap-builds.local/$build_id"
+snapshot="$build_root/source"
+mkdir -p "$snapshot/src-tauri" "$snapshot/snap"
+exec > >(tee "$build_root/build.log") 2>&1
+echo "Isolated Snap build: $build_root"
+
+# Copy the current working tree, including uncommitted source edits. No
+# dependencies or build output are shared: npm and Cargo fetch exactly what
+# the lockfiles pin inside the LXD build instance.
+cp --reflink=auto -a "$script_dir/src" "$snapshot/"
+cp --reflink=auto -a "$script_dir/"{package.json,package-lock.json,index.html,tsconfig.json,tsconfig.node.json,vite.config.ts} "$snapshot/"
+cp --reflink=auto -a "$script_dir/src-tauri/"{src,icons,capabilities,linux,Cargo.toml,Cargo.lock,build.rs,tauri.conf.json} "$snapshot/src-tauri/"
+cp --reflink=auto -a "$script_dir/src-tauri/linux/snap/snapcraft.yaml" "$snapshot/snap/"
+
+# Refuse to package known-vulnerable dependencies. Ignore an advisory only by
+# recording it, with a reason, in src-tauri/audit.toml.
+export PATH="$HOME/.cargo/bin:$PATH"
+command -v cargo-audit >/dev/null || cargo install --locked cargo-audit
+echo "Auditing Rust dependencies (RustSec)"
+(cd "$snapshot/src-tauri" && cargo audit)
+echo "Auditing frontend dependencies (npm)"
+(cd "$snapshot" && npm audit --omit=dev)
+
+# build-info records every staged package and build snap in the snap's
+# manifest, which check-notices below (and the Snap Store) scan for USNs.
+export SNAPCRAFT_BUILD_INFO=1
+export CRAFT_PARALLEL_BUILD_COUNT="${STOCKFOLIO_BUILD_JOBS:-4}"
+cd "$snapshot"
+nice -n 10 snapcraft pack --use-lxd --output "$build_root/"
+# Each snapshot path gets its own LXD instance; remove it once packed.
+snapcraft clean --use-lxd || true
+
+cd "$build_root"
+built="$(ls ./*.snap)"
+version="$(node -p "require('./source/src-tauri/tauri.conf.json').version")"
+bundle="Stockfolio-$version-$build_id.snap"
+mv "$built" "$bundle"
+
+# The Snap Store's own checks: confinement, metadata and interface use.
+echo "Reviewing snap (store checks)"
+review-tools.snap-review "$bundle"
+
+# Ubuntu Security Notices against everything staged into this snap, then
+# against the current runtime snaps it runs on.
+echo "Checking Ubuntu Security Notices"
+review-tools.fetch-usn-db >/dev/null
+review-tools.check-notices --no-fetch "$bundle" | python3 "$script_dir/scripts/check-snap-notices.py"
+mkdir runtime
+(cd runtime && for s in core26 gnome-core26 mesa-2604; do snap download "$s" >/dev/null; done)
+review-tools.check-notices --no-fetch runtime/*.snap \
+  | python3 "$script_dir/scripts/check-snap-notices.py" --warn-only
+rm -rf runtime
+
+sha256sum "$bundle" > SHA256SUMS
+rm -rf source
+echo "$build_root/$bundle" > "$script_dir/.snap-builds.local/latest"
+echo "Build complete: $build_root/$bundle"
